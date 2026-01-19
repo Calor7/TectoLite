@@ -7,6 +7,7 @@ import {
   Polygon,
   ToolType,
   FeatureType,
+  InteractionMode,
   generateId,
   createDefaultMotion,
   createDefaultAppState,
@@ -19,6 +20,7 @@ import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
 import { exportToPNG } from './export';
 import { splitPlate } from './SplitTool';
+import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 
 class TectoLiteApp {
   private state: AppState;
@@ -47,7 +49,8 @@ class TectoLiteApp {
       (plateId, featureId) => this.handleSelect(plateId, featureId),
       (points) => this.handleSplitApply(points),
       (active) => this.handleSplitPreviewChange(active),
-      (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate)
+      (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
+      (plateId, axis, angleRad) => this.handleDragTargetRequest(plateId, axis, angleRad)
     );
 
     // Initialize simulation
@@ -138,6 +141,15 @@ class TectoLiteApp {
             </div>
 
             <div class="tool-group">
+                <h3 class="tool-group-title">Motion Mode</h3>
+                <select id="motion-mode-select" class="tool-select">
+                    <option value="classic">Classic (Fixed Pole)</option>
+                    <option value="dynamic_pole">Dynamic Direction</option>
+                    <option value="drag_target">Drag Landmass</option>
+                </select>
+            </div>
+
+            <div class="tool-group">
               <h3 class="tool-group-title">Plates</h3>
               <div id="plate-list" class="plate-list"></div>
             </div>
@@ -200,6 +212,12 @@ class TectoLiteApp {
       const val = (e.target as HTMLSelectElement).value as ProjectionType;
       this.state.world.projection = val;
       this.canvasManager?.render();
+    });
+
+    // Motion Mode
+    document.getElementById('motion-mode-select')?.addEventListener('change', (e) => {
+      const mode = (e.target as HTMLSelectElement).value as InteractionMode;
+      this.canvasManager?.setMotionMode(mode);
     });
 
     // View Options
@@ -585,36 +603,74 @@ class TectoLiteApp {
     const plate = this.state.world.plates.find(p => p.id === plateId);
     if (!plate) return;
 
-    // Capture current plate geometry as snapshot for this keyframe
-    const newKeyframe: MotionKeyframe = {
-      time: currentTime,
-      eulerPole: { ...newEulerPole },
-      snapshotPolygons: plate.polygons.map(p => ({ ...p, points: [...p.points] })),
-      snapshotFeatures: plate.features.map(f => ({ ...f }))
-    };
+    // If keyframe exists at exactly currentTime, update it.
+    // Otherwise insert new one.
+    // Simplifying assumption: We usually work with the single active keyframe for MVP
+    // checking if we have keyframes...
 
-    // Update state immutably
+    // For now, simple update of 'motion' property (which mimics having a keyframe)
+    // AND adding to keyframes array if we support it.
+
+    const plates = this.state.world.plates.map(p => {
+      if (p.id === plateId) {
+        const updated = { ...p };
+
+        // Update Motion
+        updated.motion = {
+          ...p.motion,
+          eulerPole: {
+            ...p.motion.eulerPole,
+            position: newEulerPole.position,
+            rate: newEulerPole.rate,
+            visible: newEulerPole.visible ?? p.motion.eulerPole.visible
+          }
+        };
+
+        // Add/Update Keyframe
+        const newKeyframe: MotionKeyframe = {
+          time: currentTime,
+          eulerPole: updated.motion.eulerPole,
+          snapshotPolygons: p.polygons,
+          snapshotFeatures: p.features
+        };
+
+        const otherKeyframes = (p.motionKeyframes || []).filter(k => Math.abs(k.time - currentTime) > 0.001);
+        updated.motionKeyframes = [...otherKeyframes, newKeyframe].sort((a, b) => a.time - b.time);
+
+        return updated;
+      }
+      return p;
+    });
+
     this.state = {
       ...this.state,
-      world: {
-        ...this.state.world,
-        plates: this.state.world.plates.map(p =>
-          p.id === plateId
-            ? {
-              ...p,
-              // Add keyframe and keep sorted by time
-              motionKeyframes: [...(p.motionKeyframes || []), newKeyframe]
-                .sort((a, b) => a.time - b.time),
-              // Also update legacy motion for UI display
-              motion: { eulerPole: { ...newEulerPole } }
-            }
-            : p
-        )
-      }
+      world: { ...this.state.world, plates }
     };
-
+    this.updateUI();
     this.canvasManager?.render();
-    this.updatePropertiesPanel();
+  }
+
+  private handleDragTargetRequest(plateId: string, axis: Vector3, angleRad: number): void {
+    const current = this.state.world.currentTime;
+    const promptText = `Target Time (Ma)? (Current: ${current})`;
+    const input = window.prompt(promptText);
+    if (!input) return;
+
+    const targetTime = parseFloat(input);
+    if (isNaN(targetTime)) return;
+
+    const dt = targetTime - current;
+    if (Math.abs(dt) < 0.001) {
+      alert("Time difference too small!");
+      return;
+    }
+
+    const angleDeg = angleRad * 180 / Math.PI;
+    const rate = angleDeg / dt;
+
+    const pole = vectorToLatLon(axis);
+
+    this.addMotionKeyframe(plateId, { position: pole, rate, visible: true });
   }
 
   private handleMotionChange(plateId: string, pole: Coordinate, rate: number): void {

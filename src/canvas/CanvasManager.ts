@@ -1,4 +1,4 @@
-import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole } from '../types';
+import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
@@ -11,6 +11,7 @@ import {
     drawIslandIcon
 } from './featureIcons';
 import { MotionGizmo } from './MotionGizmo';
+import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3 } from '../utils/sphericalMath';
 
 export class CanvasManager {
     private canvas: HTMLCanvasElement;
@@ -21,7 +22,13 @@ export class CanvasManager {
     // Drag state
     private isDragging = false;
     private lastMousePos: Point = { x: 0, y: 0 };
-    private interactionMode: 'pan' | 'modify_velocity' | 'none' = 'none';
+    private interactionMode: 'pan' | 'modify_velocity' | 'drag_target' | 'none' = 'none';
+    private dragStartGeo: Coordinate | null = null;
+    private ghostPlateId: string | null = null;
+    private ghostRotation: { plateId: string, axis: Vector3, angle: number } | null = null;
+
+    // Motion Control Mode
+    private motionMode: InteractionMode = 'classic';
 
     // Drawing state
     private currentPolygon: Coordinate[] = [];
@@ -43,7 +50,8 @@ export class CanvasManager {
         private onSelect: (plateId: string | null, featureId: string | null) => void,
         private onSplitApply: (points: Coordinate[]) => void,
         private onSplitPreviewChange: (active: boolean) => void,
-        private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void
+        private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void,
+        private onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void
     ) {
         this.canvas = canvas;
         const ctx = canvas.getContext('2d');
@@ -56,6 +64,12 @@ export class CanvasManager {
         // Wait for next frame to ensure parent is sized
         requestAnimationFrame(() => this.resizeCanvas());
         window.addEventListener('resize', () => this.resizeCanvas());
+    }
+
+    public setMotionMode(mode: InteractionMode): void {
+        this.motionMode = mode;
+        this.motionGizmo.setMode(mode);
+        this.render();
     }
 
     private resizeCanvas(): void {
@@ -160,7 +174,17 @@ export class CanvasManager {
 
                 case 'select':
                     const hit = this.hitTest(mousePos);
-                    this.onSelect(hit?.plateId ?? null, hit?.featureId ?? null);
+
+                    if (this.motionMode === 'drag_target' && hit?.plateId && geoPos) {
+                        this.onSelect(hit.plateId, hit.featureId ?? null);
+                        this.isDragging = true;
+                        this.interactionMode = 'drag_target';
+                        this.dragStartGeo = geoPos;
+                        this.ghostPlateId = hit.plateId;
+                        this.canvas.style.cursor = 'grabbing';
+                    } else {
+                        this.onSelect(hit?.plateId ?? null, hit?.featureId ?? null);
+                    }
                     break;
 
                 case 'split':
@@ -222,6 +246,8 @@ export class CanvasManager {
                         selectedPlate.center
                     );
                 }
+            } else if (this.interactionMode === 'drag_target') {
+                this.updateDragTarget(e);
             }
 
             this.lastMousePos = { x: e.clientX, y: e.clientY };
@@ -246,11 +272,21 @@ export class CanvasManager {
                 if (result && plateId) {
                     this.onMotionChange(plateId, result.polePosition, result.rate);
                 }
+            } else if (this.interactionMode === 'drag_target') {
+                if (this.ghostRotation) {
+                    if (this.onDragTargetRequest) {
+                        this.onDragTargetRequest(this.ghostRotation.plateId, this.ghostRotation.axis, this.ghostRotation.angle);
+                    }
+                    this.ghostRotation = null;
+                }
             }
 
             this.isDragging = false;
             this.interactionMode = 'none';
             this.canvas.style.cursor = 'default';
+            this.dragStartGeo = null;
+            this.ghostPlateId = null;
+            this.ghostRotation = null;
         }
         // Note: Split is now applied via applySplit() method, not on mouseup
     }
@@ -373,8 +409,21 @@ export class CanvasManager {
 
             const isSelected = plate.id === state.world.selectedPlateId;
 
+            let polygonsToDraw = plate.polygons;
+            if (this.ghostRotation?.plateId === plate.id) {
+                const { axis, angle } = this.ghostRotation;
+                polygonsToDraw = plate.polygons.map(poly => {
+                    const newPoints = poly.points.map(pt => {
+                        const v = latLonToVector(pt);
+                        const rotated = rotateVector(v, axis, angle);
+                        return vectorToLatLon(rotated);
+                    });
+                    return { ...poly, points: newPoints };
+                });
+            }
+
             // Draw Polygons
-            for (const poly of plate.polygons) {
+            for (const poly of polygonsToDraw) {
                 const geojson = toGeoJSON(poly);
                 this.ctx.beginPath();
                 path(geojson);
@@ -563,6 +612,33 @@ export class CanvasManager {
     public cancelDrawing(): void {
         this.currentPolygon = [];
         this.isDrawing = false;
+        this.render();
+    }
+
+    private updateDragTarget(e: MouseEvent): void {
+        const geoPos = this.getGeoFromMouse(e);
+        if (!geoPos || !this.dragStartGeo || !this.ghostPlateId) return;
+
+        const state = this.getState();
+        const p = state.world.plates.find(pl => pl.id === this.ghostPlateId);
+        if (!p) return;
+
+        // 1. Calculate Drag Rotation Axis & Angle (StartMouse -> CurrMouse)
+        const startMouseVec = latLonToVector(this.dragStartGeo);
+        const currMouseVec = latLonToVector(geoPos);
+
+        let axis = cross(startMouseVec, currMouseVec);
+        const len = Math.sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+
+        if (len < 0.001) return;
+        axis = normalize(axis);
+
+        let dotVal = dot(startMouseVec, currMouseVec);
+        dotVal = Math.max(-1, Math.min(1, dotVal));
+        const angleRad = Math.acos(dotVal);
+
+        // 2. Set Ghost Rotation
+        this.ghostRotation = { plateId: p.id, axis, angle: angleRad };
         this.render();
     }
 

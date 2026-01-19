@@ -1,9 +1,9 @@
 // Motion Gizmo for interactive plate rotation control
 // Provides drag handles for Euler pole position and rotation rate
 
-import { Coordinate, EulerPole } from '../types';
+import { Coordinate, EulerPole, InteractionMode } from '../types';
 import { ProjectionManager } from './ProjectionManager';
-import { latLonToVector, cross, dot, normalize } from '../utils/sphericalMath';
+import { latLonToVector, cross, dot, normalize, vectorToLatLon } from '../utils/sphericalMath';
 
 export type GizmoHandle = 'pole' | 'rate' | null;
 
@@ -273,6 +273,12 @@ export class MotionGizmo {
         this.state.dragStart = { x: mouseX, y: mouseY };
     }
 
+    private mode: InteractionMode = 'classic';
+
+    public setMode(mode: InteractionMode): void {
+        this.mode = mode;
+    }
+
     public updateDrag(
         mouseX: number,
         mouseY: number,
@@ -289,42 +295,59 @@ export class MotionGizmo {
                 return { polePosition: geoPos };
             }
         } else if (this.state.isDragging === 'rate') {
-            // Geographic drag: Calculate rate based on angle around Euler pole
             const mouseGeo = projectionManager.invert(mouseX, mouseY);
 
             if (mouseGeo) {
-                const P = latLonToVector(this.state.polePosition);
-                const C = latLonToVector(plateCenter);
-                const M = latLonToVector(mouseGeo);
+                if (this.mode === 'dynamic_pole') {
+                    // Dynamic Pole: Pole = Cross(Center, Mouse), Rate > 0
+                    const C = latLonToVector(plateCenter);
+                    const M = latLonToVector(mouseGeo);
 
-                // Normal of plane (Pole, Center) - reference for 0 rotation
-                const N1 = normalize(cross(P, C));
-                // Normal of plane (Pole, Mouse) - target rotation
-                const N2 = normalize(cross(P, M));
+                    let poleVec = cross(C, M);
+                    const len = Math.sqrt(poleVec.x ** 2 + poleVec.y ** 2 + poleVec.z ** 2);
 
-                // Check if valid planes
-                if ((N1.x !== 0 || N1.y !== 0 || N1.z !== 0) &&
-                    (N2.x !== 0 || N2.y !== 0 || N2.z !== 0)) {
+                    if (len > 0.01) {
+                        poleVec = normalize(poleVec);
+                        // Angle between Center and Mouse
+                        const dotProd = dot(C, M);
+                        const angleRad = Math.acos(Math.max(-1, Math.min(1, dotProd)));
+                        const angleDeg = angleRad * 180 / Math.PI;
 
-                    // Angle between planes = angle around pole
-                    // cos(theta) = dot(N1, N2)
-                    let dotProd = dot(N1, N2);
-                    // Clamp for safety
-                    dotProd = Math.max(-1, Math.min(1, dotProd));
-                    const angleRad = Math.acos(dotProd);
-                    const angleDeg = angleRad * 180 / Math.PI;
+                        // Set new state
+                        const newPole = vectorToLatLon(poleVec);
+                        // Rate is always positive magnitude, direction determined by pole
+                        const newRate = angleDeg / 5;
 
-                    // Determine direction (Sign)
-                    // If cross(N1, N2) is in same direction as P, then positive (CCW)
-                    const crossN = cross(N1, N2);
-                    const sign = dot(crossN, P) >= 0 ? 1 : -1;
+                        this.state.polePosition = newPole;
+                        this.state.rate = Math.round(newRate * 10) / 10;
 
-                    // Visual arc is drawn as rate * 5 degrees
-                    // So we want: rate * 5 = angleDeg  => rate = angleDeg / 5
-                    const newRate = sign * angleDeg / 5;
+                        return { polePosition: newPole, rate: this.state.rate };
+                    }
+                } else {
+                    // Geographic drag: Calculate rate based on angle around Euler pole
+                    const P = latLonToVector(this.state.polePosition);
+                    const C = latLonToVector(plateCenter);
+                    const M = latLonToVector(mouseGeo);
 
-                    this.state.rate = Math.round(newRate * 10) / 10;
-                    return { rate: this.state.rate };
+                    const N1 = normalize(cross(P, C));
+                    const N2 = normalize(cross(P, M));
+
+                    if ((N1.x !== 0 || N1.y !== 0 || N1.z !== 0) &&
+                        (N2.x !== 0 || N2.y !== 0 || N2.z !== 0)) {
+
+                        let dotProd = dot(N1, N2);
+                        dotProd = Math.max(-1, Math.min(1, dotProd));
+                        const angleRad = Math.acos(dotProd);
+                        const angleDeg = angleRad * 180 / Math.PI;
+
+                        const crossN = cross(N1, N2);
+                        const sign = dot(crossN, P) >= 0 ? 1 : -1;
+
+                        const newRate = sign * angleDeg / 5;
+
+                        this.state.rate = Math.round(newRate * 10) / 10;
+                        return { rate: this.state.rate };
+                    }
                 }
             }
         }

@@ -11,6 +11,8 @@ export interface Point {
 
 export type ProjectionType = 'equirectangular' | 'mollweide' | 'mercator' | 'robinson' | 'orthographic';
 
+export type InteractionMode = 'classic' | 'dynamic_pole' | 'drag_target';
+
 export interface Polygon {
   id: string;
   points: Coordinate[]; // Changed to spherical coordinates
