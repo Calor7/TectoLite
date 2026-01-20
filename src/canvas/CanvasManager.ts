@@ -38,6 +38,12 @@ export class CanvasManager {
     private splitPoints: Coordinate[] = [];
     private splitPreviewActive = false;
 
+    // Box Selection
+    private selectionBoxStart: Point | null = null;
+    private selectionBoxEnd: Point | null = null;
+    private isBoxSelecting = false;
+    private boxSelectPlateId: string | null = null; // Plate context for box selection
+
     // Motion gizmo
     private motionGizmo: MotionGizmo = new MotionGizmo();
 
@@ -47,7 +53,7 @@ export class CanvasManager {
         private setState: (updater: (state: AppState) => AppState) => void,
         private onDrawComplete: (points: Coordinate[]) => void,
         private onFeaturePlace: (position: Coordinate, type: FeatureType) => void,
-        private onSelect: (plateId: string | null, featureId: string | null) => void,
+        private onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[]) => void,
         private onSplitApply: (points: Coordinate[]) => void,
         private onSplitPreviewChange: (active: boolean) => void,
         private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void,
@@ -103,8 +109,10 @@ export class CanvasManager {
 
     private setupEventListeners(): void {
         this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
-        this.canvas.addEventListener('mousemove', this.handleMouseMove.bind(this));
-        this.canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
+        // Bind to window to catch drags outside canvas
+        window.addEventListener('mousemove', this.handleMouseMove.bind(this));
+        window.addEventListener('mouseup', this.handleMouseUp.bind(this));
+
         this.canvas.addEventListener('wheel', this.handleWheel.bind(this));
         this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
         this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -131,6 +139,19 @@ export class CanvasManager {
             this.isDragging = true;
             this.interactionMode = 'pan';
             this.canvas.style.cursor = 'grabbing';
+            return;
+        }
+
+        // Shift+Click triggers box selection (requires a plate to be selected)
+        if (state.activeTool === 'select' && e.shiftKey && e.button === 0) {
+            if (!state.world.selectedPlateId) {
+                // No plate selected, cannot box select features
+                return;
+            }
+            this.isBoxSelecting = true;
+            this.selectionBoxStart = mousePos;
+            this.selectionBoxEnd = mousePos;
+            this.boxSelectPlateId = state.world.selectedPlateId; // Capture plate context
             return;
         }
 
@@ -183,7 +204,22 @@ export class CanvasManager {
                         this.dragStartGeo = geoPos;
                         this.ghostPlateId = hit.plateId;
                         this.canvas.style.cursor = 'grabbing';
+                    } else if (e.ctrlKey && hit?.featureId) {
+                        // Ctrl+Click: Additive selection (toggle feature in/out of selection)
+                        const currentIds = state.world.selectedFeatureIds || [];
+                        const isAlreadySelected = currentIds.includes(hit.featureId);
+
+                        if (isAlreadySelected) {
+                            // Remove from selection
+                            const newIds = currentIds.filter(id => id !== hit.featureId);
+                            this.onSelect(hit.plateId ?? state.world.selectedPlateId, null, newIds);
+                        } else {
+                            // Add to selection
+                            const newIds = [...currentIds, hit.featureId];
+                            this.onSelect(hit.plateId ?? state.world.selectedPlateId, null, newIds);
+                        }
                     } else {
+                        // Single click selection (clears previous selection)
                         this.onSelect(hit?.plateId ?? null, hit?.featureId ?? null);
                     }
                     break;
@@ -227,6 +263,12 @@ export class CanvasManager {
     private handleMouseMove(e: MouseEvent): void {
         const geoPos = this.getGeoFromMouse(e);
         const mousePos = this.getMousePos(e);
+
+        if (this.isBoxSelecting) {
+            this.selectionBoxEnd = mousePos;
+            this.render();
+            return;
+        }
 
         if (this.isDragging) {
             const dx = e.clientX - this.lastMousePos.x;
@@ -286,6 +328,44 @@ export class CanvasManager {
     }
 
     private handleMouseUp(_e: MouseEvent): void {
+        const state = this.getState();
+
+        // 1. Handle Box Selection (Explicit check, independent of dragging)
+        if (this.isBoxSelecting && this.selectionBoxStart && this.selectionBoxEnd && this.boxSelectPlateId) {
+            // Finalize box selection
+            const x1 = Math.min(this.selectionBoxStart.x, this.selectionBoxEnd.x);
+            const x2 = Math.max(this.selectionBoxStart.x, this.selectionBoxEnd.x);
+            const y1 = Math.min(this.selectionBoxStart.y, this.selectionBoxEnd.y);
+            const y2 = Math.max(this.selectionBoxStart.y, this.selectionBoxEnd.y);
+
+            const selectedFeatures: string[] = [];
+
+            // Only iterate the captured plate's features
+            const targetPlate = state.world.plates.find(p => p.id === this.boxSelectPlateId);
+            if (targetPlate && targetPlate.visible) {
+                for (const feature of targetPlate.features) {
+                    const proj = this.projectionManager.project(feature.position);
+                    if (proj) {
+                        if (proj[0] >= x1 && proj[0] <= x2 && proj[1] >= y1 && proj[1] <= y2) {
+                            selectedFeatures.push(feature.id);
+                        }
+                    }
+                }
+            }
+
+            if (selectedFeatures.length > 0) {
+                this.onSelect(this.boxSelectPlateId, null, selectedFeatures);
+            }
+
+            this.isBoxSelecting = false;
+            this.selectionBoxStart = null;
+            this.selectionBoxEnd = null;
+            this.boxSelectPlateId = null;
+            this.render();
+            return;
+        }
+
+        // 2. Handle Dragging
         if (this.isDragging) {
             // Apply gizmo changes if we were modifying velocity
             if (this.interactionMode === 'modify_velocity') {
@@ -309,11 +389,11 @@ export class CanvasManager {
             this.dragStartGeo = null;
             this.ghostPlateId = null;
             this.ghostRotation = null;
+            // Note: Split is now applied via applySplit() method, not on mouseup
         }
-        // Note: Split is now applied via applySplit() method, not on mouseup
     }
 
-    private handleDoubleClick(_e: MouseEvent): void {
+    private handleDoubleClick(e: MouseEvent): void {
         const state = this.getState();
         if (state.activeTool === 'draw' && this.isDrawing && this.currentPolygon.length >= 3) {
             this.onDrawComplete([...this.currentPolygon]);
@@ -330,6 +410,30 @@ export class CanvasManager {
             this.currentPolygon = [];
             this.isDrawing = false;
             this.render();
+        } else if (state.activeTool === 'select') {
+            // Handle Feature Multi-Select via Double-Click
+            // Use the currently selected plate (don't require direct hit on feature)
+            const selectedPlateId = state.world.selectedPlateId;
+            if (!selectedPlateId) return; // No plate selected, nothing to do
+
+            const mousePos = this.getMousePos(e);
+            const hit = this.hitTest(mousePos);
+
+            // Get the selected plate
+            const plate = state.world.plates.find(p => p.id === selectedPlateId);
+            if (!plate) return;
+
+            // If we hit a feature, select all features of that type on this plate
+            if (hit?.featureId) {
+                const targetFeature = plate.features.find(f => f.id === hit.featureId);
+                if (targetFeature) {
+                    const featuresOfType = plate.features
+                        .filter(f => f.type === targetFeature.type)
+                        .map(f => f.id);
+
+                    this.onSelect(selectedPlateId, hit.featureId, featuresOfType);
+                }
+            }
         }
     }
 
@@ -469,7 +573,9 @@ export class CanvasManager {
 
             // Draw Features
             for (const feature of plate.features) {
-                this.drawFeature(feature, feature.id === state.world.selectedFeatureId);
+                const isFeatureSelected = feature.id === state.world.selectedFeatureId ||
+                    (state.world.selectedFeatureIds && state.world.selectedFeatureIds.includes(feature.id));
+                this.drawFeature(feature, isFeatureSelected);
             }
 
             // Euler Pole Visualization
@@ -508,6 +614,23 @@ export class CanvasManager {
         // Split polyline preview
         if (this.splitPreviewActive && this.splitPoints.length > 0) {
             this.drawSplitPolyline(this.splitPoints);
+        }
+
+        // Render Selection Box
+        if (this.isBoxSelecting && this.selectionBoxStart && this.selectionBoxEnd) {
+            const x = Math.min(this.selectionBoxStart.x, this.selectionBoxEnd.x);
+            const y = Math.min(this.selectionBoxStart.y, this.selectionBoxEnd.y);
+            const w = Math.abs(this.selectionBoxEnd.x - this.selectionBoxStart.x);
+            const h = Math.abs(this.selectionBoxEnd.y - this.selectionBoxStart.y);
+
+            this.ctx.save();
+            this.ctx.strokeStyle = '#00a8ff';
+            this.ctx.lineWidth = 1;
+            this.ctx.setLineDash([5, 3]);
+            this.ctx.fillStyle = 'rgba(0, 168, 255, 0.1)';
+            this.ctx.fillRect(x, y, w, h);
+            this.ctx.strokeRect(x, y, w, h);
+            this.ctx.restore();
         }
     }
 

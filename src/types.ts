@@ -95,7 +95,8 @@ export interface WorldState {
   timeScale: number;
   isPlaying: boolean;
   selectedPlateId: string | null;
-  selectedFeatureId: string | null;
+  selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
+  selectedFeatureIds: string[];     // Support multiple selection
   projection: ProjectionType;
   showGrid: boolean;
   showEulerPoles: boolean;
@@ -147,6 +148,7 @@ export function createDefaultWorldState(): WorldState {
     isPlaying: false,
     selectedPlateId: null,
     selectedFeatureId: null,
+    selectedFeatureIds: [],
     projection: 'orthographic', // Default to globe as requested
     showGrid: true,
     showEulerPoles: false,

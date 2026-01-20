@@ -51,7 +51,7 @@ class TectoLiteApp {
       },
       (points) => this.handleDrawComplete(points),
       (pos, type) => this.handleFeaturePlace(pos, type),
-      (plateId, featureId) => this.handleSelect(plateId, featureId),
+      (plateId, featureId, featureIds) => this.handleSelect(plateId, featureId, featureIds),
       (points) => this.handleSplitApply(points),
       (active) => this.handleSplitPreviewChange(active),
       (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
@@ -539,7 +539,7 @@ class TectoLiteApp {
     this.canvasManager?.render();
   }
 
-  private handleSelect(plateId: string | null, featureId: string | null): void {
+  private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = []): void {
     // Handle fusion tool workflow
     if (this.state.activeTool === 'fuse' && plateId) {
       if (this.fusionFirstPlateId === null) {
@@ -584,7 +584,18 @@ class TectoLiteApp {
 
     this.state.world.selectedPlateId = plateId;
     this.state.world.selectedFeatureId = featureId ?? null;
+
+    // Handle multi-selection
+    if (featureIds.length > 0) {
+      this.state.world.selectedFeatureIds = featureIds;
+    } else if (featureId) {
+      this.state.world.selectedFeatureIds = [featureId];
+    } else {
+      this.state.world.selectedFeatureIds = [];
+    }
+
     this.updateUI();
+    this.canvasManager?.render();
   }
 
   private handlePolyFeatureComplete(points: Coordinate[], fillColor: string): void {
@@ -654,13 +665,25 @@ class TectoLiteApp {
 
   private deleteSelected(): void {
     this.pushState(); // Save state for undo
-    if (this.state.world.selectedFeatureId) {
-      this.state.world.plates.forEach(p => {
-        p.features = p.features.filter(f => f.id !== this.state.world.selectedFeatureId);
-      });
+
+    const { selectedFeatureId, selectedFeatureIds, selectedPlateId } = this.state.world;
+
+    if (selectedFeatureId || (selectedFeatureIds && selectedFeatureIds.length > 0)) {
+      // Build set of all feature IDs to delete
+      const idsToDelete = new Set<string>();
+      if (selectedFeatureId) idsToDelete.add(selectedFeatureId);
+      if (selectedFeatureIds) selectedFeatureIds.forEach(id => idsToDelete.add(id));
+
+      // Remove these features from all plates
+      this.state.world.plates = this.state.world.plates.map(p => ({
+        ...p,
+        features: p.features.filter(f => !idsToDelete.has(f.id))
+      }));
+
       this.state.world.selectedFeatureId = null;
-    } else if (this.state.world.selectedPlateId) {
-      this.state.world.plates = this.state.world.plates.filter(p => p.id !== this.state.world.selectedPlateId);
+      this.state.world.selectedFeatureIds = [];
+    } else if (selectedPlateId) {
+      this.state.world.plates = this.state.world.plates.filter(p => p.id !== selectedPlateId);
       this.state.world.selectedPlateId = null;
     }
     this.updateUI();
