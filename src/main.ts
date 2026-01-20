@@ -168,6 +168,7 @@ class TectoLiteApp {
               <button class="feature-btn" data-feature="hotspot" title="Hotspot">🔥 Hot</button>
               <button class="feature-btn" data-feature="rift" title="Rift">⚡ Rift</button>
               <button class="feature-btn" data-feature="trench" title="Trench">🌊 Trn</button>
+              <button class="feature-btn" data-feature="weakness" title="Weakness">💔 Weak</button>
             </div>
             
             <div class="tool-group">

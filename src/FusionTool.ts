@@ -16,7 +16,7 @@ interface FuseOptions {
 
 const DEFAULT_OPTIONS: FuseOptions = {
     addWeaknessFeatures: true,
-    weaknessInterval: 10 // degrees
+    weaknessInterval: 1 // degrees (1 feature per degree)
 };
 
 /**
@@ -89,6 +89,7 @@ function findClosestPointsPair(plate1: TectonicPlate, plate2: TectonicPlate): Co
 
 /**
  * Create weakness features along the fusion boundary at specified intervals
+ * Properly interpolates along all line segments, not just at vertices
  */
 function createWeaknessFeatures(
     boundaryPoints: Coordinate[],
@@ -102,48 +103,53 @@ function createWeaknessFeatures(
     const features: Feature[] = [];
 
     if (boundaryPoints.length === 1) {
-        // Single point
         features.push(createWeaknessFeature(boundaryPoints[0], plate1Name, plate2Name, currentTime));
-    } else if (boundaryPoints.length === 2) {
-        // Line between two points - place features at intervals
-        const [pt1, pt2] = boundaryPoints;
-        const totalDist = Math.hypot(pt2[0] - pt1[0], pt2[1] - pt1[1]);
-        const numFeatures = Math.max(2, Math.ceil(totalDist / interval));
+        return features;
+    }
 
-        for (let i = 0; i < numFeatures; i++) {
-            const t = i / (numFeatures - 1);
+    // Walk along all line segments and place features at regular intervals
+    let distanceSinceLastFeature = 0;
+
+    // Place first feature at start
+    features.push(createWeaknessFeature(boundaryPoints[0], plate1Name, plate2Name, currentTime));
+
+    for (let i = 1; i < boundaryPoints.length; i++) {
+        const prevPt = boundaryPoints[i - 1];
+        const currPt = boundaryPoints[i];
+        const segmentLength = Math.hypot(currPt[0] - prevPt[0], currPt[1] - prevPt[1]);
+
+        if (segmentLength === 0) continue;
+
+        // Direction vector
+        const dx = (currPt[0] - prevPt[0]) / segmentLength;
+        const dy = (currPt[1] - prevPt[1]) / segmentLength;
+
+        // Walk along this segment
+        let distanceAlongSegment = interval - distanceSinceLastFeature;
+
+        while (distanceAlongSegment <= segmentLength) {
             const pos: Coordinate = [
-                pt1[0] + t * (pt2[0] - pt1[0]),
-                pt1[1] + t * (pt2[1] - pt1[1])
+                prevPt[0] + dx * distanceAlongSegment,
+                prevPt[1] + dy * distanceAlongSegment
             ];
             features.push(createWeaknessFeature(pos, plate1Name, plate2Name, currentTime));
-        }
-    } else {
-        // Multiple points - sample at intervals along the boundary
-        let accumulatedDist = 0;
-        let lastPoint = boundaryPoints[0];
-
-        features.push(createWeaknessFeature(lastPoint, plate1Name, plate2Name, currentTime));
-
-        for (let i = 1; i < boundaryPoints.length; i++) {
-            const pt = boundaryPoints[i];
-            const segDist = Math.hypot(pt[0] - lastPoint[0], pt[1] - lastPoint[1]);
-            accumulatedDist += segDist;
-
-            if (accumulatedDist >= interval) {
-                features.push(createWeaknessFeature(pt, plate1Name, plate2Name, currentTime));
-                accumulatedDist = 0;
-            }
-            lastPoint = pt;
+            distanceAlongSegment += interval;
         }
 
-        // Always add the last point
-        const lastBoundaryPt = boundaryPoints[boundaryPoints.length - 1];
-        if (features.length === 1 ||
-            Math.hypot(lastBoundaryPt[0] - features[features.length - 1].position[0],
-                lastBoundaryPt[1] - features[features.length - 1].position[1]) > interval / 2) {
-            features.push(createWeaknessFeature(lastBoundaryPt, plate1Name, plate2Name, currentTime));
-        }
+        // Update distance since last feature
+        distanceSinceLastFeature = segmentLength - (distanceAlongSegment - interval);
+    }
+
+    // Place final feature at end if not too close to last one
+    const lastBoundaryPt = boundaryPoints[boundaryPoints.length - 1];
+    const lastFeaturePos = features[features.length - 1].position;
+    const distToLast = Math.hypot(
+        lastBoundaryPt[0] - lastFeaturePos[0],
+        lastBoundaryPt[1] - lastFeaturePos[1]
+    );
+
+    if (distToLast > interval * 0.3) {
+        features.push(createWeaknessFeature(lastBoundaryPt, plate1Name, plate2Name, currentTime));
     }
 
     return features;
