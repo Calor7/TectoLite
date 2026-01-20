@@ -1,0 +1,319 @@
+// Fusion Tool - Merges two plates into one
+import { AppState, TectonicPlate, Feature, Polygon, Coordinate, generateId, MotionKeyframe } from './types';
+import { calculateSphericalCentroid } from './utils/sphericalMath';
+import polygonClipping from 'polygon-clipping';
+
+interface FuseResult {
+    success: boolean;
+    error?: string;
+    newState?: AppState;
+}
+
+interface FuseOptions {
+    addWeaknessFeatures: boolean;
+    weaknessInterval: number; // degrees between weakness features
+}
+
+const DEFAULT_OPTIONS: FuseOptions = {
+    addWeaknessFeatures: true,
+    weaknessInterval: 10 // degrees
+};
+
+/**
+ * Find points along the fusion boundary (intersection of the two plate boundaries)
+ * Returns an array of coordinates representing the fusion line(s)
+ */
+function findFusionBoundary(plate1: TectonicPlate, plate2: TectonicPlate): Coordinate[] {
+    // Convert plate polygons to polygon-clipping format
+    const polys1: [number, number][][] = plate1.polygons.map(p =>
+        [...p.points.map(pt => [pt[0], pt[1]] as [number, number]), [p.points[0][0], p.points[0][1]] as [number, number]]
+    );
+
+    const polys2: [number, number][][] = plate2.polygons.map(p =>
+        [...p.points.map(pt => [pt[0], pt[1]] as [number, number]), [p.points[0][0], p.points[0][1]] as [number, number]]
+    );
+
+    try {
+        // Find intersection of the two polygons - this is the overlap area
+        const intersection = polygonClipping.intersection(
+            polys1 as any,
+            polys2 as any
+        );
+
+        // If they overlap, the boundary of the intersection is the fusion line
+        if (intersection.length > 0) {
+            const boundaryPoints: Coordinate[] = [];
+            for (const multiPoly of intersection) {
+                for (const ring of multiPoly) {
+                    for (const pt of ring) {
+                        boundaryPoints.push([pt[0], pt[1]]);
+                    }
+                }
+            }
+            return boundaryPoints;
+        }
+    } catch (e) {
+        console.warn('Intersection calculation failed', e);
+    }
+
+    // If no overlap, find the closest points between the plates
+    return findClosestPointsPair(plate1, plate2);
+}
+
+/**
+ * Find closest points between two plates (for non-overlapping plates)
+ */
+function findClosestPointsPair(plate1: TectonicPlate, plate2: TectonicPlate): Coordinate[] {
+    let minDist = Infinity;
+    let closestPt1: Coordinate = [0, 0];
+    let closestPt2: Coordinate = [0, 0];
+
+    for (const poly1 of plate1.polygons) {
+        for (const pt1 of poly1.points) {
+            for (const poly2 of plate2.polygons) {
+                for (const pt2 of poly2.points) {
+                    const dist = Math.hypot(pt1[0] - pt2[0], pt1[1] - pt2[1]);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closestPt1 = pt1;
+                        closestPt2 = pt2;
+                    }
+                }
+            }
+        }
+    }
+
+    // Return a line between the two closest points
+    return [closestPt1, closestPt2];
+}
+
+/**
+ * Create weakness features along the fusion boundary at specified intervals
+ */
+function createWeaknessFeatures(
+    boundaryPoints: Coordinate[],
+    interval: number,
+    plate1Name: string,
+    plate2Name: string,
+    currentTime: number
+): Feature[] {
+    if (boundaryPoints.length === 0) return [];
+
+    const features: Feature[] = [];
+
+    if (boundaryPoints.length === 1) {
+        // Single point
+        features.push(createWeaknessFeature(boundaryPoints[0], plate1Name, plate2Name, currentTime));
+    } else if (boundaryPoints.length === 2) {
+        // Line between two points - place features at intervals
+        const [pt1, pt2] = boundaryPoints;
+        const totalDist = Math.hypot(pt2[0] - pt1[0], pt2[1] - pt1[1]);
+        const numFeatures = Math.max(2, Math.ceil(totalDist / interval));
+
+        for (let i = 0; i < numFeatures; i++) {
+            const t = i / (numFeatures - 1);
+            const pos: Coordinate = [
+                pt1[0] + t * (pt2[0] - pt1[0]),
+                pt1[1] + t * (pt2[1] - pt1[1])
+            ];
+            features.push(createWeaknessFeature(pos, plate1Name, plate2Name, currentTime));
+        }
+    } else {
+        // Multiple points - sample at intervals along the boundary
+        let accumulatedDist = 0;
+        let lastPoint = boundaryPoints[0];
+
+        features.push(createWeaknessFeature(lastPoint, plate1Name, plate2Name, currentTime));
+
+        for (let i = 1; i < boundaryPoints.length; i++) {
+            const pt = boundaryPoints[i];
+            const segDist = Math.hypot(pt[0] - lastPoint[0], pt[1] - lastPoint[1]);
+            accumulatedDist += segDist;
+
+            if (accumulatedDist >= interval) {
+                features.push(createWeaknessFeature(pt, plate1Name, plate2Name, currentTime));
+                accumulatedDist = 0;
+            }
+            lastPoint = pt;
+        }
+
+        // Always add the last point
+        const lastBoundaryPt = boundaryPoints[boundaryPoints.length - 1];
+        if (features.length === 1 ||
+            Math.hypot(lastBoundaryPt[0] - features[features.length - 1].position[0],
+                lastBoundaryPt[1] - features[features.length - 1].position[1]) > interval / 2) {
+            features.push(createWeaknessFeature(lastBoundaryPt, plate1Name, plate2Name, currentTime));
+        }
+    }
+
+    return features;
+}
+
+/**
+ * Create a single weakness feature
+ */
+function createWeaknessFeature(
+    position: Coordinate,
+    plate1Name: string,
+    plate2Name: string,
+    currentTime: number
+): Feature {
+    return {
+        id: generateId(),
+        type: 'weakness',
+        position,
+        rotation: 0,
+        scale: 1,
+        properties: {
+            fusedFrom: [plate1Name, plate2Name],
+            fusedAt: currentTime
+        }
+    };
+}
+
+/**
+ * Merge polygons from two plates using proper polygon union
+ */
+function mergePolygons(plate1: TectonicPlate, plate2: TectonicPlate): Polygon[] {
+    const polys1: [number, number][][] = plate1.polygons.map(p =>
+        [...p.points.map(pt => [pt[0], pt[1]] as [number, number]), [p.points[0][0], p.points[0][1]] as [number, number]]
+    );
+
+    const polys2: [number, number][][] = plate2.polygons.map(p =>
+        [...p.points.map(pt => [pt[0], pt[1]] as [number, number]), [p.points[0][0], p.points[0][1]] as [number, number]]
+    );
+
+    try {
+        const result = polygonClipping.union(polys1 as any, polys2 as any);
+
+        const merged: Polygon[] = [];
+        for (const multiPoly of result) {
+            for (const ring of multiPoly) {
+                const points: Coordinate[] = ring.slice(0, -1).map(pt => [pt[0], pt[1]] as Coordinate);
+                if (points.length >= 3) {
+                    merged.push({
+                        id: generateId(),
+                        points,
+                        closed: true
+                    });
+                }
+            }
+        }
+
+        return merged.length > 0 ? merged : fallbackMerge(plate1, plate2);
+    } catch (e) {
+        console.warn('Polygon union failed, using fallback', e);
+        return fallbackMerge(plate1, plate2);
+    }
+}
+
+function fallbackMerge(plate1: TectonicPlate, plate2: TectonicPlate): Polygon[] {
+    const merged: Polygon[] = [];
+    for (const poly of plate1.polygons) {
+        merged.push({ id: generateId(), points: [...poly.points], closed: true });
+    }
+    for (const poly of plate2.polygons) {
+        merged.push({ id: generateId(), points: [...poly.points], closed: true });
+    }
+    return merged;
+}
+
+/**
+ * Fuse two plates into one, optionally creating weakness features along the fusion line
+ */
+export function fusePlates(
+    state: AppState,
+    plate1Id: string,
+    plate2Id: string,
+    options: Partial<FuseOptions> = {}
+): FuseResult {
+    const opts = { ...DEFAULT_OPTIONS, ...options };
+
+    const plate1 = state.world.plates.find(p => p.id === plate1Id);
+    const plate2 = state.world.plates.find(p => p.id === plate2Id);
+
+    if (!plate1 || !plate2) {
+        return { success: false, error: 'One or both plates not found' };
+    }
+
+    if (plate1.id === plate2.id) {
+        return { success: false, error: 'Cannot fuse a plate with itself' };
+    }
+
+    const currentTime = state.world.currentTime;
+
+    // Merge polygons using proper union
+    const mergedPolygons = mergePolygons(plate1, plate2);
+
+    // Create weakness features along fusion boundary if enabled
+    let weaknessFeatures: Feature[] = [];
+    if (opts.addWeaknessFeatures) {
+        const fusionBoundary = findFusionBoundary(plate1, plate2);
+        weaknessFeatures = createWeaknessFeatures(
+            fusionBoundary,
+            opts.weaknessInterval,
+            plate1.name,
+            plate2.name,
+            currentTime
+        );
+    }
+
+    // Combine features from both plates
+    const combinedFeatures: Feature[] = [
+        ...plate1.features,
+        ...plate2.features,
+        ...weaknessFeatures
+    ];
+
+    // Calculate new center
+    const allPoints = mergedPolygons.flatMap(p => p.points);
+    const newCenter = calculateSphericalCentroid(allPoints);
+
+    // Create initial keyframe for merged plate
+    const initialKeyframe: MotionKeyframe = {
+        time: currentTime,
+        eulerPole: { ...plate1.motion.eulerPole },
+        snapshotPolygons: mergedPolygons,
+        snapshotFeatures: combinedFeatures
+    };
+
+    // Create the new fused plate
+    const fusedPlate: TectonicPlate = {
+        id: generateId(),
+        name: `${plate1.name}-${plate2.name} (Fused)`,
+        color: plate1.color,
+        polygons: mergedPolygons,
+        features: combinedFeatures,
+        center: newCenter,
+        motion: plate1.motion,
+        motionKeyframes: [initialKeyframe],
+        events: [],
+        birthTime: currentTime,
+        deathTime: null,
+        initialPolygons: mergedPolygons,
+        initialFeatures: combinedFeatures,
+        visible: true,
+        locked: false
+    };
+
+    // Mark original plates as dead at current time
+    const updatedPlates = state.world.plates.map(p => {
+        if (p.id === plate1Id || p.id === plate2Id) {
+            return { ...p, deathTime: currentTime };
+        }
+        return p;
+    });
+
+    const newPlates = [...updatedPlates, fusedPlate];
+
+    const newState: AppState = {
+        ...state,
+        world: {
+            ...state.world,
+            plates: newPlates,
+            selectedPlateId: fusedPlate.id
+        }
+    };
+
+    return { success: true, newState };
+}

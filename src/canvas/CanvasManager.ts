@@ -51,7 +51,8 @@ export class CanvasManager {
         private onSplitApply: (points: Coordinate[]) => void,
         private onSplitPreviewChange: (active: boolean) => void,
         private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void,
-        private onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void
+        private onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void,
+        private onPolyFeatureComplete?: (points: Coordinate[], fillColor: string) => void
     ) {
         this.canvas = canvas;
         const ctx = canvas.getContext('2d');
@@ -198,6 +199,27 @@ export class CanvasManager {
                         this.render();
                     }
                     break;
+
+                case 'poly_feature':
+                    // Poly feature uses same drawing logic as draw tool
+                    if (geoPos) {
+                        if (!this.isDrawing) {
+                            this.isDrawing = true;
+                            this.currentPolygon = [geoPos];
+                        } else {
+                            this.currentPolygon.push(geoPos);
+                        }
+                        this.render();
+                    }
+                    break;
+
+                case 'fuse':
+                    // Fuse tool: click to select plates
+                    const fuseHit = this.hitTest(mousePos);
+                    if (fuseHit?.plateId) {
+                        this.onSelect(fuseHit.plateId, null);
+                    }
+                    break;
             }
         }
     }
@@ -295,6 +317,16 @@ export class CanvasManager {
         const state = this.getState();
         if (state.activeTool === 'draw' && this.isDrawing && this.currentPolygon.length >= 3) {
             this.onDrawComplete([...this.currentPolygon]);
+            this.currentPolygon = [];
+            this.isDrawing = false;
+            this.render();
+        } else if (state.activeTool === 'poly_feature' && this.isDrawing && this.currentPolygon.length >= 3) {
+            // Get the current poly color from the color picker
+            const colorInput = document.getElementById('poly-feature-color') as HTMLInputElement;
+            const fillColor = colorInput?.value || '#ff6b6b';
+            if (this.onPolyFeatureComplete) {
+                this.onPolyFeatureComplete([...this.currentPolygon], fillColor);
+            }
             this.currentPolygon = [];
             this.isDrawing = false;
             this.render();
@@ -480,6 +512,52 @@ export class CanvasManager {
     }
 
     private drawFeature(feature: Feature, isSelected: boolean): void {
+        // Handle poly_region features specially - they have their own polygon
+        if (feature.type === 'poly_region' && feature.polygon && feature.polygon.length >= 3) {
+            const path = this.projectionManager.getPathGenerator();
+            const geojson = {
+                type: 'Polygon' as const,
+                coordinates: [[...feature.polygon, feature.polygon[0]]] // Close the polygon
+            };
+
+            this.ctx.beginPath();
+            path(geojson as any);
+            this.ctx.fillStyle = feature.fillColor || '#ff6b6b';
+            this.ctx.globalAlpha = 0.7; // Semi-transparent
+            this.ctx.fill();
+            this.ctx.globalAlpha = 1.0;
+
+            if (isSelected) {
+                this.ctx.strokeStyle = '#ffffff';
+                this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+            }
+            return;
+        }
+
+        // Handle weakness feature
+        if (feature.type === 'weakness') {
+            const proj = this.projectionManager.project(feature.position);
+            if (!proj) return;
+
+            this.ctx.save();
+            this.ctx.translate(proj[0], proj[1]);
+
+            // Draw a jagged crack pattern
+            this.ctx.strokeStyle = isSelected ? '#ffffff' : '#8b4513';
+            this.ctx.lineWidth = isSelected ? 3 : 2;
+            this.ctx.beginPath();
+            this.ctx.moveTo(-8, -4);
+            this.ctx.lineTo(-3, 2);
+            this.ctx.lineTo(0, -2);
+            this.ctx.lineTo(4, 4);
+            this.ctx.lineTo(8, 0);
+            this.ctx.stroke();
+
+            this.ctx.restore();
+            return;
+        }
+
         const proj = this.projectionManager.project(feature.position);
         if (!proj) return; // Behind globe or invalid
 

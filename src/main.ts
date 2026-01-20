@@ -20,12 +20,17 @@ import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
 import { exportToPNG } from './export';
 import { splitPlate } from './SplitTool';
+import { fusePlates } from './FusionTool';
 import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
+import { HistoryManager } from './HistoryManager';
+import { exportToJSON, importFromJSON } from './export';
 
 class TectoLiteApp {
   private state: AppState;
   private canvasManager: CanvasManager | null = null;
   private simulation: SimulationEngine | null = null;
+  private historyManager: HistoryManager = new HistoryManager();
+  private fusionFirstPlateId: string | null = null; // Track first plate for fusion
 
   constructor() {
     this.state = createDefaultAppState();
@@ -50,7 +55,8 @@ class TectoLiteApp {
       (points) => this.handleSplitApply(points),
       (active) => this.handleSplitPreviewChange(active),
       (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
-      (plateId, axis, angleRad) => this.handleDragTargetRequest(plateId, axis, angleRad)
+      (plateId, axis, angleRad) => this.handleDragTargetRequest(plateId, axis, angleRad),
+      (points, fillColor) => this.handlePolyFeatureComplete(points, fillColor)
     );
 
     // Initialize simulation
@@ -83,9 +89,22 @@ class TectoLiteApp {
                 <option value="robinson">Robinson</option>
             </select>
             
+            <button id="btn-undo" class="btn btn-secondary" title="Undo (Ctrl+Z)">
+              <span class="icon">↶</span> Undo
+            </button>
+            <button id="btn-redo" class="btn btn-secondary" title="Redo (Ctrl+Y)">
+              <span class="icon">↷</span> Redo
+            </button>
             <button id="btn-export" class="btn btn-primary">
               <span class="icon">📥</span> Export PNG
             </button>
+            <button id="btn-export-json" class="btn btn-secondary" title="Export JSON">
+              <span class="icon">💾</span> Save
+            </button>
+            <button id="btn-import-json" class="btn btn-secondary" title="Import JSON">
+              <span class="icon">📂</span> Load
+            </button>
+            <input type="file" id="file-import" accept=".json" style="display: none;">
           </div>
         </header>
         
@@ -113,12 +132,33 @@ class TectoLiteApp {
                 <span class="tool-icon">✂️</span>
                 <span class="tool-label">Split</span>
               </button>
+              <button class="tool-btn" data-tool="poly_feature" title="Poly Feature (P)">
+                <span class="tool-icon">🎨</span>
+                <span class="tool-label">Poly</span>
+              </button>
+              <button class="tool-btn" data-tool="fuse" title="Fuse Plates (G)">
+                <span class="tool-icon">🔗</span>
+                <span class="tool-label">Fuse</span>
+              </button>
             </div>
             
             <div class="tool-group" id="split-controls" style="display: none;">
               <h3 class="tool-group-title">Split Preview</h3>
               <button class="btn btn-success" id="btn-split-apply">✓ Apply</button>
               <button class="btn btn-secondary" id="btn-split-cancel">✗ Cancel</button>
+            </div>
+
+            <div class="tool-group" id="fuse-controls" style="display: none;">
+              <h3 class="tool-group-title">Fuse Options</h3>
+              <label class="view-option">
+                <input type="checkbox" id="check-add-weakness" checked> Add Weakness Features
+              </label>
+            </div>
+
+            <div class="tool-group" id="poly-color-picker" style="display: none;">
+              <h3 class="tool-group-title">Poly Color</h3>
+              <input type="color" id="poly-feature-color" value="#ff6b6b" class="property-color">
+              <span class="color-label">Fill Color</span>
             </div>
             
             <div class="tool-group" id="feature-selector">
@@ -147,6 +187,17 @@ class TectoLiteApp {
                     <option value="dynamic_pole">Dynamic Direction</option>
                     <option value="drag_target">Drag Landmass</option>
                 </select>
+            </div>
+
+            <div class="tool-group">
+                <h3 class="tool-group-title">Global Options</h3>
+                <label class="view-option">
+                    <input type="checkbox" id="check-speed-limit"> Enable Speed Limit
+                </label>
+                <div class="property-group" style="margin-top: 8px;">
+                    <label class="property-label">Max Speed (deg/Ma)</label>
+                    <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 80px;">
+                </div>
             </div>
 
             <div class="tool-group">
@@ -231,15 +282,46 @@ class TectoLiteApp {
       this.canvasManager?.render();
     });
 
+    // Global Options
+    document.getElementById('check-speed-limit')?.addEventListener('change', (e) => {
+      this.state.world.globalOptions.speedLimitEnabled = (e.target as HTMLInputElement).checked;
+    });
+
+    document.getElementById('global-max-speed')?.addEventListener('change', (e) => {
+      const val = parseFloat((e.target as HTMLInputElement).value);
+      if (!isNaN(val) && val > 0) {
+        this.state.world.globalOptions.maxDragSpeed = val;
+      }
+    });
+
     // Hotkeys
     document.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      // Undo/Redo hotkeys
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          this.redo();
+        } else {
+          this.undo();
+        }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        this.redo();
+        return;
+      }
+
       switch (e.key.toLowerCase()) {
         case 'v': this.setActiveTool('select'); break;
         case 'h': this.setActiveTool('pan'); break; // Now Rotate/Pan
         case 'd': this.setActiveTool('draw'); break;
         case 'f': this.setActiveTool('feature'); break;
         case 's': this.setActiveTool('split'); break;
+        case 'p': this.setActiveTool('poly_feature'); break;
+        case 'g': this.setActiveTool('fuse'); break;
         case 'escape':
           this.canvasManager?.cancelDrawing();
           break;
@@ -289,6 +371,43 @@ class TectoLiteApp {
     document.getElementById('btn-split-cancel')?.addEventListener('click', () => {
       this.canvasManager?.cancelSplit();
     });
+
+    // Undo/Redo buttons
+    document.getElementById('btn-undo')?.addEventListener('click', () => {
+      this.undo();
+    });
+
+    document.getElementById('btn-redo')?.addEventListener('click', () => {
+      this.redo();
+    });
+
+    // Export/Import JSON buttons
+    document.getElementById('btn-export-json')?.addEventListener('click', () => {
+      exportToJSON(this.state);
+    });
+
+    document.getElementById('btn-import-json')?.addEventListener('click', () => {
+      document.getElementById('file-import')?.click();
+    });
+
+    document.getElementById('file-import')?.addEventListener('change', async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) {
+        try {
+          const worldState = await importFromJSON(file);
+          this.pushState(); // Save current state before replacing
+          this.state = {
+            ...this.state,
+            world: worldState
+          };
+          this.updateUI();
+          this.canvasManager?.render();
+        } catch (err) {
+          alert('Failed to load file: ' + (err as Error).message);
+        }
+        (e.target as HTMLInputElement).value = ''; // Reset file input
+      }
+    });
   }
 
   private updateUI(): void {
@@ -307,6 +426,16 @@ class TectoLiteApp {
     if (featureSelector) {
       featureSelector.style.display = tool === 'feature' ? 'block' : 'none';
     }
+
+    const polyColorPicker = document.getElementById('poly-color-picker');
+    if (polyColorPicker) {
+      polyColorPicker.style.display = tool === 'poly_feature' ? 'block' : 'none';
+    }
+
+    const fuseControls = document.getElementById('fuse-controls');
+    if (fuseControls) {
+      fuseControls.style.display = tool === 'fuse' ? 'block' : 'none';
+    }
   }
 
   private setActiveFeature(feature: FeatureType): void {
@@ -324,6 +453,7 @@ class TectoLiteApp {
 
   private handleDrawComplete(points: Coordinate[]): void {
     if (points.length < 3) return;
+    this.pushState(); // Save state for undo
 
     // Create Polygon
     const polygon: Polygon = {
@@ -381,6 +511,7 @@ class TectoLiteApp {
       (this.state.world.plates.length > 0 ? this.state.world.plates[0].id : null);
 
     if (!plateId) return;
+    this.pushState(); // Save state for undo
 
     const feature: Feature = {
       id: generateId(),
@@ -408,9 +539,94 @@ class TectoLiteApp {
   }
 
   private handleSelect(plateId: string | null, featureId: string | null): void {
+    // Handle fusion tool workflow
+    if (this.state.activeTool === 'fuse' && plateId) {
+      if (this.fusionFirstPlateId === null) {
+        // First click - store first plate
+        this.fusionFirstPlateId = plateId;
+        this.state.world.selectedPlateId = plateId;
+        this.updateUI();
+        // Show hint in canvas
+        const hint = document.getElementById('canvas-hint');
+        if (hint) hint.textContent = `Click another plate to fuse with "${this.state.world.plates.find(p => p.id === plateId)?.name || 'Plate'}"`;
+      } else if (this.fusionFirstPlateId !== plateId) {
+        // Second click - fuse plates
+        this.pushState(); // Save state for undo
+        // Read weakness toggle option
+        const addWeakness = (document.getElementById('check-add-weakness') as HTMLInputElement)?.checked ?? true;
+        const result = fusePlates(this.state, this.fusionFirstPlateId, plateId, { addWeaknessFeatures: addWeakness });
+
+        if (result.success && result.newState) {
+          this.state = result.newState;
+          this.updateUI();
+          this.canvasManager?.render();
+          // Clear hint and reset
+          const hint = document.getElementById('canvas-hint');
+          if (hint) hint.textContent = '';
+        } else {
+          alert(result.error || 'Failed to fuse plates');
+        }
+
+        // Reset fusion state
+        this.fusionFirstPlateId = null;
+        this.setActiveTool('select');
+      }
+      return;
+    }
+
+    // Reset fusion state if switching away from fuse tool
+    if (this.state.activeTool !== 'fuse') {
+      this.fusionFirstPlateId = null;
+      const hint = document.getElementById('canvas-hint');
+      if (hint) hint.textContent = '';
+    }
+
     this.state.world.selectedPlateId = plateId;
     this.state.world.selectedFeatureId = featureId ?? null;
     this.updateUI();
+  }
+
+  private handlePolyFeatureComplete(points: Coordinate[], fillColor: string): void {
+    // Find plate to add the poly feature to (selected plate or first plate)
+    const plateId = this.state.world.selectedPlateId ??
+      (this.state.world.plates.length > 0 ? this.state.world.plates[0].id : null);
+
+    if (!plateId || points.length < 3) return;
+    this.pushState(); // Save state for undo
+
+    // Calculate centroid as the position
+    const centroid: Coordinate = [
+      points.reduce((sum, p) => sum + p[0], 0) / points.length,
+      points.reduce((sum, p) => sum + p[1], 0) / points.length
+    ];
+
+    const feature: Feature = {
+      id: generateId(),
+      type: 'poly_region',
+      position: centroid,
+      rotation: 0,
+      scale: 1,
+      properties: {},
+      polygon: points,
+      fillColor: fillColor
+    };
+
+    // Immutable state update
+    this.state = {
+      ...this.state,
+      world: {
+        ...this.state.world,
+        plates: this.state.world.plates.map(plate =>
+          plate.id === plateId
+            ? { ...plate, features: [...plate.features, feature] }
+            : plate
+        )
+      }
+    };
+
+    this.updateUI();
+    this.canvasManager?.render();
+    this.setActiveTool('select'); // Return to select tool after placing
   }
 
   private handleSplitApply(points: Coordinate[]): void {
@@ -420,6 +636,7 @@ class TectoLiteApp {
 
     // Pass the full polyline for zig-zag splits
     if (plateToSplit) {
+      this.pushState(); // Save state for undo
       this.state = splitPlate(this.state, plateToSplit.id, { points });
       this.updateUI();
       this.canvasManager?.render();
@@ -435,6 +652,7 @@ class TectoLiteApp {
   }
 
   private deleteSelected(): void {
+    this.pushState(); // Save state for undo
     if (this.state.world.selectedFeatureId) {
       this.state.world.plates.forEach(p => {
         p.features = p.features.filter(f => f.id !== this.state.world.selectedFeatureId);
@@ -542,7 +760,14 @@ class TectoLiteApp {
       </div>
       <div class="property-group">
         <label class="property-label">Rate (deg/Ma)</label>
-        <input type="number" id="prop-pole-rate" class="property-input" value="${pole.rate}" step="0.1">
+        <input type="number" id="prop-pole-rate" class="property-input" value="${pole.rate}" step="0.1" style="width: 70px;">
+        <select id="rate-presets" class="tool-select" style="margin-left: 8px; width: auto;">
+          <option value="">Presets...</option>
+          <option value="0.5">Slow (0.5)</option>
+          <option value="1.0">Normal (1.0)</option>
+          <option value="2.0">Fast (2.0)</option>
+          <option value="5.0">Very Fast (5.0)</option>
+        </select>
       </div>
        <div class="property-group">
         <label class="property-label">
@@ -579,6 +804,16 @@ class TectoLiteApp {
     document.getElementById('prop-pole-vis')?.addEventListener('change', (e) => {
       pole.visible = (e.target as HTMLInputElement).checked;
       this.canvasManager?.render();
+    });
+
+    document.getElementById('rate-presets')?.addEventListener('change', (e) => {
+      const val = (e.target as HTMLSelectElement).value;
+      if (val) {
+        const newRate = parseFloat(val);
+        (document.getElementById('prop-pole-rate') as HTMLInputElement).value = val;
+        this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
+        (e.target as HTMLSelectElement).value = ''; // Reset dropdown
+      }
     });
 
     document.getElementById('btn-delete-plate')?.addEventListener('click', () => {
@@ -676,6 +911,42 @@ class TectoLiteApp {
   private handleMotionChange(plateId: string, pole: Coordinate, rate: number): void {
     const newEulerPole = { position: pole, rate, visible: true };
     this.addMotionKeyframe(plateId, newEulerPole);
+  }
+
+  /** Push current state to history (call before meaningful changes) */
+  private pushState(): void {
+    this.historyManager.push(this.state);
+    this.updateUndoRedoButtons();
+  }
+
+  /** Undo last action */
+  private undo(): void {
+    const prevState = this.historyManager.undo(this.state);
+    if (prevState) {
+      this.state = prevState;
+      this.updateUI();
+      this.canvasManager?.render();
+    }
+    this.updateUndoRedoButtons();
+  }
+
+  /** Redo last undone action */
+  private redo(): void {
+    const nextState = this.historyManager.redo(this.state);
+    if (nextState) {
+      this.state = nextState;
+      this.updateUI();
+      this.canvasManager?.render();
+    }
+    this.updateUndoRedoButtons();
+  }
+
+  /** Update undo/redo button states */
+  private updateUndoRedoButtons(): void {
+    const undoBtn = document.getElementById('btn-undo') as HTMLButtonElement;
+    const redoBtn = document.getElementById('btn-redo') as HTMLButtonElement;
+    if (undoBtn) undoBtn.disabled = !this.historyManager.canUndo();
+    if (redoBtn) redoBtn.disabled = !this.historyManager.canRedo();
   }
 }
 

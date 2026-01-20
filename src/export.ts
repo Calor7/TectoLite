@@ -1,5 +1,5 @@
 // PNG Export functionality
-import { AppState, Feature } from './types';
+import { AppState, Feature, WorldState } from './types';
 import { ProjectionManager } from './canvas/ProjectionManager';
 import { geoGraticule } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
@@ -122,4 +122,52 @@ function drawFeature(
 
     ctx.restore();
 }
+
+// JSON Export functionality
+const SAVE_VERSION = 1;
+
+export function exportToJSON(state: AppState): void {
+    const saveData = {
+        version: SAVE_VERSION,
+        savedAt: new Date().toISOString(),
+        world: state.world
+    };
+
+    const json = JSON.stringify(saveData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.download = `tectolite-save-${Date.now()}.json`;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+    URL.revokeObjectURL(link.href);
+}
+
+export function importFromJSON(file: File): Promise<WorldState> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target?.result as string;
+                const data = JSON.parse(text);
+
+                // Validate version
+                if (!data.version || data.version > SAVE_VERSION) {
+                    throw new Error('Unsupported save file version');
+                }
+
+                // Validate world data exists
+                if (!data.world || !Array.isArray(data.world.plates)) {
+                    throw new Error('Invalid save file format');
+                }
+
+                resolve(data.world as WorldState);
+            } catch (err) {
+                reject(err);
+            }
+        };
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsText(file);
+    });
+}
+
 

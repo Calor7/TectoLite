@@ -19,7 +19,7 @@ export interface Polygon {
   closed: boolean;
 }
 
-export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island';
+export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'poly_region' | 'weakness';
 
 export interface Feature {
   id: string;
@@ -29,6 +29,9 @@ export interface Feature {
   scale: number;
   properties: Record<string, unknown>;
   generatedAt?: number;
+  // New fields for poly_region features
+  polygon?: Coordinate[];  // Points defining the polygon shape
+  fillColor?: string;      // Custom fill color for the region
 }
 
 export interface EulerPole {
@@ -96,9 +99,13 @@ export interface WorldState {
   projection: ProjectionType;
   showGrid: boolean;
   showEulerPoles: boolean;
+  globalOptions: {
+    maxDragSpeed: number;        // deg/Ma, default ~1.0 (≈10 cm/year)
+    speedLimitEnabled: boolean;
+  };
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'split' | 'pan';
+export type ToolType = 'select' | 'draw' | 'feature' | 'split' | 'pan' | 'poly_feature' | 'fuse';
 
 export interface AppState {
   world: WorldState;
@@ -142,7 +149,11 @@ export function createDefaultWorldState(): WorldState {
     selectedFeatureId: null,
     projection: 'orthographic', // Default to globe as requested
     showGrid: true,
-    showEulerPoles: false
+    showEulerPoles: false,
+    globalOptions: {
+      maxDragSpeed: 1.0,  // ~10 cm/year (realistic plate speed)
+      speedLimitEnabled: false
+    }
   };
 }
 
