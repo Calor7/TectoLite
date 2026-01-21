@@ -147,11 +147,18 @@ export class SimulationEngine {
             .sort((a, b) => b.time - a.time)[0];
 
         if (!activeKeyframe) {
-            // Before first keyframe - use initial geometry
+            // Before first keyframe - use initial geometry but preserve any features added later
+            // Merge initialFeatures with any dynamically added features from current plate
+            const initialFeatureIds = new Set((plate.initialFeatures || []).map(f => f.id));
+            const dynamicFeatures = plate.features.filter(f =>
+                !initialFeatureIds.has(f.id) && f.generatedAt !== undefined
+            );
+            const mergedFeatures = [...(plate.initialFeatures || []), ...dynamicFeatures];
+
             return {
                 ...plate,
                 polygons: plate.initialPolygons,
-                features: plate.initialFeatures,
+                features: mergedFeatures,
                 center: calculateSphericalCentroid(plate.initialPolygons.flatMap(p => p.points))
             };
         }
@@ -160,11 +167,19 @@ export class SimulationEngine {
         const elapsed = time - activeKeyframe.time;
 
         if (!pole || pole.rate === 0 || elapsed === 0) {
-            // No motion from this keyframe, use snapshot geometry
+            // No motion from this keyframe, use snapshot geometry but preserve dynamic features
+            const snapshotFeatureIds = new Set(activeKeyframe.snapshotFeatures.map(f => f.id));
+            const dynamicFeatures = plate.features.filter(f =>
+                !snapshotFeatureIds.has(f.id) &&
+                f.generatedAt !== undefined &&
+                f.generatedAt >= activeKeyframe.time
+            );
+            const mergedFeatures = [...activeKeyframe.snapshotFeatures, ...dynamicFeatures];
+
             return {
                 ...plate,
                 polygons: activeKeyframe.snapshotPolygons,
-                features: activeKeyframe.snapshotFeatures,
+                features: mergedFeatures,
                 center: calculateSphericalCentroid(activeKeyframe.snapshotPolygons.flatMap(p => p.points))
             };
         }
@@ -184,7 +199,18 @@ export class SimulationEngine {
             points: poly.points.map(transform)
         }));
 
-        const newFeatures = activeKeyframe.snapshotFeatures.map(feat => ({
+        // Get features from snapshot, then merge any dynamically added features
+        // (features with generatedAt > keyframe.time that exist in current plate.features)
+        const snapshotFeatureIds = new Set(activeKeyframe.snapshotFeatures.map(f => f.id));
+        const dynamicFeatures = plate.features.filter(f =>
+            !snapshotFeatureIds.has(f.id) &&
+            f.generatedAt !== undefined &&
+            f.generatedAt >= activeKeyframe.time
+        );
+
+        const allSourceFeatures = [...activeKeyframe.snapshotFeatures, ...dynamicFeatures];
+
+        const newFeatures = allSourceFeatures.map(feat => ({
             ...feat,
             position: transform(feat.position)
         }));
@@ -226,7 +252,8 @@ export class SimulationEngine {
         };
 
         const sourcePolys = plate.initialPolygons || plate.polygons;
-        const sourceFeats = plate.initialFeatures || plate.features;
+        // Use current features (which include dynamically added ones) instead of only initialFeatures
+        const sourceFeats = plate.features;
 
         const newPolygons = sourcePolys.map(poly => ({
             ...poly,

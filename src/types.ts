@@ -28,8 +28,12 @@ export interface Feature {
   rotation: number;     // Rotation on surface
   scale: number;
   properties: Record<string, unknown>;
-  generatedAt?: number;
-  // New fields for poly_region features
+  generatedAt?: number;   // Birth time (when feature was created)
+  deathTime?: number;     // Death time (when feature ends, null/undefined = still active)
+  // User-customizable fields
+  name?: string;         // User-defined name (defaults to type name if not set)
+  description?: string;  // User-defined description
+  // Fields for poly_region features
   polygon?: Coordinate[];  // Points defining the polygon shape
   fillColor?: string;      // Custom fill color for the region
 }
@@ -100,6 +104,8 @@ export interface WorldState {
   projection: ProjectionType;
   showGrid: boolean;
   showEulerPoles: boolean;
+  showFeatures: boolean;
+  showFutureFeatures: boolean;  // Show features outside current timeline (future/past)
   globalOptions: {
     maxDragSpeed: number;        // deg/Ma, default ~1.0 (≈10 cm/year)
     speedLimitEnabled: boolean;
@@ -152,6 +158,8 @@ export function createDefaultWorldState(): WorldState {
     projection: 'orthographic', // Default to globe as requested
     showGrid: true,
     showEulerPoles: false,
+    showFeatures: true,
+    showFutureFeatures: false,  // Hide future/past features by default
     globalOptions: {
       maxDragSpeed: 1.0,  // ~10 cm/year (realistic plate speed)
       speedLimitEnabled: false

@@ -19,6 +19,42 @@ interface SplitPolyline {
     points: Coordinate[];
 }
 
+// Check if a point is inside a spherical polygon using ray casting
+function isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
+    if (polygon.length < 3) return false;
+
+    let windingNumber = 0;
+
+    for (let i = 0; i < polygon.length; i++) {
+        // Check vertical crossing (simplified spherical version)
+        const lat1 = polygon[i][1];
+        const lat2 = polygon[(i + 1) % polygon.length][1];
+        const lon1 = polygon[i][0];
+        const lon2 = polygon[(i + 1) % polygon.length][0];
+        const pLat = point[1];
+        const pLon = point[0];
+
+        // Ray casting using longitude
+        if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
+            // Compute longitude at intersection
+            const t = (pLat - lat1) / (lat2 - lat1);
+            let lonAtIntersection = lon1 + t * (lon2 - lon1);
+
+            // Handle wrap-around
+            if (Math.abs(lon2 - lon1) > 180) {
+                if (lon2 < lon1) lonAtIntersection = lon1 + t * (lon2 + 360 - lon1);
+                else lonAtIntersection = lon1 + t * (lon2 - 360 - lon1);
+            }
+
+            if (pLon < lonAtIntersection) {
+                windingNumber += (lat2 > lat1) ? 1 : -1;
+            }
+        }
+    }
+
+    return windingNumber !== 0;
+}
+
 // Find intersection of two line segments on sphere (great circle arcs)
 function findSegmentIntersection(
     a1: Coordinate, a2: Coordinate,
@@ -249,15 +285,35 @@ export function splitPlate(
         return state;
     }
 
-    // Assign Features based on overall normal (Legacy logic, could be improved)
+    // Assign Features based on polygon containment
     const leftFeatures = [];
     const rightFeatures = [];
+
     for (const feat of plateToSplit.features) {
-        const v = latLonToVector(feat.position);
-        if (dot(v, overallNormal) > 0) {
+        // Check which resulting polygon contains this feature
+        const inLeft = leftPolygons.some(poly => isPointInPolygon(feat.position, poly.points));
+        const inRight = rightPolygons.some(poly => isPointInPolygon(feat.position, poly.points));
+
+        if (inLeft && !inRight) {
             leftFeatures.push(feat);
-        } else {
+        } else if (inRight && !inLeft) {
             rightFeatures.push(feat);
+        } else if (inLeft && inRight) {
+            // Edge case: feature on boundary - use dot product as tiebreaker
+            const v = latLonToVector(feat.position);
+            if (dot(v, overallNormal) > 0) {
+                leftFeatures.push(feat);
+            } else {
+                rightFeatures.push(feat);
+            }
+        } else {
+            // Not in either polygon - use dot product fallback
+            const v = latLonToVector(feat.position);
+            if (dot(v, overallNormal) > 0) {
+                leftFeatures.push(feat);
+            } else {
+                rightFeatures.push(feat);
+            }
         }
     }
 

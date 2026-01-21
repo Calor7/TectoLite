@@ -179,6 +179,12 @@ class TectoLiteApp {
                 <label class="view-option">
                     <input type="checkbox" id="check-euler"> Euler Poles
                 </label>
+                <label class="view-option">
+                    <input type="checkbox" id="check-features" checked> Features
+                </label>
+                <label class="view-option">
+                    <input type="checkbox" id="check-future-features"> Future/Past Features
+                </label>
             </div>
 
             <div class="tool-group">
@@ -280,6 +286,16 @@ class TectoLiteApp {
 
     document.getElementById('check-euler')?.addEventListener('change', (e) => {
       this.state.world.showEulerPoles = (e.target as HTMLInputElement).checked;
+      this.canvasManager?.render();
+    });
+
+    document.getElementById('check-features')?.addEventListener('change', (e) => {
+      this.state.world.showFeatures = (e.target as HTMLInputElement).checked;
+      this.canvasManager?.render();
+    });
+
+    document.getElementById('check-future-features')?.addEventListener('change', (e) => {
+      this.state.world.showFutureFeatures = (e.target as HTMLInputElement).checked;
       this.canvasManager?.render();
     });
 
@@ -520,7 +536,8 @@ class TectoLiteApp {
       position: position,
       rotation: 0,
       scale: 1,
-      properties: {}
+      properties: {},
+      generatedAt: this.state.world.currentTime
     };
 
     // Immutable state update
@@ -800,6 +817,7 @@ class TectoLiteApp {
       </div>
       
       <button id="btn-delete-plate" class="btn btn-danger">Delete Plate</button>
+      ${this.getFeaturePropertiesHtml(plate)}
     `;
 
     // Bind events
@@ -843,6 +861,121 @@ class TectoLiteApp {
     document.getElementById('btn-delete-plate')?.addEventListener('click', () => {
       this.deleteSelected();
     });
+
+    // Bind feature property events
+    this.bindFeatureEvents(plate);
+  }
+
+  private getFeaturePropertiesHtml(plate: TectonicPlate): string {
+    const { selectedFeatureId, selectedFeatureIds, currentTime } = this.state.world;
+
+    // Check if exactly one feature is selected
+    const singleFeatureId = selectedFeatureIds.length === 1
+      ? selectedFeatureIds[0]
+      : (selectedFeatureIds.length === 0 ? selectedFeatureId : null);
+
+    if (!singleFeatureId) {
+      if (selectedFeatureIds.length > 1) {
+        return `
+          <hr class="property-divider">
+          <h4 class="property-section-title">Features</h4>
+          <p class="empty-message">${selectedFeatureIds.length} features selected</p>
+        `;
+      }
+      return '';
+    }
+
+    const feature = plate.features.find(f => f.id === singleFeatureId);
+    if (!feature) return '';
+
+    // Calculate age for display, but allow editing generatedAt directly
+    const createdAt = feature.generatedAt ?? currentTime;
+    const age = (currentTime - createdAt).toFixed(1);
+
+    // Default name to type if not set
+    const displayName = feature.name || this.getFeatureTypeName(feature.type);
+    const description = feature.description || '';
+
+    return `
+      <hr class="property-divider">
+      <h4 class="property-section-title">Feature Properties</h4>
+      <div class="property-group">
+        <label class="property-label">Type</label>
+        <span class="property-value">${this.getFeatureTypeName(feature.type)}</span>
+      </div>
+      <div class="property-group">
+        <label class="property-label">Created At (Ma)</label>
+        <input type="number" id="feature-created-at" class="property-input" value="${createdAt.toFixed(1)}" step="0.1" style="width: 80px;">
+        <span class="property-hint" style="margin-left: 8px; color: #888;">Age: ${age} Ma</span>
+      </div>
+      <div class="property-group">
+        <label class="property-label">Ends At (Ma)</label>
+        <input type="number" id="feature-death-time" class="property-input" value="${feature.deathTime?.toFixed(1) ?? ''}" step="0.1" style="width: 80px;" placeholder="Never">
+      </div>
+      <div class="property-group">
+        <label class="property-label">Name</label>
+        <input type="text" id="feature-name" class="property-input" value="${displayName}" placeholder="Feature name...">
+      </div>
+      <div class="property-group">
+        <label class="property-label">Description</label>
+        <textarea id="feature-description" class="property-input" rows="2" placeholder="Description...">${description}</textarea>
+      </div>
+    `;
+  }
+
+  private bindFeatureEvents(plate: TectonicPlate): void {
+    const { selectedFeatureId, selectedFeatureIds } = this.state.world;
+    const singleFeatureId = selectedFeatureIds.length === 1
+      ? selectedFeatureIds[0]
+      : (selectedFeatureIds.length === 0 ? selectedFeatureId : null);
+
+    if (!singleFeatureId) return;
+
+    const feature = plate.features.find(f => f.id === singleFeatureId);
+    if (!feature) return;
+
+    document.getElementById('feature-name')?.addEventListener('change', (e) => {
+      feature.name = (e.target as HTMLInputElement).value;
+    });
+
+    document.getElementById('feature-description')?.addEventListener('change', (e) => {
+      feature.description = (e.target as HTMLTextAreaElement).value;
+    });
+
+    document.getElementById('feature-created-at')?.addEventListener('change', (e) => {
+      const val = parseFloat((e.target as HTMLInputElement).value);
+      if (!isNaN(val)) {
+        feature.generatedAt = val;
+        this.updatePropertiesPanel(); // Refresh to show updated age
+      }
+    });
+
+    document.getElementById('feature-death-time')?.addEventListener('change', (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      if (val === '' || val === null) {
+        feature.deathTime = undefined; // Clear death time
+      } else {
+        const num = parseFloat(val);
+        if (!isNaN(num)) {
+          feature.deathTime = num;
+        }
+      }
+      this.canvasManager?.render(); // Refresh to show/hide if outside timeline
+    });
+  }
+
+  private getFeatureTypeName(type: FeatureType): string {
+    const names: Record<FeatureType, string> = {
+      mountain: 'Mountain',
+      volcano: 'Volcano',
+      hotspot: 'Hotspot',
+      rift: 'Rift',
+      trench: 'Trench',
+      island: 'Island',
+      poly_region: 'Region',
+      weakness: 'Weakness'
+    };
+    return names[type] || type;
   }
 
   private updatePlayButton(): void {

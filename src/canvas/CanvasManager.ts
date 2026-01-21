@@ -571,11 +571,26 @@ export class CanvasManager {
                 this.ctx.stroke();
             }
 
-            // Draw Features
-            for (const feature of plate.features) {
-                const isFeatureSelected = feature.id === state.world.selectedFeatureId ||
-                    (state.world.selectedFeatureIds && state.world.selectedFeatureIds.includes(feature.id));
-                this.drawFeature(feature, isFeatureSelected);
+            // Draw Features (if visible)
+            if (state.world.showFeatures) {
+                const currentTime = state.world.currentTime;
+                const showFuture = state.world.showFutureFeatures;
+
+                for (const feature of plate.features) {
+                    // Check if feature is within timeline
+                    const isBorn = feature.generatedAt === undefined || feature.generatedAt <= currentTime;
+                    const isDead = feature.deathTime !== undefined && feature.deathTime <= currentTime;
+                    const isInTimeline = isBorn && !isDead;
+
+                    // Skip if not in timeline and not showing future/past features
+                    if (!isInTimeline && !showFuture) continue;
+
+                    const isFeatureSelected = feature.id === state.world.selectedFeatureId ||
+                        (state.world.selectedFeatureIds && state.world.selectedFeatureIds.includes(feature.id));
+
+                    // Draw with reduced opacity if outside timeline
+                    this.drawFeature(feature, isFeatureSelected, !isInTimeline);
+                }
             }
 
             // Euler Pole Visualization
@@ -634,7 +649,12 @@ export class CanvasManager {
         }
     }
 
-    private drawFeature(feature: Feature, isSelected: boolean): void {
+    private drawFeature(feature: Feature, isSelected: boolean, isGhosted: boolean = false): void {
+        // Set reduced opacity for features outside timeline
+        if (isGhosted) {
+            this.ctx.globalAlpha = 0.3;
+        }
+
         // Handle poly_region features specially - they have their own polygon
         if (feature.type === 'poly_region' && feature.polygon && feature.polygon.length >= 3) {
             const path = this.projectionManager.getPathGenerator();
@@ -646,7 +666,7 @@ export class CanvasManager {
             this.ctx.beginPath();
             path(geojson as any);
             this.ctx.fillStyle = feature.fillColor || '#ff6b6b';
-            this.ctx.globalAlpha = 0.7; // Semi-transparent
+            this.ctx.globalAlpha = isGhosted ? 0.2 : 0.7; // Semi-transparent
             this.ctx.fill();
             this.ctx.globalAlpha = 1.0;
 
@@ -655,13 +675,18 @@ export class CanvasManager {
                 this.ctx.lineWidth = 2;
                 this.ctx.stroke();
             }
+
+            if (isGhosted) this.ctx.globalAlpha = 1.0;
             return;
         }
 
         // Handle weakness feature
         if (feature.type === 'weakness') {
             const proj = this.projectionManager.project(feature.position);
-            if (!proj) return;
+            if (!proj) {
+                if (isGhosted) this.ctx.globalAlpha = 1.0;
+                return;
+            }
 
             this.ctx.save();
             this.ctx.translate(proj[0], proj[1]);
@@ -678,11 +703,15 @@ export class CanvasManager {
             this.ctx.stroke();
 
             this.ctx.restore();
+            if (isGhosted) this.ctx.globalAlpha = 1.0;
             return;
         }
 
         const proj = this.projectionManager.project(feature.position);
-        if (!proj) return; // Behind globe or invalid
+        if (!proj) {
+            if (isGhosted) this.ctx.globalAlpha = 1.0;
+            return; // Behind globe or invalid
+        }
 
         const size = 12 * feature.scale;
         this.ctx.save();
@@ -699,6 +728,8 @@ export class CanvasManager {
             case 'island': drawIslandIcon(this.ctx, size, options); break;
         }
         this.ctx.restore();
+
+        if (isGhosted) this.ctx.globalAlpha = 1.0;
     }
 
 
