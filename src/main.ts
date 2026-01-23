@@ -221,6 +221,10 @@ class TectoLiteApp {
                     <label class="property-label">Max Speed (deg/Ma)</label>
                     <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 80px;">
                 </div>
+                <div class="property-group" style="margin-top: 8px;">
+                    <label class="property-label">Max Time (Ma)</label>
+                    <input type="number" id="global-max-time" class="property-input" value="500" step="100" min="100" style="width: 80px;">
+                </div>
             </div>
 
             <div class="tool-group">
@@ -328,6 +332,21 @@ class TectoLiteApp {
       const val = parseFloat((e.target as HTMLInputElement).value);
       if (!isNaN(val) && val > 0) {
         this.state.world.globalOptions.maxDragSpeed = val;
+      }
+    });
+
+    document.getElementById('global-max-time')?.addEventListener('change', (e) => {
+      const val = parseInt((e.target as HTMLInputElement).value);
+      if (!isNaN(val) && val > 0) {
+        const slider = document.getElementById('time-slider') as HTMLInputElement;
+        if (slider) {
+          slider.max = val.toString();
+          // If current time exceeds new max, clamp it
+          if (this.state.world.currentTime > val) {
+            this.simulation?.setTime(val);
+            this.updateTimeDisplay();
+          }
+        }
       }
     });
 
@@ -903,6 +922,16 @@ class TectoLiteApp {
         <label class="property-label">Color</label>
         <input type="color" id="prop-color" class="property-color" value="${plate.color}">
       </div>
+
+      <div class="property-group">
+        <label class="property-label">Timeline (Ma)</label>
+        <div style="display: flex; gap: 4px;">
+             <input type="number" id="prop-birth-time" class="property-input" title="Start Time" value="${plate.birthTime}" step="5" style="flex:1">
+             <span style="align-self: center;">-</span>
+             <input type="number" id="prop-death-time" class="property-input" title="End Time" value="${plate.deathTime ?? ''}" placeholder="Active" step="5" style="flex:1">
+        </div>
+      </div>
+
       <hr class="property-divider">
       <h4 class="property-section-title">Euler Pole Motion</h4>
       
@@ -943,6 +972,17 @@ class TectoLiteApp {
     document.getElementById('prop-color')?.addEventListener('change', (e) => {
       plate.color = (e.target as HTMLInputElement).value;
       this.updatePlateList();
+      this.canvasManager?.render();
+    });
+
+    document.getElementById('prop-birth-time')?.addEventListener('change', (e) => {
+      plate.birthTime = parseFloat((e.target as HTMLInputElement).value);
+      this.canvasManager?.render();
+    });
+
+    document.getElementById('prop-death-time')?.addEventListener('change', (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      plate.deathTime = val ? parseFloat(val) : null;
       this.canvasManager?.render();
     });
 

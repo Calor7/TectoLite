@@ -1,6 +1,6 @@
 import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode } from '../types';
 import { ProjectionManager } from './ProjectionManager';
-import { geoGraticule } from 'd3-geo';
+import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
 import {
     drawMountainIcon,
@@ -580,6 +580,12 @@ export class CanvasManager {
 
             for (const poly of plate.polygons) {
                 const geojson = toGeoJSON(poly);
+
+                // Fix Winding for Hit Test
+                if (geoArea(geojson) > 2 * Math.PI) {
+                    geojson.geometry.coordinates[0].reverse();
+                }
+
                 this.ctx.beginPath();
                 path(geojson);
                 if (this.ctx.isPointInPath(mousePos.x, mousePos.y)) {
@@ -661,6 +667,13 @@ export class CanvasManager {
             // Draw Polygons
             for (const poly of polygonsToDraw) {
                 const geojson = toGeoJSON(poly);
+
+                // Fix Winding: If area > Hemisphere, invert winding
+                // This fixes pole-enclosure inversion issues.
+                if (geoArea(geojson) > 2 * Math.PI) {
+                    geojson.geometry.coordinates[0].reverse();
+                }
+
                 this.ctx.beginPath();
                 path(geojson);
                 this.ctx.fillStyle = plate.color;
@@ -767,6 +780,11 @@ export class CanvasManager {
                 type: 'Polygon' as const,
                 coordinates: [[...feature.polygon, feature.polygon[0]]] // Close the polygon
             };
+
+            // Fix Winding for Poly Features
+            if (geoArea(geojson as any) > 2 * Math.PI) {
+                geojson.coordinates[0].reverse();
+            }
 
             this.ctx.beginPath();
             path(geojson as any);
