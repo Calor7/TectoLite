@@ -406,13 +406,16 @@ export class SimulationEngine {
         const newFeatures = [...plate.features];
         let changed = false;
 
+        const state = this.getState(); // Need access to globalOptions
+        const enableHotspots = state.world.globalOptions.enableHotspotIslands ?? true;
+
         for (const feature of plate.features) {
             if (feature.type === 'hotspot') {
                 // Hotspot assumption: Creates islands.
                 const lastGen = feature.generatedAt || 0;
                 // Generate every 5 Ma if moving?
                 // Actually if pole.rate is 0, we shouldn't gen.
-                if (currentTime - lastGen > 5) {
+                if (enableHotspots && currentTime - lastGen > 5) {
                     const island: Feature = {
                         id: Math.random().toString(36).substring(2, 9),
                         type: 'island',
@@ -420,7 +423,8 @@ export class SimulationEngine {
                         rotation: Math.random() * 360,
                         scale: 0.5 + Math.random() * 0.5,
                         properties: {},
-                        generatedAt: currentTime
+                        generatedAt: currentTime,
+                        originalPosition: [...feature.position] as Coordinate // Set source of truth
                     };
                     newFeatures.push(island);
 

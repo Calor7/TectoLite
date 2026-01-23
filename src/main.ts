@@ -18,7 +18,7 @@ import {
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
-import { exportToPNG } from './export';
+import { exportToPNG, showPNGExportDialog } from './export';
 import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
 import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
@@ -201,6 +201,9 @@ class TectoLiteApp {
                 <label class="view-option">
                     <input type="checkbox" id="check-speed-limit"> Enable Speed Limit
                 </label>
+                <label class="view-option">
+                    <input type="checkbox" id="check-hotspot-islands" checked> Enable Hotspot Islands
+                </label>
                 <div class="property-group" style="margin-top: 8px;">
                     <label class="property-label">Max Speed (deg/Ma)</label>
                     <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 80px;">
@@ -304,6 +307,10 @@ class TectoLiteApp {
       this.state.world.globalOptions.speedLimitEnabled = (e.target as HTMLInputElement).checked;
     });
 
+    document.getElementById('check-hotspot-islands')?.addEventListener('change', (e) => {
+      this.state.world.globalOptions.enableHotspotIslands = (e.target as HTMLInputElement).checked;
+    });
+
     document.getElementById('global-max-speed')?.addEventListener('change', (e) => {
       const val = parseFloat((e.target as HTMLInputElement).value);
       if (!isNaN(val) && val > 0) {
@@ -376,8 +383,11 @@ class TectoLiteApp {
       this.updateTimeDisplay();
     });
 
-    document.getElementById('btn-export')?.addEventListener('click', () => {
-      exportToPNG(this.state);
+    document.getElementById('btn-export')?.addEventListener('click', async () => {
+      const options = await showPNGExportDialog(this.state.world.projection);
+      if (options) {
+        exportToPNG(this.state, options);
+      }
     });
 
     // Split control buttons

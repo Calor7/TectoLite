@@ -1,5 +1,5 @@
 // PNG Export functionality
-import { AppState, Feature, WorldState } from './types';
+import { AppState, Feature, WorldState, ProjectionType } from './types';
 import { ProjectionManager } from './canvas/ProjectionManager';
 import { geoGraticule } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
@@ -12,8 +12,16 @@ import {
     drawIslandIcon
 } from './canvas/featureIcons';
 
+export interface PNGExportOptions {
+    projection: ProjectionType;
+    waterMode: 'transparent' | 'color' | 'white';
+    plateColorMode: 'native' | 'land';
+    showGrid: boolean;
+}
+
 export function exportToPNG(
     state: AppState,
+    options: PNGExportOptions,
     width: number = 1920,
     height: number = 1080
 ): void {
@@ -26,10 +34,8 @@ export function exportToPNG(
     // Use a temporary ProjectionManager for rendering
     const pm = new ProjectionManager(ctx);
 
-    // Setup viewport for export: Center the view, fit width?
-    // User expects WYSIWYG roughly.
-    // Let's use the current viewport settings but scaled to the new resolution.
-    // ratio = exportWidth / viewportWidth
+    // Setup viewport for export
+    // Use the current viewport settings but scaled to the new resolution
     const ratio = width / state.viewport.width;
 
     const exportViewport = {
@@ -40,24 +46,31 @@ export function exportToPNG(
         translate: [width / 2, height / 2] as [number, number]
     };
 
-    pm.update(state.world.projection, exportViewport);
+    // Use requested projection
+    pm.update(options.projection, exportViewport);
     const path = pm.getPathGenerator();
 
-    // 1. Background
-    ctx.fillStyle = '#1a3a4a';
-    ctx.fillRect(0, 0, width, height);
+    // 1. Background (Water)
+    if (options.waterMode === 'color') {
+        ctx.fillStyle = '#1a3a4a'; // Deep Ocean
+        ctx.fillRect(0, 0, width, height);
+    } else if (options.waterMode === 'white') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+    }
+    // If transparent, do nothing (canvas is transparent by default)
 
-    // Globe Background
-    if (state.world.projection === 'orthographic') {
+    // Globe Background (only for Orthographic if not transparent)
+    if (options.projection === 'orthographic' && options.waterMode !== 'transparent') {
         ctx.beginPath();
         path({ type: 'Sphere' } as any);
-        ctx.fillStyle = '#0f2634';
+        ctx.fillStyle = options.waterMode === 'white' ? '#f0f0f0' : '#0f2634';
         ctx.fill();
     }
 
     // 2. Graticule
-    if (state.world.showGrid) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    if (options.showGrid) {
+        ctx.strokeStyle = options.waterMode === 'white' ? 'rgba(0, 0, 0, 0.1)' : 'rgba(255, 255, 255, 0.05)';
         ctx.lineWidth = 1 * ratio;
         ctx.beginPath();
         path(geoGraticule()());
@@ -75,10 +88,17 @@ export function exportToPNG(
             const geojson = toGeoJSON(polygon);
             ctx.beginPath();
             path(geojson);
-            ctx.fillStyle = plate.color;
+
+            // Plate Color Logic
+            if (options.plateColorMode === 'land') {
+                ctx.fillStyle = '#C2B280'; // Ecru/Sand Land Color
+            } else {
+                ctx.fillStyle = plate.color;
+            }
             ctx.fill();
 
-            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            // Border
+            ctx.strokeStyle = options.waterMode === 'white' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.3)';
             ctx.lineWidth = 1 * ratio;
             ctx.stroke();
         }
@@ -121,6 +141,106 @@ function drawFeature(
     }
 
     ctx.restore();
+}
+
+// PNG Export Dialog
+export function showPNGExportDialog(currentProjection: ProjectionType): Promise<PNGExportOptions | null> {
+    return new Promise((resolve) => {
+        // Create modal overlay
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #1e1e2e; border-radius: 12px; padding: 24px;
+            min-width: 350px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        `;
+
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🖼️ Export PNG Image</h3>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Projection:</label>
+                <select id="export-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
+                    <option value="orthographic">Globe (Orthographic)</option>
+                    <option value="equirectangular">Equirectangular</option>
+                    <option value="mercator">Mercator</option>
+                    <option value="mollweide">Mollweide</option>
+                    <option value="robinson">Robinson</option>
+                </select>
+            </div>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Water Color:</label>
+                <div style="display: flex; gap: 12px;">
+                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                        <input type="radio" name="water-mode" value="color" checked> Blue
+                    </label>
+                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                        <input type="radio" name="water-mode" value="white"> White
+                    </label>
+                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                        <input type="radio" name="water-mode" value="transparent"> None
+                    </label>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 24px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Plate Colors:</label>
+                <div style="display: flex; gap: 12px;">
+                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                        <input type="radio" name="plate-color" value="native" checked> Plate Colors
+                    </label>
+                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                        <input type="radio" name="plate-color" value="land"> Land Color
+                    </label>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 24px;">
+                <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
+                    <input type="checkbox" id="export-grid" checked> Show Grid
+                </label>
+            </div>
+            
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button id="export-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
+                <button id="export-confirm" style="padding: 8px 16px; border: none; border-radius: 6px; background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 500;">Export PNG</button>
+            </div>
+        `;
+
+        // Set current projection
+        const select = dialog.querySelector('#export-projection') as HTMLSelectElement;
+        if (select) select.value = currentProjection;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const cleanup = () => document.body.removeChild(overlay);
+
+        const onCancel = () => {
+            cleanup();
+            resolve(null);
+        };
+
+        dialog.querySelector('#export-cancel')?.addEventListener('click', onCancel);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
+
+        dialog.querySelector('#export-confirm')?.addEventListener('click', () => {
+            const projection = (dialog.querySelector('#export-projection') as HTMLSelectElement).value as ProjectionType;
+            const waterMode = (dialog.querySelector('input[name="water-mode"]:checked') as HTMLInputElement).value as any;
+            const plateColorMode = (dialog.querySelector('input[name="plate-color"]:checked') as HTMLInputElement).value as any;
+            const showGrid = (dialog.querySelector('#export-grid') as HTMLInputElement).checked;
+
+            cleanup();
+            resolve({ projection, waterMode, plateColorMode, showGrid });
+        });
+    });
 }
 
 // JSON Export functionality

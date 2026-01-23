@@ -112,6 +112,7 @@ export interface WorldState {
   globalOptions: {
     maxDragSpeed: number;        // deg/Ma, default ~1.0 (≈10 cm/year)
     speedLimitEnabled: boolean;
+    enableHotspotIslands?: boolean; // Toggle for hotspot island generation
   };
 }
 
