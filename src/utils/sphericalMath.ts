@@ -100,3 +100,56 @@ export function calculateSphericalCentroid(points: Coordinate[]): Coordinate {
 
     return vectorToLatLon(centroidVec);
 }
+
+// Minimal Quaternion implementation for rotation composition
+export interface Quaternion {
+    w: number;
+    x: number;
+    y: number;
+    z: number;
+}
+
+export function quatMultiply(q1: Quaternion, q2: Quaternion): Quaternion {
+    return {
+        w: q1.w * q2.w - q1.x * q2.x - q1.y * q2.y - q1.z * q2.z,
+        x: q1.w * q2.x + q1.x * q2.w + q1.y * q2.z - q1.z * q2.y,
+        y: q1.w * q2.y - q1.x * q2.z + q1.y * q2.w + q1.z * q2.x,
+        z: q1.w * q2.z + q1.x * q2.y - q1.y * q2.x + q1.z * q2.w
+    };
+}
+
+export function quatFromAxisAngle(axis: Vector3, angleRad: number): Quaternion {
+    const halfAngle = angleRad / 2;
+    const s = Math.sin(halfAngle);
+    // Axis should be normalized
+    const n = normalize(axis);
+    return {
+        w: Math.cos(halfAngle),
+        x: n.x * s,
+        y: n.y * s,
+        z: n.z * s
+    };
+}
+
+export function axisAngleFromQuat(q: Quaternion): { axis: Vector3, angle: number } {
+    // Ensure unit quaternion?
+    // angle = 2 * acos(w)
+    // s = sqrt(1-w*w)
+    // x,y,z / s
+    const angle = 2 * Math.acos(Math.min(1, Math.max(-1, q.w)));
+    const s = Math.sqrt(1 - q.w * q.w);
+
+    if (s < 0.001) {
+        // if s is close to 0, then angle is 0, axis can be anything
+        return { axis: { x: 1, y: 0, z: 0 }, angle: 0 };
+    }
+
+    return {
+        axis: {
+            x: q.x / s,
+            y: q.y / s,
+            z: q.z / s
+        },
+        angle: angle
+    };
+}

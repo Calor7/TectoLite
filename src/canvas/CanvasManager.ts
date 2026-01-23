@@ -11,7 +11,7 @@ import {
     drawIslandIcon
 } from './featureIcons';
 import { MotionGizmo } from './MotionGizmo';
-import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3 } from '../utils/sphericalMath';
+import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion } from '../utils/sphericalMath';
 
 export class CanvasManager {
     private canvas: HTMLCanvasElement;
@@ -26,6 +26,13 @@ export class CanvasManager {
     private dragStartGeo: Coordinate | null = null;
     private ghostPlateId: string | null = null;
     private ghostRotation: { plateId: string, axis: Vector3, angle: number } | null = null;
+
+    // Fine-tuning state
+    private isFineTuning = false;
+    private ghostSpin = 0; // Degrees
+    private isSpinning = false;
+    private lastSpinAngle = 0;
+    private dragBaseQuat: Quaternion | null = null;
 
     // Motion Control Mode
     private motionMode: InteractionMode = 'classic';
@@ -58,7 +65,8 @@ export class CanvasManager {
         private onSplitPreviewChange: (active: boolean) => void,
         private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void,
         private onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void,
-        private onPolyFeatureComplete?: (points: Coordinate[], fillColor: string) => void
+        private onPolyFeatureComplete?: (points: Coordinate[], fillColor: string) => void,
+        private onMotionPreviewChange?: (active: boolean) => void
     ) {
         this.canvas = canvas;
         const ctx = canvas.getContext('2d');
@@ -156,6 +164,36 @@ export class CanvasManager {
         }
 
         if (e.button === 0) {
+            // Check for Fine-Tuning Ring Hit
+            if (this.isFineTuning) {
+                // If clicking anywhere on canvas, assume spinning if not hitting UI?
+                // Or robust hit test on ring.
+                // Let's assume broad interaction: dragging anywhere rotates relative to center?
+                // Typically Ring requires clicking on Ring.
+                // Let's implement robust visual ring hit test.
+                // Center is not stored? We calculate it in render. We need it here.
+                // Re-calculate transformed center.
+                const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
+                if (plate && this.ghostRotation) {
+                    const vCenter = latLonToVector(plate.center);
+                    const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
+                    const center = vectorToLatLon(vRotCenter);
+
+                    const proj = this.projectionManager.project(center);
+                    if (proj) {
+                        const dist = Math.hypot(mousePos.x - proj[0], mousePos.y - proj[1]);
+                        // Ring radius 60, handle width ~10
+                        if (Math.abs(dist - 60) < 15) {
+                            this.isSpinning = true;
+                            const angle = Math.atan2(mousePos.y - proj[1], mousePos.x - proj[0]);
+                            this.lastSpinAngle = angle * 180 / Math.PI;
+                            this.lastMousePos = { x: e.clientX, y: e.clientY };
+                            return;
+                        }
+                    }
+                }
+            }
+
             // Check for gizmo handle hit first
             if (this.motionGizmo.isActive() && state.activeTool === 'select') {
                 const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
@@ -199,10 +237,25 @@ export class CanvasManager {
 
                     if (this.motionMode === 'drag_target' && hit?.plateId && geoPos) {
                         this.onSelect(hit.plateId, hit.featureId ?? null);
+
+                        // Initialize or Capture Base Drag State
+                        if (this.ghostPlateId === hit.plateId && this.ghostRotation) {
+                            this.dragBaseQuat = quatFromAxisAngle(this.ghostRotation.axis, this.ghostRotation.angle);
+                        } else {
+                            // New plate or reset
+                            this.ghostPlateId = hit.plateId;
+                            this.ghostRotation = { plateId: hit.plateId, axis: { x: 0, y: 0, z: 1 }, angle: 0 };
+                            this.ghostSpin = 0;
+                            this.lastSpinAngle = 0;
+                            this.dragBaseQuat = { w: 1, x: 0, y: 0, z: 0 };
+                        }
+
                         this.isDragging = true;
                         this.interactionMode = 'drag_target';
                         this.dragStartGeo = geoPos;
-                        this.ghostPlateId = hit.plateId;
+                        this.isFineTuning = true; // Ensure Widget Visible
+                        if (this.onMotionPreviewChange) this.onMotionPreviewChange(true); // Show UI
+
                         this.canvas.style.cursor = 'grabbing';
                     } else if (e.ctrlKey && hit?.featureId) {
                         // Ctrl+Click: Additive selection (toggle feature in/out of selection)
@@ -266,6 +319,34 @@ export class CanvasManager {
 
         if (this.isBoxSelecting) {
             this.selectionBoxEnd = mousePos;
+            this.render();
+            return;
+        }
+
+        if (this.isSpinning && this.isFineTuning && this.ghostPlateId) {
+            const state = this.getState();
+            const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
+            if (plate && this.ghostRotation) {
+                const vCenter = latLonToVector(plate.center);
+                const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
+                const center = vectorToLatLon(vRotCenter);
+
+                const proj = this.projectionManager.project(center);
+                if (proj) {
+                    // Calculate angle delta
+                    const angle = Math.atan2(mousePos.y - proj[1], mousePos.x - proj[0]);
+                    const angleDeg = angle * 180 / Math.PI;
+                    let delta = angleDeg - this.lastSpinAngle;
+
+                    // Handle wrap around
+                    if (delta > 180) delta -= 360;
+                    if (delta < -180) delta += 360;
+
+                    this.ghostSpin += delta;
+                    this.lastSpinAngle = angleDeg;
+                }
+            }
+            this.lastMousePos = { x: e.clientX, y: e.clientY };
             this.render();
             return;
         }
@@ -376,20 +457,27 @@ export class CanvasManager {
                 }
             } else if (this.interactionMode === 'drag_target') {
                 if (this.ghostRotation) {
-                    if (this.onDragTargetRequest) {
-                        this.onDragTargetRequest(this.ghostRotation.plateId, this.ghostRotation.axis, this.ghostRotation.angle);
-                    }
-                    this.ghostRotation = null;
+                    // Don't apply immediately. Enter fine-tuning mode.
+                    this.isFineTuning = true;
+                    this.ghostSpin = 0;
+                    if (this.onMotionPreviewChange) this.onMotionPreviewChange(true);
                 }
             }
 
-            this.isDragging = false;
-            this.interactionMode = 'none';
-            this.canvas.style.cursor = 'default';
-            this.dragStartGeo = null;
+        }
+
+        this.isDragging = false;
+        this.interactionMode = 'none';
+        this.canvas.style.cursor = 'default';
+        this.dragStartGeo = null;
+
+        if (!this.isFineTuning) {
             this.ghostPlateId = null;
             this.ghostRotation = null;
-            // Note: Split is now applied via applySplit() method, not on mouseup
+        }
+
+        if (this.isSpinning) {
+            this.isSpinning = false;
         }
     }
 
@@ -546,13 +634,25 @@ export class CanvasManager {
             const isSelected = plate.id === state.world.selectedPlateId;
 
             let polygonsToDraw = plate.polygons;
+            let transformedCenter = plate.center;
+
             if (this.ghostRotation?.plateId === plate.id) {
                 const { axis, angle } = this.ghostRotation;
+                const spinRad = -this.ghostSpin * Math.PI / 180; // Negative for CW alignment
+
+                // Calculate transformed center for spin axis and widget
+                const vCenter = latLonToVector(plate.center);
+                const vRotCenter = rotateVector(vCenter, axis, angle);
+                transformedCenter = vectorToLatLon(vRotCenter);
+
                 polygonsToDraw = plate.polygons.map(poly => {
                     const newPoints = poly.points.map(pt => {
                         const v = latLonToVector(pt);
-                        const rotated = rotateVector(v, axis, angle);
-                        return vectorToLatLon(rotated);
+                        // 1. Drag Rotation
+                        const v1 = rotateVector(v, axis, angle);
+                        // 2. Spin Rotation (around transformed center)
+                        const v2 = rotateVector(v1, vRotCenter, spinRad);
+                        return vectorToLatLon(v2);
                     });
                     return { ...poly, points: newPoints };
                 });
@@ -602,6 +702,11 @@ export class CanvasManager {
             if (isSelected && state.activeTool === 'select') {
                 this.motionGizmo.setPlate(plate.id, plate.motion.eulerPole);
                 this.motionGizmo.render(this.ctx, this.projectionManager, plate.center);
+            }
+
+            // Draw Fine-Tuning Rotation Widget
+            if (this.isFineTuning && this.ghostPlateId === plate.id) {
+                this.drawRotationWidget(transformedCenter);
             }
         }
 
@@ -793,7 +898,73 @@ export class CanvasManager {
         }
     }
 
-    // Public methods for split apply/cancel
+    private drawRotationWidget(center: Coordinate): void {
+        const proj = this.projectionManager.project(center);
+        if (!proj) return;
+
+        const [cx, cy] = proj;
+        const radius = 60; // Pixels
+
+        this.ctx.save();
+
+        // Draw Ring
+        this.ctx.beginPath();
+        this.ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        this.ctx.strokeStyle = '#ffff00';
+        this.ctx.lineWidth = 2;
+        this.ctx.stroke();
+
+        // Handle position logic
+        const handleAngle = (this.ghostSpin - 90) * Math.PI / 180;
+        const hx = cx + Math.cos(handleAngle) * radius;
+        const hy = cy + Math.sin(handleAngle) * radius;
+
+        this.ctx.beginPath();
+        this.ctx.arc(hx, hy, 8, 0, Math.PI * 2);
+        this.ctx.fillStyle = this.isSpinning ? '#ffffff' : '#ffff00';
+        this.ctx.fill();
+        this.ctx.stroke();
+
+        this.ctx.restore();
+    }
+
+    // Public methods for motion apply/cancel
+    public applyMotion(): void {
+        const state = this.getState();
+        if (this.isFineTuning && this.ghostRotation && this.onDragTargetRequest) {
+            const plate = state.world.plates.find(p => p.id === this.ghostRotation!.plateId);
+            if (plate) {
+                // Calculate Transformed Center (after drag)
+                const vCenter = latLonToVector(plate.center);
+                const vCenterRot = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
+
+                // Q_drag
+                const qDrag = quatFromAxisAngle(this.ghostRotation.axis, this.ghostRotation.angle);
+
+                // Q_spin (around transformed center)
+                const spinRad = -this.ghostSpin * Math.PI / 180;
+                const qSpin = quatFromAxisAngle(vCenterRot, spinRad);
+
+                // Q_total = Q_spin * Q_drag
+                const qTotal = quatMultiply(qSpin, qDrag);
+
+                const { axis, angle } = axisAngleFromQuat(qTotal);
+
+                this.onDragTargetRequest(this.ghostRotation.plateId, axis, angle);
+            }
+        }
+        this.cancelMotion();
+    }
+
+    public cancelMotion(): void {
+        this.isFineTuning = false;
+        this.ghostRotation = null;
+        this.ghostPlateId = null;
+        this.ghostSpin = 0;
+        if (this.onMotionPreviewChange) this.onMotionPreviewChange(false);
+        this.render();
+    }
+
     public applySplit(): void {
         if (this.splitPoints.length >= 2) {
             this.onSplitApply([...this.splitPoints]);
@@ -869,8 +1040,17 @@ export class CanvasManager {
         dotVal = Math.max(-1, Math.min(1, dotVal));
         const angleRad = Math.acos(dotVal);
 
+        // Calculate Delta Quaternion
+        const qDelta = quatFromAxisAngle(axis, angleRad);
+        const qBase = this.dragBaseQuat || { w: 1, x: 0, y: 0, z: 0 };
+
+        // Combine: Q_final = Q_delta * Q_base
+        const qFinal = quatMultiply(qDelta, qBase);
+
+        const res = axisAngleFromQuat(qFinal);
+
         // 2. Set Ghost Rotation
-        this.ghostRotation = { plateId: p.id, axis, angle: angleRad };
+        this.ghostRotation = { plateId: p.id, axis: res.axis, angle: res.angle };
         this.render();
     }
 

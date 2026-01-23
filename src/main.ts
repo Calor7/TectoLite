@@ -56,7 +56,11 @@ class TectoLiteApp {
       (active) => this.handleSplitPreviewChange(active),
       (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
       (plateId, axis, angleRad) => this.handleDragTargetRequest(plateId, axis, angleRad),
-      (points, fillColor) => this.handlePolyFeatureComplete(points, fillColor)
+      (points, fillColor) => this.handlePolyFeatureComplete(points, fillColor),
+      (active) => {
+        const el = document.getElementById('motion-controls');
+        if (el) el.style.display = active ? 'block' : 'none';
+      }
     );
 
     // Initialize simulation
@@ -146,6 +150,15 @@ class TectoLiteApp {
               <h3 class="tool-group-title">Split Preview</h3>
               <button class="btn btn-success" id="btn-split-apply">✓ Apply</button>
               <button class="btn btn-secondary" id="btn-split-cancel">✗ Cancel</button>
+            </div>
+
+            <div class="tool-group" id="motion-controls" style="display: none;">
+              <h3 class="tool-group-title">Confirm Motion</h3>
+              <p style="font-size: 11px; margin-bottom: 8px; color: #a6adc8; line-height: 1.2;">Drag ring to rotate.</p>
+              <div style="display: flex; gap: 4px;">
+                  <button class="btn btn-success" id="btn-motion-apply" style="flex: 1;">✓ Apply</button>
+                  <button class="btn btn-secondary" id="btn-motion-cancel" style="flex: 1;">✗ Cancel</button>
+              </div>
             </div>
 
             <div class="tool-group" id="fuse-controls" style="display: none;">
@@ -397,6 +410,15 @@ class TectoLiteApp {
 
     document.getElementById('btn-split-cancel')?.addEventListener('click', () => {
       this.canvasManager?.cancelSplit();
+    });
+
+    // Motion control buttons
+    document.getElementById('btn-motion-apply')?.addEventListener('click', () => {
+      this.canvasManager?.applyMotion();
+    });
+
+    document.getElementById('btn-motion-cancel')?.addEventListener('click', () => {
+      this.canvasManager?.cancelMotion();
     });
 
     // Undo/Redo buttons

@@ -5,7 +5,8 @@ import {
     vectorToLatLon,
     cross,
     dot,
-    normalize
+    normalize,
+    calculateSphericalCentroid
 } from './utils/sphericalMath';
 
 // Legacy interface for start/end splits
@@ -346,7 +347,7 @@ export function splitPlate(
         visible: true,
         locked: false,
         color: plateToSplit.color, // Keep original color for A
-        center: polylinePoints[0],
+        center: calculateSphericalCentroid(leftPolygons.flatMap(p => p.points)),
         events: [],
         birthTime: currentTime,
         deathTime: null,
@@ -366,7 +367,7 @@ export function splitPlate(
         visible: true,
         locked: false,
         color: '#D4AF37', // Gold for B
-        center: polylinePoints[polylinePoints.length - 1],
+        center: calculateSphericalCentroid(rightPolygons.flatMap(p => p.points)),
         events: [],
         birthTime: currentTime,
         deathTime: null,
