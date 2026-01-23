@@ -23,7 +23,7 @@ import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
 import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { HistoryManager } from './HistoryManager';
-import { exportToJSON, importFromJSON } from './export';
+import { exportToJSON, parseImportFile, showImportDialog } from './export';
 
 class TectoLiteApp {
   private state: AppState;
@@ -411,14 +411,96 @@ class TectoLiteApp {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
         try {
-          const worldState = await importFromJSON(file);
-          this.pushState(); // Save current state before replacing
+          // Parse file first to get metadata for the dialog
+          const { world: importedWorld, name: filename } = await parseImportFile(file);
+          const currentTime = this.state.world.currentTime;
+
+          // Show import dialog
+          const importMode = await showImportDialog(
+            filename,
+            importedWorld.plates.length,
+            currentTime
+          );
+
+          if (!importMode) {
+            // User cancelled
+            (e.target as HTMLInputElement).value = '';
+            return;
+          }
+
+          this.pushState(); // Save current state before adding
+
+          // Calculate time offset based on import mode
+          const timeOffset = importMode === 'at_current_time' ? currentTime : 0;
+
+          // Generate new IDs for imported plates and features to avoid collisions
+          const idMap = new Map<string, string>(); // oldId -> newId
+
+          const processedPlates = importedWorld.plates.map(plate => {
+            const newPlateId = generateId();
+            idMap.set(plate.id, newPlateId);
+
+            // Helper to adjust feature timestamps
+            const adjustFeatureTime = (f: Feature): Feature => ({
+              ...f,
+              id: generateId(),
+              generatedAt: f.generatedAt !== undefined ? f.generatedAt + timeOffset : timeOffset,
+              deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
+            });
+
+            // Process polygons with new IDs
+            const newPolygons = plate.polygons.map(p => ({
+              ...p,
+              id: generateId()
+            }));
+
+            // Process features with new IDs and adjusted times
+            const newFeatures = plate.features.map(adjustFeatureTime);
+
+            // Process initial polygons and features
+            const newInitialPolygons = plate.initialPolygons.map(p => ({
+              ...p,
+              id: generateId()
+            }));
+
+            const newInitialFeatures = plate.initialFeatures.map(adjustFeatureTime);
+
+            // Process motion keyframes with adjusted times
+            const newKeyframes = plate.motionKeyframes.map(kf => ({
+              ...kf,
+              time: kf.time + timeOffset, // Shift keyframe time
+              snapshotPolygons: kf.snapshotPolygons.map(p => ({ ...p, id: generateId() })),
+              snapshotFeatures: kf.snapshotFeatures.map(adjustFeatureTime)
+            }));
+
+            return {
+              ...plate,
+              id: newPlateId,
+              name: `${plate.name} (imported)`,
+              birthTime: plate.birthTime + timeOffset, // Shift birth time
+              deathTime: plate.deathTime !== null ? plate.deathTime + timeOffset : null, // Shift death time if present
+              polygons: newPolygons,
+              features: newFeatures,
+              initialPolygons: newInitialPolygons,
+              initialFeatures: newInitialFeatures,
+              motionKeyframes: newKeyframes
+            };
+          });
+
+          // Merge with existing plates
           this.state = {
             ...this.state,
-            world: worldState
+            world: {
+              ...this.state.world,
+              plates: [...this.state.world.plates, ...processedPlates]
+            }
           };
+
           this.updateUI();
           this.canvasManager?.render();
+
+          const modeDesc = importMode === 'at_beginning' ? 'at time 0' : `at time ${currentTime.toFixed(1)} Ma`;
+          alert(`Successfully imported ${processedPlates.length} plate(s) ${modeDesc}!`);
         } catch (err) {
           alert('Failed to load file: ' + (err as Error).message);
         }
@@ -537,7 +619,8 @@ class TectoLiteApp {
       rotation: 0,
       scale: 1,
       properties: {},
-      generatedAt: this.state.world.currentTime
+      generatedAt: this.state.world.currentTime,
+      originalPosition: position // Set source of truth for rotation
     };
 
     // Immutable state update

@@ -350,6 +350,7 @@ export function splitPlate(
         events: [],
         birthTime: currentTime,
         deathTime: null,
+        parentPlateId: plateToSplit.id, // Track parent for feature propagation
         initialPolygons: leftPolygons,
         initialFeatures: leftFeatures
     };
@@ -369,6 +370,7 @@ export function splitPlate(
         events: [],
         birthTime: currentTime,
         deathTime: null,
+        parentPlateId: plateToSplit.id, // Track parent for feature propagation
         initialPolygons: rightPolygons,
         initialFeatures: rightFeatures
     };

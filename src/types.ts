@@ -24,7 +24,8 @@ export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench'
 export interface Feature {
   id: string;
   type: FeatureType;
-  position: Coordinate; // Changed to spherical
+  position: Coordinate; // Current/Rendered position
+  originalPosition?: Coordinate; // Source of Truth: Position at generatedAt (or birthTime)
   rotation: number;     // Rotation on surface
   scale: number;
   properties: Record<string, unknown>;
@@ -34,7 +35,8 @@ export interface Feature {
   name?: string;         // User-defined name (defaults to type name if not set)
   description?: string;  // User-defined description
   // Fields for poly_region features
-  polygon?: Coordinate[];  // Points defining the polygon shape
+  polygon?: Coordinate[];  // Current/Rendered polygon
+  originalPolygon?: Coordinate[]; // Source of Truth: Polygon at generatedAt
   fillColor?: string;      // Custom fill color for the region
 }
 
@@ -77,6 +79,7 @@ export interface TectonicPlate {
   // Lifecycle
   birthTime: number; // Time when plate was created/split
   deathTime: number | null; // Time when plate was destroyed/split (null if active)
+  parentPlateId?: string; // ID of parent plate if this plate was created from a split
 
   // Geometry at birthTime (Basis for initial keyframe)
   initialPolygons: Polygon[];

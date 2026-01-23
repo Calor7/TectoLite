@@ -126,20 +126,262 @@ function drawFeature(
 // JSON Export functionality
 const SAVE_VERSION = 1;
 
-export function exportToJSON(state: AppState): void {
+export type ExportMode = 'entire_timeline' | 'from_current_time';
+
+export interface ExportOptions {
+    mode: ExportMode;
+    filename: string;
+}
+
+export function showExportDialog(): Promise<ExportOptions | null> {
+    return new Promise((resolve) => {
+        // Create modal overlay
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #1e1e2e; border-radius: 12px; padding: 24px;
+            min-width: 350px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        `;
+
+        const currentTime = (window as any).__tectoLiteCurrentTime ?? 0;
+
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 16px 0; color: #89b4fa;">💾 Export Save File</h3>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">File Name:</label>
+                <input type="text" id="export-filename" value="TectoLite-${new Date().toISOString().split('T')[0]}" 
+                    style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px;
+                    background: #313244; color: #cdd6f4; box-sizing: border-box;">
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Timeline Mode:</label>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; 
+                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        <input type="radio" name="export-mode" value="entire_timeline" checked>
+                        <div>
+                            <div style="font-weight: 500;">📚 Entire Timeline</div>
+                            <div style="font-size: 12px; color: #a6adc8;">Save everything from time 0 onwards</div>
+                        </div>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px;
+                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        <input type="radio" name="export-mode" value="from_current_time">
+                        <div>
+                            <div style="font-weight: 500;">⏩ From Current Time (${currentTime.toFixed(1)} Ma)</div>
+                            <div style="font-size: 12px; color: #a6adc8;">Save from now, reset timeline to 0</div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button id="export-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px;
+                    background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
+                <button id="export-confirm" style="padding: 8px 16px; border: none; border-radius: 6px;
+                    background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 500;">Export</button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const cleanup = () => {
+            document.body.removeChild(overlay);
+        };
+
+        dialog.querySelector('#export-cancel')?.addEventListener('click', () => {
+            cleanup();
+            resolve(null);
+        });
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                cleanup();
+                resolve(null);
+            }
+        });
+
+        dialog.querySelector('#export-confirm')?.addEventListener('click', () => {
+            const filename = (dialog.querySelector('#export-filename') as HTMLInputElement).value.trim();
+            const mode = (dialog.querySelector('input[name="export-mode"]:checked') as HTMLInputElement).value as ExportMode;
+            cleanup();
+            resolve(filename ? { mode, filename } : null);
+        });
+
+        // Focus the filename input
+        setTimeout(() => (dialog.querySelector('#export-filename') as HTMLInputElement)?.select(), 50);
+    });
+}
+
+export async function exportToJSON(state: AppState): Promise<void> {
+    // Store current time for dialog access
+    (window as any).__tectoLiteCurrentTime = state.world.currentTime;
+
+    const options = await showExportDialog();
+    if (!options) return; // User cancelled
+
+    let worldToSave = state.world;
+
+    // If exporting from current time, shift all timestamps so currentTime becomes 0
+    if (options.mode === 'from_current_time') {
+        const timeOffset = -state.world.currentTime;
+
+        worldToSave = {
+            ...state.world,
+            currentTime: 0,
+            plates: state.world.plates
+                .filter(plate => {
+                    // Only include plates that are alive at current time
+                    const isBorn = state.world.currentTime >= plate.birthTime;
+                    const isDead = plate.deathTime !== null && state.world.currentTime >= plate.deathTime;
+                    return isBorn && !isDead;
+                })
+                .map(plate => ({
+                    ...plate,
+                    birthTime: Math.max(0, plate.birthTime + timeOffset),
+                    deathTime: plate.deathTime !== null ? plate.deathTime + timeOffset : null,
+                    motionKeyframes: plate.motionKeyframes
+                        .filter(kf => kf.time <= state.world.currentTime) // Only keyframes up to current time
+                        .map(kf => ({
+                            ...kf,
+                            time: Math.max(0, kf.time + timeOffset),
+                            snapshotFeatures: kf.snapshotFeatures.map(f => ({
+                                ...f,
+                                generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
+                                deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
+                            }))
+                        })),
+                    features: plate.features.map(f => ({
+                        ...f,
+                        generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
+                        deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
+                    })),
+                    initialFeatures: plate.initialFeatures.map(f => ({
+                        ...f,
+                        generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
+                        deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
+                    }))
+                }))
+        };
+    }
+
     const saveData = {
         version: SAVE_VERSION,
         savedAt: new Date().toISOString(),
-        world: state.world
+        name: options.filename,
+        exportMode: options.mode,
+        exportedAtTime: state.world.currentTime,
+        world: worldToSave
     };
 
     const json = JSON.stringify(saveData, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const link = document.createElement('a');
-    link.download = `tectolite-save-${Date.now()}.json`;
+    const sanitizedName = options.filename.replace(/[^a-zA-Z0-9_-]/g, '_');
+    link.download = `${sanitizedName}.json`;
     link.href = URL.createObjectURL(blob);
     link.click();
     URL.revokeObjectURL(link.href);
+}
+
+export type ImportMode = 'at_beginning' | 'at_current_time';
+
+export interface ImportResult {
+    world: WorldState;
+    mode: ImportMode;
+    filename: string;
+}
+
+export function showImportDialog(filename: string, plateCount: number, currentTime: number): Promise<ImportMode | null> {
+    return new Promise((resolve) => {
+        // Create modal overlay
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #1e1e2e; border-radius: 12px; padding: 24px;
+            min-width: 350px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        `;
+
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 16px 0; color: #a6e3a1;">📂 Import Save File</h3>
+            
+            <div style="margin-bottom: 16px; padding: 12px; background: #313244; border-radius: 6px;">
+                <div style="font-weight: 500; margin-bottom: 4px;">${filename}</div>
+                <div style="font-size: 12px; color: #a6adc8;">${plateCount} plate(s) found</div>
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Import Location:</label>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; 
+                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        <input type="radio" name="import-mode" value="at_beginning" checked>
+                        <div>
+                            <div style="font-weight: 500;">⏮️ At Beginning (Time 0)</div>
+                            <div style="font-size: 12px; color: #a6adc8;">Add plates starting from the beginning</div>
+                        </div>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px;
+                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        <input type="radio" name="import-mode" value="at_current_time">
+                        <div>
+                            <div style="font-weight: 500;">⏩ At Current Time (${currentTime.toFixed(1)} Ma)</div>
+                            <div style="font-size: 12px; color: #a6adc8;">Add plates at the current simulation time</div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button id="import-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px;
+                    background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
+                <button id="import-confirm" style="padding: 8px 16px; border: none; border-radius: 6px;
+                    background: #a6e3a1; color: #1e1e2e; cursor: pointer; font-weight: 500;">Import</button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const cleanup = () => {
+            document.body.removeChild(overlay);
+        };
+
+        dialog.querySelector('#import-cancel')?.addEventListener('click', () => {
+            cleanup();
+            resolve(null);
+        });
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                cleanup();
+                resolve(null);
+            }
+        });
+
+        dialog.querySelector('#import-confirm')?.addEventListener('click', () => {
+            const mode = (dialog.querySelector('input[name="import-mode"]:checked') as HTMLInputElement).value as ImportMode;
+            cleanup();
+            resolve(mode);
+        });
+    });
 }
 
 export function importFromJSON(file: File): Promise<WorldState> {
@@ -170,4 +412,33 @@ export function importFromJSON(file: File): Promise<WorldState> {
     });
 }
 
+// Parse file to get metadata without full import
+export function parseImportFile(file: File): Promise<{ world: WorldState; name: string }> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target?.result as string;
+                const data = JSON.parse(text);
+
+                if (!data.version || data.version > SAVE_VERSION) {
+                    throw new Error('Unsupported save file version');
+                }
+
+                if (!data.world || !Array.isArray(data.world.plates)) {
+                    throw new Error('Invalid save file format');
+                }
+
+                resolve({
+                    world: data.world as WorldState,
+                    name: data.name || file.name
+                });
+            } catch (err) {
+                reject(err);
+            }
+        };
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsText(file);
+    });
+}
 

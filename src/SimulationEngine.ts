@@ -18,6 +18,38 @@ export class SimulationEngine {
         private setState: (updater: (state: AppState) => AppState) => void
     ) { }
 
+    // Helper: Check if a point is inside a spherical polygon using ray casting
+    private isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
+        if (polygon.length < 3) return false;
+
+        let windingNumber = 0;
+
+        for (let i = 0; i < polygon.length; i++) {
+            const lat1 = polygon[i][1];
+            const lat2 = polygon[(i + 1) % polygon.length][1];
+            const lon1 = polygon[i][0];
+            const lon2 = polygon[(i + 1) % polygon.length][0];
+            const pLat = point[1];
+            const pLon = point[0];
+
+            if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
+                const t = (pLat - lat1) / (lat2 - lat1);
+                let lonAtIntersection = lon1 + t * (lon2 - lon1);
+
+                if (Math.abs(lon2 - lon1) > 180) {
+                    if (lon2 < lon1) lonAtIntersection = lon1 + t * (lon2 + 360 - lon1);
+                    else lonAtIntersection = lon1 + t * (lon2 - 360 - lon1);
+                }
+
+                if (pLon < lonAtIntersection) {
+                    windingNumber += (lat2 > lat1) ? 1 : -1;
+                }
+            }
+        }
+
+        return windingNumber !== 0;
+    }
+
     public start(): void {
         if (!this.isRunning) {
             this.isRunning = true;
@@ -56,7 +88,7 @@ export class SimulationEngine {
 
                 if (!isBorn || isDead || plate.locked) return plate;
 
-                return this.calculatePlateAtTime(plate, time);
+                return this.calculatePlateAtTime(plate, time, state.world.plates);
             });
 
             return {
@@ -118,7 +150,7 @@ export class SimulationEngine {
 
                 if (plate.locked) return plate;
 
-                return this.calculatePlateAtTime(plate, newTime);
+                return this.calculatePlateAtTime(plate, newTime, state.world.plates);
             });
 
             return {
@@ -132,13 +164,39 @@ export class SimulationEngine {
         });
     }
 
-    private calculatePlateAtTime(plate: TectonicPlate, time: number): TectonicPlate {
+    private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {
+        // First, check if we need to inherit features from parent plate
+        let inheritedFeatures: Feature[] = [];
+        if (plate.parentPlateId) {
+            const parentPlate = allPlates.find(p => p.id === plate.parentPlateId);
+            if (parentPlate) {
+                // Find features on parent that were added between parent's birth and this plate's birth (split time)
+                // These features should be inherited by the appropriate child
+                const candidateFeatures = parentPlate.features.filter(f =>
+                    f.generatedAt !== undefined &&
+                    f.generatedAt >= parentPlate.birthTime &&
+                    f.generatedAt < plate.birthTime // Feature was added before the split
+                );
+
+                // Check which features should belong to this child based on position containment
+                // Use the initial polygons of this child plate for the containment test
+                inheritedFeatures = candidateFeatures.filter(f => {
+                    return plate.initialPolygons.some(poly =>
+                        this.isPointInPolygon(f.position, poly.points)
+                    );
+                }).filter(f => {
+                    // Don't add if already in plate's features
+                    return !plate.features.some(existing => existing.id === f.id);
+                });
+            }
+        }
+
         // Find the active keyframe for this time (latest keyframe with time <= query time)
         const keyframes = plate.motionKeyframes || [];
 
         // If no keyframes, fall back to legacy motion from birth
         if (keyframes.length === 0) {
-            return this.calculateWithLegacyMotion(plate, time);
+            return this.calculateWithLegacyMotion(plate, time, inheritedFeatures);
         }
 
         // Find active keyframe (latest one that starts at or before query time)
@@ -153,7 +211,7 @@ export class SimulationEngine {
             const dynamicFeatures = plate.features.filter(f =>
                 !initialFeatureIds.has(f.id) && f.generatedAt !== undefined
             );
-            const mergedFeatures = [...(plate.initialFeatures || []), ...dynamicFeatures];
+            const mergedFeatures = [...(plate.initialFeatures || []), ...dynamicFeatures, ...inheritedFeatures];
 
             return {
                 ...plate,
@@ -174,7 +232,7 @@ export class SimulationEngine {
                 f.generatedAt !== undefined &&
                 f.generatedAt >= activeKeyframe.time
             );
-            const mergedFeatures = [...activeKeyframe.snapshotFeatures, ...dynamicFeatures];
+            const mergedFeatures = [...activeKeyframe.snapshotFeatures, ...dynamicFeatures, ...inheritedFeatures];
 
             return {
                 ...plate,
@@ -186,12 +244,36 @@ export class SimulationEngine {
 
         // Rotate from the keyframe's snapshot geometry
         const axis = latLonToVector(pole.position);
-        const angle = toRad(pole.rate * elapsed);
+        const elapsedFromKeyframe = time - activeKeyframe.time;
+        const angle = toRad(pole.rate * elapsedFromKeyframe);
 
         const transform = (coord: Coordinate): Coordinate => {
             const v = latLonToVector(coord);
             const vRot = rotateVector(v, axis, angle);
             return vectorToLatLon(vRot);
+        };
+
+        // Transform helper: STRICTLY uses the provided startTime for rotation calculation.
+        // Does NOT fall back to feat.generatedAt automatically, to prevent stale timestamps
+        // (like inherited features) from causing over-rotation.
+        // useOriginal: If true, uses feat.originalPosition as source (if available)
+        const transformFeature = (feat: Feature, startTime: number, useOriginal: boolean = false): Feature => {
+            const featureElapsed = Math.max(0, time - startTime);
+            const featureAngle = toRad(pole.rate * featureElapsed);
+
+            if (featureAngle === 0) {
+                return feat;
+            }
+
+            const sourcePos = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
+            const v = latLonToVector(sourcePos);
+            const vRot = rotateVector(v, axis, featureAngle);
+
+            return {
+                ...feat,
+                position: vectorToLatLon(vRot),
+                originalPosition: feat.originalPosition // Explicitly preserve originalPosition
+            };
         };
 
         const newPolygons = activeKeyframe.snapshotPolygons.map(poly => ({
@@ -208,12 +290,25 @@ export class SimulationEngine {
             f.generatedAt >= activeKeyframe.time
         );
 
-        const allSourceFeatures = [...activeKeyframe.snapshotFeatures, ...dynamicFeatures];
+        // Transform snapshot features: Start from Keyframe Time (snapshot state)
+        // Use current position (matches snapshot) -> useOriginal = false
+        const transformedSnapshotFeatures = activeKeyframe.snapshotFeatures.map(feat =>
+            transformFeature(feat, activeKeyframe.time, false)
+        );
 
-        const newFeatures = allSourceFeatures.map(feat => ({
-            ...feat,
-            position: transform(feat.position)
-        }));
+        // Transform dynamic features: Start from their Creation Time
+        // MUST use originalPosition to avoid compounding rotations -> useOriginal = true
+        const transformedDynamicFeatures = dynamicFeatures.map(feat =>
+            transformFeature(feat, feat.generatedAt!, true)
+        );
+
+        // Transform inherited features: Start from Split Time (Plate Birth Time)
+        // their position is valid at split snapshot -> useOriginal = false
+        const transformedInheritedFeatures = inheritedFeatures.map(feat =>
+            transformFeature(feat, plate.birthTime, false)
+        );
+
+        const newFeatures = [...transformedSnapshotFeatures, ...transformedDynamicFeatures, ...transformedInheritedFeatures];
 
         const allPoints = newPolygons.flatMap(poly => poly.points);
         const newCenter = calculateSphericalCentroid(allPoints);
@@ -229,7 +324,7 @@ export class SimulationEngine {
     }
 
     // Legacy fallback for plates without keyframes
-    private calculateWithLegacyMotion(plate: TectonicPlate, time: number): TectonicPlate {
+    private calculateWithLegacyMotion(plate: TectonicPlate, time: number, inheritedFeatures: Feature[] = []): TectonicPlate {
         const pole = plate.motion?.eulerPole;
         const elapsed = time - plate.birthTime;
 
@@ -237,7 +332,7 @@ export class SimulationEngine {
             return {
                 ...plate,
                 polygons: plate.initialPolygons || plate.polygons,
-                features: plate.initialFeatures || plate.features,
+                features: [...(plate.initialFeatures || plate.features), ...inheritedFeatures],
                 center: plate.center
             };
         }
@@ -251,6 +346,26 @@ export class SimulationEngine {
             return vectorToLatLon(vRot);
         };
 
+        // Transform helper: STRICTLY uses the provided startTime.
+        // Transform helper: STRICTLY uses the provided startTime.
+        const transformFeature = (feat: Feature, startTime: number, useOriginal: boolean = false): Feature => {
+            const featureElapsed = Math.max(0, time - startTime);
+            const featureAngle = toRad(pole.rate * featureElapsed);
+
+            if (featureAngle === 0) {
+                return feat;
+            }
+
+            const sourcePos = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
+            const v = latLonToVector(sourcePos);
+            const vRot = rotateVector(v, axis, featureAngle);
+            return {
+                ...feat,
+                position: vectorToLatLon(vRot),
+                originalPosition: feat.originalPosition
+            };
+        };
+
         const sourcePolys = plate.initialPolygons || plate.polygons;
         // Use current features (which include dynamically added ones) instead of only initialFeatures
         const sourceFeats = plate.features;
@@ -260,10 +375,19 @@ export class SimulationEngine {
             points: poly.points.map(transform)
         }));
 
-        const newFeatures = sourceFeats.map(feat => ({
-            ...feat,
-            position: transform(feat.position)
-        }));
+        // Transform plate features: Use their own generatedAt (or plate birth if missing)
+        // Dynamic features use originalPosition (true)
+        const transformedPlateFeatures = sourceFeats.map(feat =>
+            transformFeature(feat, feat.generatedAt ?? plate.birthTime, true)
+        );
+
+        // Transform inherited features: Use Plate Birth Time (Split Time)
+        // Position is valid at split. useOriginal = false
+        const transformedInheritedFeatures = inheritedFeatures.map(feat =>
+            transformFeature(feat, plate.birthTime, false)
+        );
+
+        const newFeatures = [...transformedPlateFeatures, ...transformedInheritedFeatures];
 
         const allPoints = newPolygons.flatMap(poly => poly.points);
         const newCenter = calculateSphericalCentroid(allPoints);
