@@ -247,7 +247,8 @@ function splitPolygonWithPolyline(
 export function splitPlate(
     state: AppState,
     plateId: string,
-    splitLine: SplitLine | SplitPolyline
+    splitLine: SplitLine | SplitPolyline,
+    inheritMomentum: boolean = false
 ): AppState {
     const plateToSplit = state.world.plates.find(p => p.id === plateId);
     if (!plateToSplit) return state;
@@ -318,20 +319,20 @@ export function splitPlate(
         }
     }
 
-    // Create two new plates with default motion (0)
+    // Create two new plates with default motion (0) OR inherited
     const currentTime = state.world.currentTime;
-    const defaultMotion = createDefaultMotion();
+    const newMotion = inheritMomentum ? { ...plateToSplit.motion } : createDefaultMotion();
 
     const leftKeyframe = {
         time: currentTime,
-        eulerPole: { ...defaultMotion.eulerPole },
+        eulerPole: { ...newMotion.eulerPole },
         snapshotPolygons: leftPolygons,
         snapshotFeatures: leftFeatures
     };
 
     const rightKeyframe = {
         time: currentTime,
-        eulerPole: { ...defaultMotion.eulerPole },
+        eulerPole: { ...newMotion.eulerPole },
         snapshotPolygons: rightPolygons,
         snapshotFeatures: rightFeatures
     };
@@ -342,7 +343,7 @@ export function splitPlate(
         name: `${plateToSplit.name} (A)`,
         polygons: leftPolygons,
         features: leftFeatures,
-        motion: defaultMotion,
+        motion: newMotion,
         motionKeyframes: [leftKeyframe],
         visible: true,
         locked: false,
@@ -362,7 +363,7 @@ export function splitPlate(
         name: `${plateToSplit.name} (B)`,
         polygons: rightPolygons,
         features: rightFeatures,
-        motion: defaultMotion,
+        motion: newMotion,
         motionKeyframes: [rightKeyframe],
         visible: true,
         locked: false,

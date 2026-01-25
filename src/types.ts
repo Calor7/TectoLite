@@ -70,6 +70,9 @@ export interface TectonicPlate {
   id: string;
   name: string;
   color: string;
+  type: 'continental' | 'oceanic'; // Default: 'continental'
+  density?: number; // Optional custom density
+  elevation?: number; // Base elevation
 
   // Current Visual State (Calculated from keyframes)
   polygons: Polygon[];
@@ -113,7 +116,21 @@ export interface WorldState {
     maxDragSpeed: number;        // deg/Ma, default ~1.0 (≈10 cm/year)
     speedLimitEnabled: boolean;
     enableHotspotIslands?: boolean; // Toggle for hotspot island generation
+    // Advanced Tectonics (Worldbuilding Pasta) - Default OFF
+    enableCrustPhysics?: boolean;
+    enableBoundaryVisualization?: boolean;
+    enableDynamicFeatures?: boolean;
   };
+  // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
+  boundaries?: Boundary[];
+}
+
+export interface Boundary {
+  id: string;
+  type: 'convergent' | 'divergent' | 'transform';
+  points: Coordinate[][]; // Line segments or polygon rings
+  plateIds: [string, string];
+  velocity?: number; // Relative velocity magnitude
 }
 
 export type ToolType = 'select' | 'draw' | 'feature' | 'split' | 'pan' | 'poly_feature' | 'fuse';
@@ -166,7 +183,11 @@ export function createDefaultWorldState(): WorldState {
     showFutureFeatures: false,  // Hide future/past features by default
     globalOptions: {
       maxDragSpeed: 1.0,  // ~10 cm/year (realistic plate speed)
-      speedLimitEnabled: false
+      speedLimitEnabled: false,
+      enableHotspotIslands: true,
+      enableCrustPhysics: false,
+      enableBoundaryVisualization: false,
+      enableDynamicFeatures: false
     }
   };
 }

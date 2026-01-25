@@ -6,6 +6,8 @@ import {
     rotateVector,
     calculateSphericalCentroid
 } from './utils/sphericalMath';
+import { BoundarySystem } from './BoundarySystem';
+// import { SpawnerSystem } from './systems/SpawnerSystem';
 
 
 export class SimulationEngine {
@@ -91,11 +93,23 @@ export class SimulationEngine {
                 return this.calculatePlateAtTime(plate, time, state.world.plates);
             });
 
+            // Calculate Boundaries if enabled
+            let boundaries = state.world.boundaries;
+            if (state.world.globalOptions.enableBoundaryVisualization || state.world.globalOptions.enableDynamicFeatures) {
+                boundaries = BoundarySystem.detectBoundaries(newPlates);
+            }
+
+            // Phase 3: Dynamic Feature Spawning - DISABLED
+            let finalPlates = newPlates;
+            // Removed for lightweight performance per user request
+            // if (state.world.globalOptions.enableDynamicFeatures && boundaries && boundaries.length > 0) ...
+
             return {
                 ...state,
                 world: {
                     ...state.world,
-                    plates: newPlates,
+                    plates: finalPlates,
+                    boundaries: boundaries,
                     currentTime: time
                 }
             };

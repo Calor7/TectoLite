@@ -288,6 +288,7 @@ export function fusePlates(
         id: generateId(),
         name: `${plate1.name}-${plate2.name} (Fused)`,
         color: plate1.color,
+        type: plate1.type,
         polygons: mergedPolygons,
         features: combinedFeatures,
         center: newCenter,

@@ -24,6 +24,7 @@ import { fusePlates } from './FusionTool';
 import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { HistoryManager } from './HistoryManager';
 import { exportToJSON, parseImportFile, showImportDialog } from './export';
+import { HeightmapGenerator } from './systems/HeightmapGenerator';
 
 class TectoLiteApp {
   private state: AppState;
@@ -102,11 +103,17 @@ class TectoLiteApp {
             <button id="btn-export" class="btn btn-primary">
               <span class="icon">📥</span> Export PNG
             </button>
+            <button id="btn-export-heightmap" class="btn btn-primary" title="Export Heightmap">
+              <span class="icon">🗺️</span> Heightmap
+            </button>
             <button id="btn-export-json" class="btn btn-secondary" title="Export JSON">
               <span class="icon">💾</span> Save
             </button>
             <button id="btn-import-json" class="btn btn-secondary" title="Import JSON">
               <span class="icon">📂</span> Load
+            </button>
+            <button id="btn-legend" class="btn btn-secondary" title="Legend">
+              <span class="icon">❓</span> Legend
             </button>
             <input type="file" id="file-import" accept=".json" style="display: none;">
           </div>
@@ -225,6 +232,15 @@ class TectoLiteApp {
                     <label class="property-label">Max Time (Ma)</label>
                     <input type="number" id="global-max-time" class="property-input" value="500" step="100" min="100" style="width: 80px;">
                 </div>
+                <hr class="property-divider">
+                <h4 class="tool-group-title" style="font-size: 11px;">Advanced</h4>
+                <label class="view-option">
+                    <input type="checkbox" id="check-crust-physics"> Crust Physics
+                </label>
+                <label class="view-option">
+                    <input type="checkbox" id="check-boundary-vis"> Show Boundaries
+                </label>
+
             </div>
 
             <div class="tool-group">
@@ -328,6 +344,15 @@ class TectoLiteApp {
       this.state.world.globalOptions.enableHotspotIslands = (e.target as HTMLInputElement).checked;
     });
 
+    // Advanced Toggles
+    document.getElementById('check-crust-physics')?.addEventListener('change', (e) => {
+      this.state.world.globalOptions.enableCrustPhysics = (e.target as HTMLInputElement).checked;
+      this.updateUI(); // Rerender properties panel
+    });
+    document.getElementById('check-boundary-vis')?.addEventListener('change', (e) => {
+      this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
+    });
+
     document.getElementById('global-max-speed')?.addEventListener('change', (e) => {
       const val = parseFloat((e.target as HTMLInputElement).value);
       if (!isNaN(val) && val > 0) {
@@ -419,6 +444,30 @@ class TectoLiteApp {
       const options = await showPNGExportDialog(this.state.world.projection);
       if (options) {
         exportToPNG(this.state, options);
+      }
+    });
+
+    document.getElementById('btn-export-heightmap')?.addEventListener('click', async () => {
+      // Heightmap Export
+      // Use Equirectangular 4096x2048 by default for now
+      const width = 4096;
+      const height = 2048;
+
+      try {
+        const dataUrl = await HeightmapGenerator.generate(this.state, {
+          width,
+          height,
+          projection: 'equirectangular',
+          smooth: true
+        });
+
+        const link = document.createElement('a');
+        link.download = `tectolite-heightmap-${Date.now()}.png`;
+        link.href = dataUrl;
+        link.click();
+      } catch (e) {
+        console.error('Heightmap generation failed', e);
+        alert('Heightmap generation failed');
       }
     });
 
@@ -558,6 +607,70 @@ class TectoLiteApp {
         (e.target as HTMLInputElement).value = ''; // Reset file input
       }
     });
+
+    document.getElementById('btn-legend')?.addEventListener('click', () => {
+      this.showLegendDialog();
+    });
+  }
+
+  private showLegendDialog(): void {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0,0,0,0.7); z-index: 10000;
+          display: flex; align-items: center; justify-content: center;
+      `;
+
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+          background: #1e1e2e; border-radius: 12px; padding: 24px;
+          min-width: 400px; color: #cdd6f4; font-family: system-ui, sans-serif;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      `;
+
+    dialog.innerHTML = `
+          <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🗺️ Map Legend</h3>
+          
+          <div style="margin-bottom: 20px;">
+              <h4 style="margin: 0 0 8px 0; color: #fab387;">Boundaries</h4>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                  <span style="width: 20px; height: 3px; background: #ff3333; display: inline-block;"></span>
+                  <span><strong>Convergent</strong> (Collision)</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                  <span style="width: 20px; height: 3px; background: #3333ff; display: inline-block;"></span>
+                  <span><strong>Divergent</strong> (Rifting)</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="width: 20px; height: 3px; background: #33ff33; display: inline-block;"></span>
+                  <span><strong>Transform</strong> (Sliding)</span>
+              </div>
+              <p style="font-size: 12px; color: #a6adc8; margin-top: 4px;">
+                  *Boundaries only appear when plates overlap/touch AND have velocity.
+              </p>
+          </div>
+
+          <div style="margin-bottom: 20px;">
+              <h4 style="margin: 0 0 8px 0; color: #a6e3a1;">Features</h4>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                  <div>🏔️ Mountain (Cont-Cont)</div>
+                  <div>🌋 Volcano (Subduction)</div>
+                  <div>⚡ Rift (Div-Cont)</div>
+                  <div>🏝️ Island (Hotspot/Ocean)</div>
+              </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end;">
+              <button id="legend-close" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer;">Close</button>
+          </div>
+      `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const cleanup = () => document.body.removeChild(overlay);
+    dialog.querySelector('#legend-close')?.addEventListener('click', cleanup);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
   }
 
   private updateUI(): void {
@@ -626,11 +739,12 @@ class TectoLiteApp {
     const plate: TectonicPlate = {
       id: generateId(),
       name: `Plate ${this.state.world.plates.length + 1}`,
+      type: 'continental',
+      color: getNextPlateColor(this.state.world.plates),
       polygons: [polygon],
       features: [],
       motion: defaultMotion,
       motionKeyframes: [initialKeyframe],
-      color: getNextPlateColor(this.state.world.plates),
       visible: true,
       locked: false,
       center: points[0],
@@ -652,6 +766,7 @@ class TectoLiteApp {
     };
 
     this.updateUI();
+    this.simulation?.setTime(this.state.world.currentTime);
     this.setActiveTool('select');
   }
 
@@ -687,6 +802,7 @@ class TectoLiteApp {
       }
     };
 
+    this.simulation?.setTime(this.state.world.currentTime);
     this.canvasManager?.render();
   }
 
@@ -799,9 +915,15 @@ class TectoLiteApp {
 
     // Pass the full polyline for zig-zag splits
     if (plateToSplit) {
-      this.pushState(); // Save state for undo
-      this.state = splitPlate(this.state, plateToSplit.id, { points });
+      if (confirm('Inherit momentum from parent plate?')) {
+        this.pushState(); // Save state for undo
+        this.state = splitPlate(this.state, plateToSplit.id, { points }, true);
+      } else {
+        this.pushState(); // Save state for undo
+        this.state = splitPlate(this.state, plateToSplit.id, { points }, false);
+      }
       this.updateUI();
+      this.simulation?.setTime(this.state.world.currentTime);
       this.canvasManager?.render();
     }
   }
@@ -838,6 +960,7 @@ class TectoLiteApp {
       this.state.world.selectedPlateId = null;
     }
     this.updateUI();
+    this.simulation?.setTime(this.state.world.currentTime);
     this.canvasManager?.render();
   }
 
@@ -918,6 +1041,16 @@ class TectoLiteApp {
         <label class="property-label">Name</label>
         <input type="text" id="prop-name" class="property-input" value="${plate.name}">
       </div>
+      
+      ${this.state.world.globalOptions.enableCrustPhysics ? `
+      <div class="property-group">
+        <label class="property-label">Type</label>
+        <select id="prop-type" class="tool-select">
+            <option value="continental" ${plate.type === 'continental' ? 'selected' : ''}>Continental</option>
+            <option value="oceanic" ${plate.type === 'oceanic' ? 'selected' : ''}>Oceanic</option>
+        </select>
+      </div>` : ''}
+
       <div class="property-group">
         <label class="property-label">Color</label>
         <input type="color" id="prop-color" class="property-color" value="${plate.color}">
@@ -965,10 +1098,21 @@ class TectoLiteApp {
     `;
 
     // Bind events
+    document.getElementById('prop-type')?.addEventListener('change', (e) => {
+      plate.type = (e.target as HTMLSelectElement).value as any;
+      this.simulation?.setTime(this.state.world.currentTime);
+    });
+
     document.getElementById('prop-name')?.addEventListener('change', (e) => {
       plate.name = (e.target as HTMLInputElement).value;
       this.updatePlateList();
     });
+
+    document.getElementById('prop-type')?.addEventListener('change', (e) => {
+      plate.type = (e.target as HTMLSelectElement).value as any;
+      // Optional: Update color based on type?
+    });
+
     document.getElementById('prop-color')?.addEventListener('change', (e) => {
       plate.color = (e.target as HTMLInputElement).value;
       this.updatePlateList();
@@ -1194,6 +1338,7 @@ class TectoLiteApp {
       world: { ...this.state.world, plates }
     };
     this.updateUI();
+    this.simulation?.setTime(this.state.world.currentTime);
     this.canvasManager?.render();
   }
 

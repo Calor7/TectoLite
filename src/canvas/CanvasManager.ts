@@ -1,4 +1,4 @@
-import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode } from '../types';
+import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
@@ -723,6 +723,11 @@ export class CanvasManager {
             }
         }
 
+        // Draw Boundaries
+        if (state.world.globalOptions.enableBoundaryVisualization && state.world.boundaries) {
+            this.drawBoundaries(state.world.boundaries, path);
+        }
+
         // Clear gizmo if no plate selected
         const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
         if (!selectedPlate || state.activeTool !== 'select') {
@@ -765,6 +770,37 @@ export class CanvasManager {
             this.ctx.strokeRect(x, y, w, h);
             this.ctx.restore();
         }
+    }
+
+    private drawBoundaries(boundaries: Boundary[], path: any): void {
+        this.ctx.save();
+        for (const b of boundaries) {
+            // Determine color based on type
+            if (b.type === 'convergent') {
+                this.ctx.strokeStyle = '#ff3333'; // Red
+                this.ctx.lineWidth = 3;
+            } else if (b.type === 'divergent') {
+                this.ctx.strokeStyle = '#3333ff'; // Blue
+                this.ctx.lineWidth = 2;
+            } else {
+                this.ctx.strokeStyle = '#33ff33'; // Green
+                this.ctx.lineWidth = 2;
+            }
+
+            // Draw points as a line?
+            // Usually boundaries from collision are polygons (areas).
+            // We can draw the outline
+            if (b.points.length > 0) {
+                const geojson = {
+                    type: 'MultiLineString',
+                    coordinates: b.points
+                };
+                this.ctx.beginPath();
+                path(geojson as any);
+                this.ctx.stroke();
+            }
+        }
+        this.ctx.restore();
     }
 
     private drawFeature(feature: Feature, isSelected: boolean, isGhosted: boolean = false): void {

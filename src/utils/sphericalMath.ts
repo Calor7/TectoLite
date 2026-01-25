@@ -75,6 +75,16 @@ export function normalize(v: Vector3): Vector3 {
     return { x: v.x / len, y: v.y / len, z: v.z / len };
 }
 
+// Scale a vector by scalar
+export function scaleVector(v: Vector3, s: number): Vector3 {
+    return { x: v.x * s, y: v.y * s, z: v.z * s };
+}
+
+// Subtract vectors (a - b)
+export function subtractVectors(a: Vector3, b: Vector3): Vector3 {
+    return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+
 // Calculate spherical centroid of a polygon
 // This properly averages points on a sphere rather than using first point
 export function calculateSphericalCentroid(points: Coordinate[]): Coordinate {
