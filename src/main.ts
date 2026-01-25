@@ -32,6 +32,7 @@ class TectoLiteApp {
   private simulation: SimulationEngine | null = null;
   private historyManager: HistoryManager = new HistoryManager();
   private fusionFirstPlateId: string | null = null; // Track first plate for fusion
+  private momentumClipboard: { eulerPole: { position: Coordinate; rate: number } } | null = null; // Clipboard for momentum
 
   constructor() {
     this.state = createDefaultAppState();
@@ -1087,10 +1088,13 @@ class TectoLiteApp {
           <option value="5.0">Very Fast (5.0)</option>
         </select>
       </div>
-       <div class="property-group">
         <label class="property-label">
            <input type="checkbox" id="prop-pole-vis" ${pole.visible ? 'checked' : ''}> Show Pole
         </label>
+      </div>
+      <div class="property-group" style="flex-direction: row; gap: 8px;">
+          <button id="btn-copy-momentum" class="btn btn-secondary" style="flex:1" title="Copy speed, direction, and pole">📋 Copy</button>
+          <button id="btn-paste-momentum" class="btn btn-secondary" style="flex:1" title="Paste motion settings" ${this.momentumClipboard ? '' : 'disabled'}>📋 Paste</button>
       </div>
       
       <button id="btn-delete-plate" class="btn btn-danger">Delete Plate</button>
@@ -1155,6 +1159,32 @@ class TectoLiteApp {
         this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
         (e.target as HTMLSelectElement).value = ''; // Reset dropdown
       }
+    });
+
+    document.getElementById('btn-copy-momentum')?.addEventListener('click', () => {
+      this.momentumClipboard = {
+        eulerPole: {
+          position: [...plate.motion.eulerPole.position],
+          rate: plate.motion.eulerPole.rate
+        }
+      };
+      const pasteBtn = document.getElementById('btn-paste-momentum') as HTMLButtonElement;
+      if (pasteBtn) pasteBtn.disabled = false;
+      alert('Momentum copied to clipboard');
+    });
+
+    document.getElementById('btn-paste-momentum')?.addEventListener('click', () => {
+      if (!this.momentumClipboard) return;
+
+      // Apply clipboard to current plate
+      const newPole = this.momentumClipboard.eulerPole;
+      this.addMotionKeyframe(plate.id, {
+        position: newPole.position,
+        rate: newPole.rate
+      });
+
+      this.updatePropertiesPanel(); // Refresh UI to show new values
+      alert('Momentum pasted');
     });
 
     document.getElementById('btn-delete-plate')?.addEventListener('click', () => {
