@@ -2,48 +2,69 @@
 /* Design System */
 
 :root {
-  /* Colors */
-  --bg-dark: #0d1117;
-  --bg-surface: #161b22;
-  --bg-elevated: #21262d;
-  --bg-hover: #30363d;
-  
-  --text-primary: #e6edf3;
-  --text-secondary: #8b949e;
-  --text-muted: #6e7681;
-  
+  /* Base Palette (Dark/Default) */
+  --base-bg-dark: #0d1117;
+  --base-bg-surface: #161b22;
+  --base-bg-elevated: #21262d;
+  --base-bg-hover: #30363d;
+
+  --base-text-primary: #e6edf3;
+  --base-text-secondary: #8b949e;
+  --base-text-muted: #6e7681;
+
+  --base-globe-ocean: #004d7a;
+  /* Rich Ocean Blue (Dark) */
+  --base-canvas-clear: #1a3a4a;
+  /* Matches render() clear color */
+  --base-grid-color: rgba(255, 255, 255, 0.1);
+
+  /* Semantic Mappings */
+  --bg-dark: var(--base-bg-dark);
+  --bg-surface: var(--base-bg-surface);
+  --bg-elevated: var(--base-bg-elevated);
+  --bg-hover: var(--base-bg-hover);
+
+  --text-primary: var(--base-text-primary);
+  --text-secondary: var(--base-text-secondary);
+  --text-muted: var(--base-text-muted);
+
+  --bg-globe-ocean: var(--base-globe-ocean);
+  --bg-canvas-clear: var(--base-canvas-clear);
+  --grid-color: var(--base-grid-color);
+
+  /* Accents (Brand Identity - Preserved) */
   --accent-primary: #58a6ff;
   --accent-success: #3fb950;
   --accent-warning: #d29922;
   --accent-danger: #f85149;
-  
+
   --border-default: #30363d;
   --border-muted: #21262d;
-  
+
   /* Spacing */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
   --space-lg: 24px;
   --space-xl: 32px;
-  
+
   /* Typography */
   --font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-size-sm: 12px;
   --font-size-md: 14px;
   --font-size-lg: 16px;
   --font-size-xl: 20px;
-  
+
   /* Borders */
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
-  
+
   /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
-  
+
   /* Layout */
   --toolbar-width: 200px;
   --properties-width: 280px;
@@ -51,14 +72,49 @@
   --timeline-height: 64px;
 }
 
+[data-theme="light"] {
+  /* Light Mode Palette */
+  --bg-dark: #f6f8fa;
+  /* Light Gray App Background */
+  --bg-surface: #ffffff;
+  /* White Surface */
+  --bg-elevated: #eaeef2;
+  /* Slightly darker for elevated items */
+  --bg-hover: #d0d7de;
+
+  --text-primary: #1f2328;
+  /* Dark Text */
+  --text-secondary: #656d76;
+  /* Muted Text */
+  --text-muted: #8c959f;
+
+  --bg-globe-ocean: #29b6f6;
+  /* Darker vibrant cyan/blue for visibility against white */
+  --bg-canvas-clear: #e6f7ff;
+  /* Very Light Blue for non-globe projection bg */
+  --grid-color: rgba(0, 0, 0, 0.3);
+  /* Black grid for light mode */
+
+  --border-default: #d0d7de;
+  --border-muted: #eaeef2;
+
+  /* Adjust Shadow for Light Mode */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
 /* Reset */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-html, body {
+html,
+body {
   height: 100%;
   overflow: hidden;
 }

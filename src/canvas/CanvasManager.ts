@@ -609,21 +609,28 @@ export class CanvasManager {
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         const dpr = window.devicePixelRatio || 1;
         this.ctx.scale(dpr, dpr);
-        this.ctx.fillStyle = '#1a3a4a';
+
+        // Dynamic Theme Colors
+        const computedStyle = getComputedStyle(document.body);
+        const clearColor = computedStyle.getPropertyValue('--bg-canvas-clear').trim() || '#1a3a4a';
+        const oceanColor = computedStyle.getPropertyValue('--bg-globe-ocean').trim() || '#0f2634';
+
+        this.ctx.fillStyle = clearColor;
         this.ctx.fillRect(0, 0, width, height);
 
         // Draw Globe Background (for orthographic)
         if (state.world.projection === 'orthographic') {
             this.ctx.beginPath();
             path({ type: 'Sphere' } as any);
-            this.ctx.fillStyle = '#0f2634';
+            this.ctx.fillStyle = oceanColor;
             this.ctx.fill();
         }
 
         // Graticule
         if (state.world.showGrid) {
-            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-            this.ctx.lineWidth = 1;
+            const gridColor = computedStyle.getPropertyValue('--grid-color').trim() || 'rgba(255, 255, 255, 0.1)';
+            this.ctx.strokeStyle = gridColor;
+            this.ctx.lineWidth = state.world.globalOptions.gridThickness || 1;
             this.ctx.beginPath();
             path(geoGraticule()());
             this.ctx.stroke();

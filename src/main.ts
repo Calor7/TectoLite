@@ -95,6 +95,9 @@ class TectoLiteApp {
                 <option value="robinson">Robinson</option>
             </select>
             
+            <button id="btn-theme-toggle" class="btn btn-secondary" title="Toggle Theme">
+              <span class="icon">🌙</span>
+            </button>
             <button id="btn-undo" class="btn btn-secondary" title="Undo (Ctrl+Z)">
               <span class="icon">↶</span> Undo
             </button>
@@ -197,6 +200,14 @@ class TectoLiteApp {
                 <label class="view-option">
                     <input type="checkbox" id="check-grid" checked> Grid
                 </label>
+                <div class="property-group" style="margin-top: 4px; margin-bottom: 8px; margin-left: 20px;">
+                    <label class="property-label">Thickness</label>
+                    <select id="grid-thickness-select" class="tool-select" style="width: 100%;">
+                        <option value="0.5">Thin (0.5px)</option>
+                        <option value="1.0" selected>Medium (1.0px)</option>
+                        <option value="2.0">Thick (2.0px)</option>
+                    </select>
+                </div>
                 <label class="view-option">
                     <input type="checkbox" id="check-euler"> Euler Poles
                 </label>
@@ -318,6 +329,12 @@ class TectoLiteApp {
     // View Options
     document.getElementById('check-grid')?.addEventListener('change', (e) => {
       this.state.world.showGrid = (e.target as HTMLInputElement).checked;
+      this.canvasManager?.render();
+    });
+
+    document.getElementById('grid-thickness-select')?.addEventListener('change', (e) => {
+      const val = parseFloat((e.target as HTMLSelectElement).value);
+      this.state.world.globalOptions.gridThickness = val;
       this.canvasManager?.render();
     });
 
@@ -612,6 +629,30 @@ class TectoLiteApp {
     document.getElementById('btn-legend')?.addEventListener('click', () => {
       this.showLegendDialog();
     });
+
+    document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
+      this.toggleTheme();
+    });
+  }
+
+  private toggleTheme(): void {
+    const isDark = document.body.getAttribute('data-theme') !== 'light';
+    const newTheme = isDark ? 'light' : 'dark';
+
+    if (newTheme === 'light') {
+      document.body.setAttribute('data-theme', 'light');
+    } else {
+      document.body.removeAttribute('data-theme');
+    }
+
+    const btn = document.getElementById('btn-theme-toggle');
+    if (btn) {
+      const icon = btn.querySelector('.icon');
+      if (icon) icon.textContent = newTheme === 'light' ? '☀️' : '🌙';
+    }
+
+    // Force re-render of canvas to pick up new colors
+    this.canvasManager?.render();
   }
 
   private showLegendDialog(): void {
