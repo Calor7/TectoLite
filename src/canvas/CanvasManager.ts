@@ -309,6 +309,14 @@ export class CanvasManager {
                         this.onSelect(fuseHit.plateId, null);
                     }
                     break;
+
+                case 'link':
+                    // Link tool: click to select plates
+                    const linkHit = this.hitTest(mousePos);
+                    if (linkHit?.plateId) {
+                        this.onSelect(linkHit.plateId, null);
+                    }
+                    break;
             }
         }
     }
@@ -637,7 +645,14 @@ export class CanvasManager {
         }
 
         // Draw Plates
-        for (const plate of state.world.plates) {
+        // Sort plates by zIndex (default to 0 if undefined)
+        const sortedPlates = [...state.world.plates].sort((a, b) => {
+            const zA = a.zIndex ?? 0;
+            const zB = b.zIndex ?? 0;
+            return zA - zB;
+        });
+
+        for (const plate of sortedPlates) {
             if (!plate.visible) continue;
 
             // Lifecycle check: Only render valid plates for current time
@@ -735,6 +750,12 @@ export class CanvasManager {
             this.drawBoundaries(state.world.boundaries, path);
         }
 
+        // Draw Links (if tool active or always?)
+        // Let's draw if Link tool is active OR if a linked plate is selected
+        if (state.activeTool === 'link' || (state.world.selectedPlateId && state.world.plates.find(p => p.id === state.world.selectedPlateId)?.linkedPlateIds?.length)) {
+            this.drawLinks(state, path);
+        }
+
         // Clear gizmo if no plate selected
         const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
         if (!selectedPlate || state.activeTool !== 'select') {
@@ -777,6 +798,40 @@ export class CanvasManager {
             this.ctx.strokeRect(x, y, w, h);
             this.ctx.restore();
         }
+    }
+
+    private drawLinks(state: AppState, path: any): void {
+        const drawnPairs = new Set<string>();
+        this.ctx.save();
+        this.ctx.strokeStyle = '#00ffcc'; // Cyan/Teal for links
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash([8, 4]);
+
+        for (const plate of state.world.plates) {
+            if (!plate.linkedPlateIds || plate.linkedPlateIds.length === 0) continue;
+
+            for (const linkedId of plate.linkedPlateIds) {
+                const partner = state.world.plates.find(p => p.id === linkedId);
+                if (partner) {
+                    // Unique key for pair
+                    const key = [plate.id, linkedId].sort().join('-');
+                    if (drawnPairs.has(key)) continue;
+                    drawnPairs.add(key);
+
+                    // Draw line
+                    this.ctx.beginPath();
+                    path({
+                        type: 'LineString',
+                        coordinates: [plate.center, partner.center]
+                    } as any);
+                    this.ctx.stroke();
+
+                    // Draw Link Icon at midpoint?
+                    // Maybe just the line is enough for now.
+                }
+            }
+        }
+        this.ctx.restore();
     }
 
     private drawBoundaries(boundaries: Boundary[], path: any): void {

@@ -292,6 +292,9 @@ export function splitPlate(
     const rightFeatures = [];
 
     for (const feat of plateToSplit.features) {
+
+
+        // Standard Point Feature Logic
         // Check which resulting polygon contains this feature
         const inLeft = leftPolygons.some(poly => isPointInPolygon(feat.position, poly.points));
         const inRight = rightPolygons.some(poly => isPointInPolygon(feat.position, poly.points));
@@ -337,9 +340,12 @@ export function splitPlate(
         snapshotFeatures: rightFeatures
     };
 
+    const inheritedDescription = plateToSplit.inheritDescription ? plateToSplit.description : undefined;
+
     const leftPlate: TectonicPlate = {
         ...plateToSplit,
         id: generateId(),
+        description: inheritedDescription,
         name: `${plateToSplit.name} (A)`,
         polygons: leftPolygons,
         features: leftFeatures,
@@ -360,6 +366,7 @@ export function splitPlate(
     const rightPlate: TectonicPlate = {
         ...plateToSplit,
         id: generateId(),
+        description: inheritedDescription,
         name: `${plateToSplit.name} (B)`,
         polygons: rightPolygons,
         features: rightFeatures,
@@ -380,7 +387,16 @@ export function splitPlate(
     // Mark old plate as dead
     const updatedOldPlate = {
         ...plateToSplit,
-        deathTime: state.world.currentTime
+        deathTime: state.world.currentTime,
+        events: [
+            ...(plateToSplit.events || []),
+            {
+                id: generateId(),
+                time: state.world.currentTime,
+                type: 'split',
+                description: 'Plate split into two children'
+            } as any // Cast for now as PlateEvent might need specific fields
+        ]
     };
 
     const newPlates = state.world.plates.filter(p => p.id !== plateId);

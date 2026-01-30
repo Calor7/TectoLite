@@ -416,6 +416,92 @@ export class SimulationEngine {
         return this.checkAutoGeneration(updatedPlate, time);
     }
 
+    public recalculateMotionHistory(plate: TectonicPlate): TectonicPlate {
+        // 1. Sort Keyframes
+        const keyframes = [...(plate.motionKeyframes || [])].sort((a, b) => a.time - b.time);
+
+        // 2. Start from Initial State (Birth)
+        // Ensure we strictly use the Source of Truth: initialPolygons
+        let currentPolygons = plate.initialPolygons;
+        let currentFeatures = plate.initialFeatures || [];
+
+        // Also need to handle inherited features if we want to be perfect, 
+        // but typically initialFeatures includes them if the plate was properly initialized.
+        // For recalculation, we assume initialFeatures + initialPolygons is the text-book definition at birthTime.
+
+        const newKeyframes: import('./types').MotionKeyframe[] = [];
+
+        // 3. Iterate to rebuild snapshots
+        for (let i = 0; i < keyframes.length; i++) {
+            const kf = keyframes[i];
+
+            // Calculate state AT this keyframe's time
+            // Based on PREVIOUS keyframe's motion
+
+            if (i === 0) {
+                // First keyframe.
+                // If it starts exactly at birth, snapshot is initial state.
+                // If it starts later, and there was NO previous motion, it's still initial state.
+                // (Assumes no "implicit" motion before first keyframe).
+
+                newKeyframes.push({
+                    ...kf,
+                    snapshotPolygons: currentPolygons,
+                    snapshotFeatures: currentFeatures
+                });
+            } else {
+                // Subsequent keyframe
+                const prevKf = newKeyframes[i - 1];
+                const delta = kf.time - prevKf.time;
+
+                if (delta < 0) {
+                    console.warn(`Negative time delta in plate ${plate.id}`);
+                    continue;
+                }
+
+                // Rotate from Previous Snapshot using Previous Pole
+                const axis = latLonToVector(prevKf.eulerPole.position);
+                const angle = toRad(prevKf.eulerPole.rate * delta);
+
+                const transform = (coord: Coordinate): Coordinate => {
+                    const v = latLonToVector(coord);
+                    const vRot = rotateVector(v, axis, angle);
+                    return vectorToLatLon(vRot);
+                };
+
+                // Rotate Polygons
+                const nextPolygons = prevKf.snapshotPolygons.map(poly => ({
+                    ...poly,
+                    points: poly.points.map(transform)
+                }));
+
+                // Rotate Features (Only those present in snapshot)
+                const transformFeature = (f: Feature): Feature => {
+                    const fV = latLonToVector(f.position);
+                    const fRot = rotateVector(fV, axis, angle);
+                    return { ...f, position: vectorToLatLon(fRot) };
+                };
+
+                const nextFeatures = prevKf.snapshotFeatures.map(transformFeature);
+
+                newKeyframes.push({
+                    ...kf,
+                    snapshotPolygons: nextPolygons,
+                    snapshotFeatures: nextFeatures
+                });
+
+                // Update for next iteration
+                currentPolygons = nextPolygons;
+                currentFeatures = nextFeatures;
+            }
+        }
+
+        return {
+            ...plate,
+            motionKeyframes: newKeyframes
+        };
+    }
+
     private checkAutoGeneration(plate: TectonicPlate, currentTime: number): TectonicPlate {
         const newFeatures = [...plate.features];
         let changed = false;

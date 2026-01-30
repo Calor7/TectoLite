@@ -11,6 +11,7 @@ interface FuseResult {
 
 interface FuseOptions {
     addWeaknessFeatures: boolean;
+    addMountains?: boolean;
     weaknessInterval: number; // degrees between weakness features
 }
 
@@ -264,11 +265,31 @@ export function fusePlates(
         );
     }
 
+    let mountainFeatures: Feature[] = [];
+    if (opts.addMountains) {
+        // Reuse fusion boundary calculation (or calculate if not done)
+        const fusionBoundary = findFusionBoundary(plate1, plate2);
+        // Create mountains along the boundary
+        mountainFeatures = createWeaknessFeatures(
+            fusionBoundary,
+            0.5, // denser for mountains
+            plate1.name,
+            plate2.name,
+            currentTime
+        ).map(f => ({
+            ...f,
+            type: 'mountain' as FeatureType, // Cast to avoid type error if strictly typed
+            id: generateId(),
+            properties: { ...f.properties, generatedBy: 'fusion' }
+        }));
+    }
+
     // Combine features from both plates
     const combinedFeatures: Feature[] = [
         ...plate1.features,
         ...plate2.features,
-        ...weaknessFeatures
+        ...weaknessFeatures,
+        ...mountainFeatures
     ];
 
     // Calculate new center

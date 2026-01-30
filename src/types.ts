@@ -19,7 +19,7 @@ export interface Polygon {
   closed: boolean;
 }
 
-export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'poly_region' | 'weakness';
+export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness';
 
 export interface Feature {
   id: string;
@@ -34,10 +34,6 @@ export interface Feature {
   // User-customizable fields
   name?: string;         // User-defined name (defaults to type name if not set)
   description?: string;  // User-defined description
-  // Fields for poly_region features
-  polygon?: Coordinate[];  // Current/Rendered polygon
-  originalPolygon?: Coordinate[]; // Source of Truth: Polygon at generatedAt
-  fillColor?: string;      // Custom fill color for the region
 }
 
 export interface EulerPole {
@@ -69,6 +65,10 @@ export interface PlateEvent {
 export interface TectonicPlate {
   id: string;
   name: string;
+  description?: string; // User-defined description
+  inheritDescription?: boolean; // Whether children inherit this description on split
+  linkedPlateIds?: string[]; // IDs of plates linked to this one (synchronized motion)
+  zIndex?: number; // Visual layering order (higher = on top)
   color: string;
 
   density?: number; // Optional custom density
@@ -134,7 +134,7 @@ export interface Boundary {
   velocity?: number; // Relative velocity magnitude
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'split' | 'pan' | 'poly_feature' | 'fuse';
+export type ToolType = 'select' | 'draw' | 'feature' | 'split' | 'pan' | 'fuse' | 'link';
 
 export interface AppState {
   world: WorldState;

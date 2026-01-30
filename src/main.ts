@@ -25,6 +25,7 @@ import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { HistoryManager } from './HistoryManager';
 import { exportToJSON, parseImportFile, showImportDialog, showHeightmapExportDialog } from './export';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
+import { TimelineSystem } from './systems/TimelineSystem';
 
 class TectoLiteApp {
     private state: AppState;
@@ -32,7 +33,9 @@ class TectoLiteApp {
     private simulation: SimulationEngine | null = null;
     private historyManager: HistoryManager = new HistoryManager();
     private fusionFirstPlateId: string | null = null; // Track first plate for fusion
+    private activeLinkSourceId: string | null = null; // Track first plate for linking
     private momentumClipboard: { eulerPole: { position: Coordinate; rate: number } } | null = null; // Clipboard for momentum
+    private timelineSystem: TimelineSystem | null = null;
 
     constructor() {
         this.state = createDefaultAppState();
@@ -58,7 +61,7 @@ class TectoLiteApp {
             (active) => this.handleSplitPreviewChange(active),
             (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
             (plateId, axis, angleRad) => this.handleDragTargetRequest(plateId, axis, angleRad),
-            (points, fillColor) => this.handlePolyFeatureComplete(points, fillColor),
+            undefined,
             (active) => {
                 const el = document.getElementById('motion-controls');
                 if (el) el.style.display = active ? 'block' : 'none';
@@ -74,6 +77,15 @@ class TectoLiteApp {
                 // Don't full re-render UI every tick, just canvas
             }
         );
+
+        // Initialize Timeline System
+        this.timelineSystem = new TimelineSystem(
+            'timeline-panel',
+            this.simulation!,
+            this.historyManager,
+            this
+        );
+        this.timelineSystem.setContainer(document.getElementById('timeline-panel')!);
 
         this.setupEventListeners();
         this.canvasManager.startRenderLoop();
@@ -149,13 +161,15 @@ class TectoLiteApp {
                 <span class="tool-icon">✂️</span>
                 <span class="tool-label">Split</span>
               </button>
-              <button class="tool-btn" data-tool="poly_feature" title="Poly Feature (P)">
-                <span class="tool-icon">🎨</span>
-                <span class="tool-label">Poly</span>
-              </button>
+
               <button class="tool-btn" data-tool="fuse" title="Fuse Plates (G)">
-                <span class="tool-icon">🔗</span>
+                <span class="tool-icon">🧬</span>
                 <span class="tool-label">Fuse</span>
+              </button>
+
+              <button class="tool-btn" data-tool="link" title="Link Plates (L)">
+                <span class="tool-icon">🔗</span>
+                <span class="tool-label">Link</span>
               </button>
             </div>
             
@@ -179,13 +193,12 @@ class TectoLiteApp {
               <label class="view-option">
                 <input type="checkbox" id="check-add-weakness" checked> Add Weakness Features
               </label>
+              <label class="view-option">
+                <input type="checkbox" id="check-add-mountains"> Auto Create Mountains
+              </label>
             </div>
 
-            <div class="tool-group" id="poly-color-picker" style="display: none;">
-              <h3 class="tool-group-title">Poly Color</h3>
-              <input type="color" id="poly-feature-color" value="#ff6b6b" class="property-color">
-              <span class="color-label">Fill Color</span>
-            </div>
+
             
             <div class="tool-group" id="feature-selector">
               <h3 class="tool-group-title">Feature Type</h3>
@@ -284,12 +297,18 @@ class TectoLiteApp {
             <div class="canvas-hint" id="canvas-hint"></div>
           </main>
           
-          <aside class="properties-panel" id="properties-panel">
-            <h3 class="panel-title">Properties</h3>
-            <div id="properties-content">
-              <p class="empty-message">Select a plate to edit properties</p>
+          <div class="right-sidebar">
+            <aside class="properties-panel" id="properties-panel">
+                <h3 class="panel-title">Properties</h3>
+                <div id="properties-content">
+                  <p class="empty-message">Select a plate to edit properties</p>
+                </div>
+            </aside>
+            <div id="timeline-panel" class="timeline-panel">
+                <div class="timeline-title">Event Timeline</div>
+                <!-- Timeline items injected here -->
             </div>
-          </aside>
+          </div>
         </div>
         
         <footer class="timeline-bar">
@@ -447,8 +466,8 @@ class TectoLiteApp {
                 case 'd': this.setActiveTool('draw'); break;
                 case 'f': this.setActiveTool('feature'); break;
                 case 's': this.setActiveTool('split'); break;
-                case 'p': this.setActiveTool('poly_feature'); break;
                 case 'g': this.setActiveTool('fuse'); break;
+                case 'l': this.setActiveTool('link'); break;
                 case 'escape':
                     this.canvasManager?.cancelDrawing();
                     break;
@@ -759,10 +778,7 @@ class TectoLiteApp {
             featureSelector.style.display = tool === 'feature' ? 'block' : 'none';
         }
 
-        const polyColorPicker = document.getElementById('poly-color-picker');
-        if (polyColorPicker) {
-            polyColorPicker.style.display = tool === 'poly_feature' ? 'block' : 'none';
-        }
+
 
         const fuseControls = document.getElementById('fuse-controls');
         if (fuseControls) {
@@ -797,251 +813,310 @@ class TectoLiteApp {
         const currentTime = this.state.world.currentTime;
         const defaultMotion = createDefaultMotion();
 
-// Create initial keyframe at birth time
-const initialKeyframe: MotionKeyframe = {
-    time: currentTime,
-    eulerPole: { ...defaultMotion.eulerPole },
-    snapshotPolygons: [polygon],
-    snapshotFeatures: []
-};
+        // Create initial keyframe at birth time
+        const initialKeyframe: MotionKeyframe = {
+            time: currentTime,
+            eulerPole: { ...defaultMotion.eulerPole },
+            snapshotPolygons: [polygon],
+            snapshotFeatures: []
+        };
 
-const plate: TectonicPlate = {
-    id: generateId(),
-    name: `Plate ${this.state.world.plates.length + 1}`,
-    color: getNextPlateColor(this.state.world.plates),
-    polygons: [polygon],
-    features: [],
-    motion: defaultMotion,
-    motionKeyframes: [initialKeyframe],
-    visible: true,
-    locked: false,
-    center: points[0],
-    events: [],
-    birthTime: currentTime,
-    deathTime: null,
-    initialPolygons: [polygon],
-    initialFeatures: []
-};
+        const plate: TectonicPlate = {
+            id: generateId(),
+            name: `Plate ${this.state.world.plates.length + 1}`,
+            color: getNextPlateColor(this.state.world.plates),
+            polygons: [polygon],
+            features: [],
+            motion: defaultMotion,
+            motionKeyframes: [initialKeyframe],
+            visible: true,
+            locked: false,
+            center: points[0],
+            events: [],
+            birthTime: currentTime,
+            deathTime: null,
+            initialPolygons: [polygon],
+            initialFeatures: []
+        };
 
-// Immutable state update
-this.state = {
-    ...this.state,
-    world: {
-        ...this.state.world,
-        plates: [...this.state.world.plates, plate],
-        selectedPlateId: plate.id
-    }
-};
+        // Immutable state update
+        this.state = {
+            ...this.state,
+            world: {
+                ...this.state.world,
+                plates: [...this.state.world.plates, plate],
+                selectedPlateId: plate.id
+            }
+        };
 
-this.updateUI();
-this.simulation?.setTime(this.state.world.currentTime);
-this.setActiveTool('select');
-  }
-
-  private handleFeaturePlace(position: Coordinate, type: FeatureType): void {
-    // Find plate that contains this position or use selected plate
-    const plateId = this.state.world.selectedPlateId ??
-        (this.state.world.plates.length > 0 ? this.state.world.plates[0].id : null);
-
-    if(!plateId) return;
-    this.pushState(); // Save state for undo
-
-    const feature: Feature = {
-        id: generateId(),
-        type: type,
-        position: position,
-        rotation: 0,
-        scale: 1,
-        properties: {},
-        generatedAt: this.state.world.currentTime,
-        originalPosition: position // Set source of truth for rotation
-    };
-
-    // Immutable state update
-    this.state = {
-        ...this.state,
-        world: {
-            ...this.state.world,
-            plates: this.state.world.plates.map(plate =>
-                plate.id === plateId
-                    ? { ...plate, features: [...plate.features, feature] }
-                    : plate
-            )
-        }
-    };
-
-    this.simulation?.setTime(this.state.world.currentTime);
-    this.canvasManager?.render();
-}
-
-  private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = []): void {
-    // Handle fusion tool workflow
-    if(this.state.activeTool === 'fuse' && plateId) {
-    if (this.fusionFirstPlateId === null) {
-        // First click - store first plate
-        this.fusionFirstPlateId = plateId;
-        this.state.world.selectedPlateId = plateId;
         this.updateUI();
-        // Show hint in canvas
-        const hint = document.getElementById('canvas-hint');
-        if (hint) hint.textContent = `Click another plate to fuse with "${this.state.world.plates.find(p => p.id === plateId)?.name || 'Plate'}"`;
-    } else if (this.fusionFirstPlateId !== plateId) {
-        // Second click - fuse plates
-        this.pushState(); // Save state for undo
-        // Read weakness toggle option
-        const addWeakness = (document.getElementById('check-add-weakness') as HTMLInputElement)?.checked ?? true;
-        const result = fusePlates(this.state, this.fusionFirstPlateId, plateId, { addWeaknessFeatures: addWeakness });
-
-        if (result.success && result.newState) {
-            this.state = result.newState;
-            this.updateUI();
-            this.canvasManager?.render();
-            // Clear hint and reset
-            const hint = document.getElementById('canvas-hint');
-            if (hint) hint.textContent = '';
-        } else {
-            alert(result.error || 'Failed to fuse plates');
-        }
-
-        // Reset fusion state
-        this.fusionFirstPlateId = null;
+        this.simulation?.setTime(this.state.world.currentTime);
         this.setActiveTool('select');
     }
-    return;
-}
 
-// Reset fusion state if switching away from fuse tool
-if (this.state.activeTool !== 'fuse') {
-    this.fusionFirstPlateId = null;
-    const hint = document.getElementById('canvas-hint');
-    if (hint) hint.textContent = '';
-}
+    private handleFeaturePlace(position: Coordinate, type: FeatureType): void {
+        // Find plate that contains this position or use selected plate
+        const plateId = this.state.world.selectedPlateId ??
+            (this.state.world.plates.length > 0 ? this.state.world.plates[0].id : null);
 
-this.state.world.selectedPlateId = plateId;
-this.state.world.selectedFeatureId = featureId ?? null;
+        if (!plateId) return;
+        this.pushState(); // Save state for undo
 
-// Handle multi-selection
-if (featureIds.length > 0) {
-    this.state.world.selectedFeatureIds = featureIds;
-} else if (featureId) {
-    this.state.world.selectedFeatureIds = [featureId];
-} else {
-    this.state.world.selectedFeatureIds = [];
-}
+        const feature: Feature = {
+            id: generateId(),
+            type: type,
+            position: position,
+            rotation: 0,
+            scale: 1,
+            properties: {},
+            generatedAt: this.state.world.currentTime,
+            originalPosition: position // Set source of truth for rotation
+        };
 
-this.updateUI();
-this.canvasManager?.render();
-  }
+        // Immutable state update
+        this.state = {
+            ...this.state,
+            world: {
+                ...this.state.world,
+                plates: this.state.world.plates.map(plate =>
+                    plate.id === plateId
+                        ? { ...plate, features: [...plate.features, feature] }
+                        : plate
+                )
+            }
+        };
 
-  private handlePolyFeatureComplete(points: Coordinate[], fillColor: string): void {
-    // Find plate to add the poly feature to (selected plate or first plate)
-    const plateId = this.state.world.selectedPlateId ??
-        (this.state.world.plates.length > 0 ? this.state.world.plates[0].id : null);
-
-    if(!plateId || points.length < 3) return;
-this.pushState(); // Save state for undo
-
-// Calculate centroid as the position
-const centroid: Coordinate = [
-    points.reduce((sum, p) => sum + p[0], 0) / points.length,
-    points.reduce((sum, p) => sum + p[1], 0) / points.length
-];
-
-const feature: Feature = {
-    id: generateId(),
-    type: 'poly_region',
-    position: centroid,
-    rotation: 0,
-    scale: 1,
-    properties: {},
-    polygon: points,
-    fillColor: fillColor
-};
-
-// Immutable state update
-this.state = {
-    ...this.state,
-    world: {
-        ...this.state.world,
-        plates: this.state.world.plates.map(plate =>
-            plate.id === plateId
-                ? { ...plate, features: [...plate.features, feature] }
-                : plate
-        )
+        this.simulation?.setTime(this.state.world.currentTime);
+        this.canvasManager?.render();
     }
-};
 
-this.updateUI();
-this.canvasManager?.render();
-this.setActiveTool('select'); // Return to select tool after placing
-  }
+    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = []): void {
+        // Legacy fusion logic removed
 
-  private handleSplitApply(points: Coordinate[]): void {
-    if(points.length < 2) return;
 
-    let plateToSplit = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
+        // Reset fusion state if switching away from fuse tool
+        // Reset fusion/link state if switching away
+        if (this.state.activeTool !== 'fuse') this.fusionFirstPlateId = null;
+        if (this.state.activeTool !== 'link') this.activeLinkSourceId = null;
 
-    // Pass the full polyline for zig-zag splits
-    if(plateToSplit) {
-        if (confirm('Inherit momentum from parent plate?')) {
-            this.pushState(); // Save state for undo
-            this.state = splitPlate(this.state, plateToSplit.id, { points }, true);
+        if (this.state.activeTool === 'fuse') {
+            if (plateId) this.handleFuseTool(plateId);
+            return;
+        }
+
+        if (this.state.activeTool === 'link') {
+            if (plateId) this.handleLinkTool(plateId);
+            return;
+        }
+
+        const hint = document.getElementById('canvas-hint');
+        if (hint && this.state.activeTool !== 'select') hint.textContent = '';
+
+        this.state.world.selectedPlateId = plateId;
+        this.state.world.selectedFeatureId = featureId ?? null;
+
+        // Handle multi-selection
+        if (featureIds.length > 0) {
+            this.state.world.selectedFeatureIds = featureIds;
+        } else if (featureId) {
+            this.state.world.selectedFeatureIds = [featureId];
         } else {
+            this.state.world.selectedFeatureIds = [];
+        }
+
+        this.updateUI();
+        this.canvasManager?.render();
+    }
+
+
+
+    private handleFuseTool(plateId: string): void {
+        if (!this.fusionFirstPlateId) {
+            this.fusionFirstPlateId = plateId;
+            const hint = document.getElementById('canvas-hint');
+            if (hint) hint.textContent = `Click another plate to fuse with "${this.state.world.plates.find(p => p.id === plateId)?.name || 'Plate'}"`;
+        } else if (this.fusionFirstPlateId !== plateId) {
+            // Second click - fuse plates
             this.pushState(); // Save state for undo
-            this.state = splitPlate(this.state, plateToSplit.id, { points }, false);
+            // Read options
+            const addWeakness = (document.getElementById('check-add-weakness') as HTMLInputElement)?.checked ?? true;
+            const addMountains = (document.getElementById('check-add-mountains') as HTMLInputElement)?.checked ?? false;
+
+            const result = fusePlates(this.state, this.fusionFirstPlateId, plateId, {
+                addWeaknessFeatures: addWeakness,
+                addMountains: addMountains
+            });
+
+            if (result.success && result.newState) {
+                this.state = result.newState;
+                this.updateUI();
+                this.canvasManager?.render();
+                // Clear hint and reset
+                const hint = document.getElementById('canvas-hint');
+                if (hint) hint.textContent = '';
+            } else {
+                alert(result.error || 'Failed to fuse plates');
+            }
+
+            // Reset fusion state
+            this.fusionFirstPlateId = null;
+            this.setActiveTool('select');
+        }
+    }
+
+    private handleLinkTool(plateId: string): void {
+        const plate = this.state.world.plates.find(p => p.id === plateId);
+        if (!plate) return;
+
+        // Step 1: Select first plate
+        if (!this.activeLinkSourceId) {
+            this.activeLinkSourceId = plateId;
+            // Visual feedback - select it temporarily
+            this.state.world.selectedPlateId = plateId;
+
+            const hint = document.getElementById('canvas-hint');
+            if (hint) {
+                hint.textContent = `Selected ${plate.name}. Now click another plate to link.`;
+                hint.style.display = 'block';
+            }
+
+            this.updateUI();
+            this.canvasManager?.render();
+            return;
+        }
+
+        // Step 2: Select second plate
+        if (this.activeLinkSourceId === plateId) {
+            // Deselect if clicking same plate
+            this.activeLinkSourceId = null;
+            this.state.world.selectedPlateId = null;
+            const hint = document.getElementById('canvas-hint');
+            if (hint) {
+                hint.textContent = '';
+                hint.style.display = 'none';
+            }
+            this.updateUI();
+            this.canvasManager?.render();
+            return;
+        }
+
+        // Apply Link
+        const sourceId = this.activeLinkSourceId;
+        const targetId = plateId;
+        const sourcePlate = this.state.world.plates.find(p => p.id === sourceId);
+
+        if (sourcePlate && sourcePlate.linkedPlateIds?.includes(targetId)) {
+            // Already linked - Ask to unlink
+            if (confirm(`Unlink ${sourcePlate.name} and ${plate.name}?`)) {
+                this.pushState();
+                this.state.world.plates = this.state.world.plates.map(p => {
+                    // Remove link ID from both plates
+                    if (p.id === sourceId) {
+                        return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== targetId) };
+                    }
+                    if (p.id === targetId) {
+                        return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== sourceId) };
+                    }
+                    return p;
+                });
+                const hint = document.getElementById('canvas-hint');
+                if (hint) {
+                    hint.textContent = `Unlinked ${sourcePlate.name} and ${plate.name}`;
+                    setTimeout(() => { if (hint) hint.style.display = 'none'; }, 2000);
+                }
+            }
+        } else {
+            // Create Link
+            this.pushState();
+            this.state.world.plates = this.state.world.plates.map(p => {
+                if (p.id === sourceId) {
+                    return { ...p, linkedPlateIds: [...(p.linkedPlateIds || []), targetId] };
+                }
+                if (p.id === targetId) {
+                    return { ...p, linkedPlateIds: [...(p.linkedPlateIds || []), sourceId] };
+                }
+                return p;
+            });
+            const hint = document.getElementById('canvas-hint');
+            if (hint) {
+                hint.textContent = `Linked ${sourcePlate?.name} and ${plate.name}`;
+                setTimeout(() => { if (hint) hint.style.display = 'none'; }, 2000);
+            }
+        }
+
+        // Reset
+        this.activeLinkSourceId = null;
+        this.state.world.selectedPlateId = plateId; // Select the target
+        this.updateUI();
+        this.canvasManager?.render();
+    }
+
+    private handleSplitApply(points: Coordinate[]): void {
+        if (points.length < 2) return;
+
+        let plateToSplit = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
+
+        // Pass the full polyline for zig-zag splits
+        if (plateToSplit) {
+            if (confirm('Inherit momentum from parent plate?')) {
+                this.pushState(); // Save state for undo
+                this.state = splitPlate(this.state, plateToSplit.id, { points }, true);
+            } else {
+                this.pushState(); // Save state for undo
+                this.state = splitPlate(this.state, plateToSplit.id, { points }, false);
+            }
+            this.updateUI();
+            this.simulation?.setTime(this.state.world.currentTime);
+            this.canvasManager?.render();
+        }
+    }
+
+    private handleSplitPreviewChange(active: boolean): void {
+        // Update UI to show/hide split apply/cancel buttons
+        const splitControls = document.getElementById('split-controls');
+        if (splitControls) {
+            splitControls.style.display = active ? 'flex' : 'none';
+        }
+    }
+
+    private deleteSelected(): void {
+        this.pushState(); // Save state for undo
+
+        const { selectedFeatureId, selectedFeatureIds, selectedPlateId } = this.state.world;
+
+        if (selectedFeatureId || (selectedFeatureIds && selectedFeatureIds.length > 0)) {
+            // Build set of all feature IDs to delete
+            const idsToDelete = new Set<string>();
+            if (selectedFeatureId) idsToDelete.add(selectedFeatureId);
+            if (selectedFeatureIds) selectedFeatureIds.forEach(id => idsToDelete.add(id));
+
+            // Remove these features from all plates
+            this.state.world.plates = this.state.world.plates.map(p => ({
+                ...p,
+                features: p.features.filter(f => !idsToDelete.has(f.id))
+            }));
+
+            this.state.world.selectedFeatureId = null;
+            this.state.world.selectedFeatureIds = [];
+        } else if (selectedPlateId) {
+            this.state.world.plates = this.state.world.plates.filter(p => p.id !== selectedPlateId);
+            this.state.world.selectedPlateId = null;
         }
         this.updateUI();
         this.simulation?.setTime(this.state.world.currentTime);
         this.canvasManager?.render();
     }
-}
 
-  private handleSplitPreviewChange(active: boolean): void {
-    // Update UI to show/hide split apply/cancel buttons
-    const splitControls = document.getElementById('split-controls');
-    if(splitControls) {
-        splitControls.style.display = active ? 'flex' : 'none';
-    }
-}
+    private updatePlateList(): void {
+        const list = document.getElementById('plate-list');
+        if (!list) return;
 
-  private deleteSelected(): void {
-    this.pushState(); // Save state for undo
+        if (this.state.world.plates.length === 0) {
+            list.innerHTML = '<p class="empty-message">Draw a landmass to create a plate</p>';
+            return;
+        }
 
-    const { selectedFeatureId, selectedFeatureIds, selectedPlateId } = this.state.world;
-
-    if(selectedFeatureId || (selectedFeatureIds && selectedFeatureIds.length > 0)) {
-    // Build set of all feature IDs to delete
-    const idsToDelete = new Set<string>();
-    if (selectedFeatureId) idsToDelete.add(selectedFeatureId);
-    if (selectedFeatureIds) selectedFeatureIds.forEach(id => idsToDelete.add(id));
-
-    // Remove these features from all plates
-    this.state.world.plates = this.state.world.plates.map(p => ({
-        ...p,
-        features: p.features.filter(f => !idsToDelete.has(f.id))
-    }));
-
-    this.state.world.selectedFeatureId = null;
-    this.state.world.selectedFeatureIds = [];
-} else if (selectedPlateId) {
-    this.state.world.plates = this.state.world.plates.filter(p => p.id !== selectedPlateId);
-    this.state.world.selectedPlateId = null;
-}
-this.updateUI();
-this.simulation?.setTime(this.state.world.currentTime);
-this.canvasManager?.render();
-  }
-
-  private updatePlateList(): void {
-    const list = document.getElementById('plate-list');
-    if(!list) return;
-
-    if(this.state.world.plates.length === 0) {
-    list.innerHTML = '<p class="empty-message">Draw a landmass to create a plate</p>';
-    return;
-}
-
-list.innerHTML = this.state.world.plates.map(plate => `
+        list.innerHTML = this.state.world.plates.map(plate => `
       <div class="plate-item ${plate.id === this.state.world.selectedPlateId ? 'selected' : ''}" 
            data-plate-id="${plate.id}">
         <span class="plate-color" style="background: ${plate.color}"></span>
@@ -1052,67 +1127,82 @@ list.innerHTML = this.state.world.plates.map(plate => `
       </div>
     `).join('');
 
-list.querySelectorAll('.plate-item').forEach(item => {
-    item.addEventListener('click', (e) => {
-        if ((e.target as HTMLElement).classList.contains('plate-visibility')) return;
-        const plateId = item.getAttribute('data-plate-id');
-        this.handleSelect(plateId, null);
-    });
-});
+        list.querySelectorAll('.plate-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if ((e.target as HTMLElement).classList.contains('plate-visibility')) return;
+                const plateId = item.getAttribute('data-plate-id');
+                this.handleSelect(plateId, null);
+            });
+        });
 
-// Visibility toggle
-list.querySelectorAll('.plate-visibility').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const item = (e.target as HTMLElement).closest('.plate-item');
-        const plateId = item?.getAttribute('data-plate-id');
-        if (plateId) {
-            this.togglePlateVisibility(plateId);
-        }
-    });
-});
-  }
-
-  private togglePlateVisibility(plateId: string): void {
-    this.state = {
-        ...this.state,
-        world: {
-            ...this.state.world,
-            plates: this.state.world.plates.map(plate =>
-                plate.id === plateId
-                    ? { ...plate, visible: !plate.visible }
-                    : plate
-            )
-        }
-    };
-    this.updatePlateList();
-    this.canvasManager?.render();
-}
-
-  private updatePropertiesPanel(): void {
-    const content = document.getElementById('properties-content');
-    if(!content) return;
-
-    const plate = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
-
-    if(!plate) {
-        content.innerHTML = '<p class="empty-message">Select a plate to edit properties</p>';
-        return;
+        // Visibility toggle
+        list.querySelectorAll('.plate-visibility').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const item = (e.target as HTMLElement).closest('.plate-item');
+                const plateId = item?.getAttribute('data-plate-id');
+                if (plateId) {
+                    this.togglePlateVisibility(plateId);
+                }
+            });
+        });
     }
 
-    // Euler Pole UI
-    const motion = plate.motion;
-    const pole = motion.eulerPole;
+    private togglePlateVisibility(plateId: string): void {
+        this.state = {
+            ...this.state,
+            world: {
+                ...this.state.world,
+                plates: this.state.world.plates.map(plate =>
+                    plate.id === plateId
+                        ? { ...plate, visible: !plate.visible }
+                        : plate
+                )
+            }
+        };
+        this.updatePlateList();
+        this.canvasManager?.render();
+    }
 
-    content.innerHTML = `
+    private updatePropertiesPanel(): void {
+        const content = document.getElementById('properties-content');
+        if (!content) return;
+
+        const plate = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
+
+        if (!plate) {
+            content.innerHTML = '<p class="empty-message">Select a plate to edit properties</p>';
+            return;
+        }
+
+        // Euler Pole UI
+        const motion = plate.motion;
+        const pole = motion.eulerPole;
+        const description = plate.description || '';
+        const inheritDesc = plate.inheritDescription || false;
+
+        content.innerHTML = `
       <div class="property-group">
         <label class="property-label">Name</label>
         <input type="text" id="prop-name" class="property-input" value="${plate.name}">
+      </div>
+      <div class="property-group">
+        <label class="property-label">Description</label>
+        <textarea id="prop-description" class="property-input" rows="3" placeholder="Plate description...">${description}</textarea>
+      </div>
+      <div class="property-group" style="justify-content: flex-start;">
+        <input type="checkbox" id="prop-inherit" style="margin-right: 8px;" ${inheritDesc ? 'checked' : ''}>
+        <label for="prop-inherit" class="property-label" style="width: auto;">Children Inherit Description</label>
       </div>
       
       <div class="property-group">
         <label class="property-label">Color</label>
         <input type="color" id="prop-color" class="property-color" value="${plate.color}">
+      </div>
+      
+      <div class="property-group">
+        <label class="property-label">Layer (Z-Index)</label>
+        <input type="number" id="prop-z-index" class="property-input" value="${plate.zIndex || 0}" step="1" style="width: 60px;">
       </div>
 
       <div class="property-group">
@@ -1159,121 +1249,142 @@ list.querySelectorAll('.plate-visibility').forEach(btn => {
       ${this.getFeaturePropertiesHtml(plate)}
     `;
 
-    // Bind events
-    document.getElementById('prop-name')?.addEventListener('change', (e) => {
-        plate.name = (e.target as HTMLInputElement).value;
-        this.updatePlateList();
-    });
-
-    document.getElementById('prop-color')?.addEventListener('change', (e) => {
-        plate.color = (e.target as HTMLInputElement).value;
-        this.updatePlateList();
-        this.canvasManager?.render();
-    });
-
-    document.getElementById('prop-birth-time')?.addEventListener('change', (e) => {
-        plate.birthTime = parseFloat((e.target as HTMLInputElement).value);
-        this.canvasManager?.render();
-    });
-
-    document.getElementById('prop-death-time')?.addEventListener('change', (e) => {
-        const val = (e.target as HTMLInputElement).value;
-        plate.deathTime = val ? parseFloat(val) : null;
-        this.canvasManager?.render();
-    });
-
-    document.getElementById('prop-pole-lon')?.addEventListener('change', (e) => {
-        const newLon = parseFloat((e.target as HTMLInputElement).value);
-        this.addMotionKeyframe(plate.id, { ...pole, position: [newLon, pole.position[1]] });
-    });
-    document.getElementById('prop-pole-lat')?.addEventListener('change', (e) => {
-        const newLat = parseFloat((e.target as HTMLInputElement).value);
-        this.addMotionKeyframe(plate.id, { ...pole, position: [pole.position[0], newLat] });
-    });
-    document.getElementById('prop-pole-rate')?.addEventListener('change', (e) => {
-        const newRate = parseFloat((e.target as HTMLInputElement).value);
-        this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
-    });
-    document.getElementById('prop-pole-vis')?.addEventListener('change', (e) => {
-        pole.visible = (e.target as HTMLInputElement).checked;
-        this.canvasManager?.render();
-    });
-
-    document.getElementById('rate-presets')?.addEventListener('change', (e) => {
-        const val = (e.target as HTMLSelectElement).value;
-        if (val) {
-            const newRate = parseFloat(val);
-            (document.getElementById('prop-pole-rate') as HTMLInputElement).value = val;
-            this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
-            (e.target as HTMLSelectElement).value = ''; // Reset dropdown
-        }
-    });
-
-    document.getElementById('btn-copy-momentum')?.addEventListener('click', () => {
-        this.momentumClipboard = {
-            eulerPole: {
-                position: [...plate.motion.eulerPole.position],
-                rate: plate.motion.eulerPole.rate
-            }
-        };
-        const pasteBtn = document.getElementById('btn-paste-momentum') as HTMLButtonElement;
-        if (pasteBtn) pasteBtn.disabled = false;
-        alert('Momentum copied to clipboard');
-    });
-
-    document.getElementById('btn-paste-momentum')?.addEventListener('click', () => {
-        if (!this.momentumClipboard) return;
-
-        // Apply clipboard to current plate
-        const newPole = this.momentumClipboard.eulerPole;
-        this.addMotionKeyframe(plate.id, {
-            position: newPole.position,
-            rate: newPole.rate
+        // Bind events
+        document.getElementById('prop-name')?.addEventListener('change', (e) => {
+            plate.name = (e.target as HTMLInputElement).value;
+            this.updatePlateList();
         });
 
-        this.updatePropertiesPanel(); // Refresh UI to show new values
-        alert('Momentum pasted');
-    });
+        document.getElementById('prop-description')?.addEventListener('change', (e) => {
+            plate.description = (e.target as HTMLTextAreaElement).value;
+        });
 
-    document.getElementById('btn-delete-plate')?.addEventListener('click', () => {
-        this.deleteSelected();
-    });
+        document.getElementById('prop-inherit')?.addEventListener('change', (e) => {
+            plate.inheritDescription = (e.target as HTMLInputElement).checked;
+        });
 
-    // Bind feature property events
-    this.bindFeatureEvents(plate);
-}
-  private getFeaturePropertiesHtml(plate: TectonicPlate): string {
-    const { selectedFeatureId, selectedFeatureIds, currentTime } = this.state.world;
+        document.getElementById('prop-color')?.addEventListener('change', (e) => {
+            plate.color = (e.target as HTMLInputElement).value;
+            this.updatePlateList();
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('prop-z-index')?.addEventListener('change', (e) => {
+            const val = parseInt((e.target as HTMLInputElement).value);
+            if (!isNaN(val)) {
+                plate.zIndex = val;
+                this.canvasManager?.render();
+            }
+        });
+
+        document.getElementById('prop-birth-time')?.addEventListener('change', (e) => {
+            plate.birthTime = parseFloat((e.target as HTMLInputElement).value);
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('prop-death-time')?.addEventListener('change', (e) => {
+            const val = (e.target as HTMLInputElement).value;
+            plate.deathTime = val ? parseFloat(val) : null;
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('prop-pole-lon')?.addEventListener('change', (e) => {
+            const newLon = parseFloat((e.target as HTMLInputElement).value);
+            this.addMotionKeyframe(plate.id, { ...pole, position: [newLon, pole.position[1]] });
+        });
+        document.getElementById('prop-pole-lat')?.addEventListener('change', (e) => {
+            const newLat = parseFloat((e.target as HTMLInputElement).value);
+            this.addMotionKeyframe(plate.id, { ...pole, position: [pole.position[0], newLat] });
+        });
+        document.getElementById('prop-pole-rate')?.addEventListener('change', (e) => {
+            const newRate = parseFloat((e.target as HTMLInputElement).value);
+            this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
+        });
+        document.getElementById('prop-pole-vis')?.addEventListener('change', (e) => {
+            pole.visible = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('rate-presets')?.addEventListener('change', (e) => {
+            const val = (e.target as HTMLSelectElement).value;
+            if (val) {
+                const newRate = parseFloat(val);
+                (document.getElementById('prop-pole-rate') as HTMLInputElement).value = val;
+                this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
+                (e.target as HTMLSelectElement).value = ''; // Reset dropdown
+            }
+        });
+
+        document.getElementById('btn-copy-momentum')?.addEventListener('click', () => {
+            this.momentumClipboard = {
+                eulerPole: {
+                    position: [...plate.motion.eulerPole.position],
+                    rate: plate.motion.eulerPole.rate
+                }
+            };
+            const pasteBtn = document.getElementById('btn-paste-momentum') as HTMLButtonElement;
+            if (pasteBtn) pasteBtn.disabled = false;
+            alert('Momentum copied to clipboard');
+        });
+
+        document.getElementById('btn-paste-momentum')?.addEventListener('click', () => {
+            if (!this.momentumClipboard) return;
+
+            // Apply clipboard to current plate
+            const newPole = this.momentumClipboard.eulerPole;
+            this.addMotionKeyframe(plate.id, {
+                position: newPole.position,
+                rate: newPole.rate
+            });
+
+            this.updatePropertiesPanel(); // Refresh UI to show new values
+            alert('Momentum pasted');
+        });
+
+        document.getElementById('btn-delete-plate')?.addEventListener('click', () => {
+            this.deleteSelected();
+        });
+
+        // Bind feature property events
+        this.bindFeatureEvents(plate);
+
+        // Update Timeline Panel
+        if (this.timelineSystem) {
+            this.timelineSystem.render(plate);
+        }
+    }
+    private getFeaturePropertiesHtml(plate: TectonicPlate): string {
+        const { selectedFeatureId, selectedFeatureIds, currentTime } = this.state.world;
 
 
-    // Check if exactly one feature is selected
-    const singleFeatureId = selectedFeatureIds.length === 1
-        ? selectedFeatureIds[0]
-        : (selectedFeatureIds.length === 0 ? selectedFeatureId : null);
+        // Check if exactly one feature is selected
+        const singleFeatureId = selectedFeatureIds.length === 1
+            ? selectedFeatureIds[0]
+            : (selectedFeatureIds.length === 0 ? selectedFeatureId : null);
 
-    if (!singleFeatureId) {
-        if (selectedFeatureIds.length > 1) {
-            return `
+        if (!singleFeatureId) {
+            if (selectedFeatureIds.length > 1) {
+                return `
           <hr class="property-divider">
           <h4 class="property-section-title">Features</h4>
           <p class="empty-message">${selectedFeatureIds.length} features selected</p>
         `;
+            }
+            return '';
         }
-        return '';
-    }
 
-    const feature = plate.features.find(f => f.id === singleFeatureId);
-    if (!feature) return '';
+        const feature = plate.features.find(f => f.id === singleFeatureId);
+        if (!feature) return '';
 
-    // Calculate age for display, but allow editing generatedAt directly
-    const createdAt = feature.generatedAt ?? currentTime;
-    const age = (currentTime - createdAt).toFixed(1);
+        // Calculate age for display, but allow editing generatedAt directly
+        const createdAt = feature.generatedAt ?? currentTime;
+        const age = (currentTime - createdAt).toFixed(1);
 
-    // Default name to type if not set
-    const displayName = feature.name || this.getFeatureTypeName(feature.type);
-    const description = feature.description || '';
+        // Default name to type if not set
+        const displayName = feature.name || this.getFeatureTypeName(feature.type);
+        const description = feature.description || '';
 
-    return `
+        return `
       <hr class="property-divider">
       <h4 class="property-section-title">Feature Properties</h4>
       <div class="property-group">
@@ -1298,191 +1409,238 @@ list.querySelectorAll('.plate-visibility').forEach(btn => {
         <textarea id="feature-description" class="property-input" rows="2" placeholder="Description...">${description}</textarea>
       </div>
     `;
-}
+    }
 
-  private bindFeatureEvents(plate: TectonicPlate): void {
-    const { selectedFeatureId, selectedFeatureIds } = this.state.world;
-    const singleFeatureId = selectedFeatureIds.length === 1
-        ? selectedFeatureIds[0]
-        : (selectedFeatureIds.length === 0 ? selectedFeatureId : null);
+    private bindFeatureEvents(plate: TectonicPlate): void {
+        const { selectedFeatureId, selectedFeatureIds } = this.state.world;
+        const singleFeatureId = selectedFeatureIds.length === 1
+            ? selectedFeatureIds[0]
+            : (selectedFeatureIds.length === 0 ? selectedFeatureId : null);
 
-    if(!singleFeatureId) return;
+        if (!singleFeatureId) return;
 
-    const feature = plate.features.find(f => f.id === singleFeatureId);
-    if(!feature) return;
+        const feature = plate.features.find(f => f.id === singleFeatureId);
+        if (!feature) return;
 
-    document.getElementById('feature-name')?.addEventListener('change', (e) => {
-        feature.name = (e.target as HTMLInputElement).value;
-    });
+        document.getElementById('feature-name')?.addEventListener('change', (e) => {
+            feature.name = (e.target as HTMLInputElement).value;
+        });
 
-    document.getElementById('feature-description')?.addEventListener('change', (e) => {
-        feature.description = (e.target as HTMLTextAreaElement).value;
-    });
+        document.getElementById('feature-description')?.addEventListener('change', (e) => {
+            feature.description = (e.target as HTMLTextAreaElement).value;
+        });
 
-    document.getElementById('feature-created-at')?.addEventListener('change', (e) => {
-        const val = parseFloat((e.target as HTMLInputElement).value);
-        if (!isNaN(val)) {
-            feature.generatedAt = val;
-            this.updatePropertiesPanel(); // Refresh to show updated age
+        document.getElementById('feature-created-at')?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val)) {
+                feature.generatedAt = val;
+                this.updatePropertiesPanel(); // Refresh to show updated age
+            }
+        });
+
+        document.getElementById('feature-death-time')?.addEventListener('change', (e) => {
+            const val = (e.target as HTMLInputElement).value;
+            if (val === '' || val === null) {
+                feature.deathTime = undefined; // Clear death time
+            } else {
+                const num = parseFloat(val);
+                if (!isNaN(num)) {
+                    feature.deathTime = num;
+                }
+            }
+            this.canvasManager?.render(); // Refresh to show/hide if outside timeline
+        });
+    }
+
+    private getFeatureTypeName(type: FeatureType): string {
+        const names: Record<FeatureType, string> = {
+            mountain: 'Mountain',
+            volcano: 'Volcano',
+            hotspot: 'Hotspot',
+            rift: 'Rift',
+            trench: 'Trench',
+            island: 'Island',
+            weakness: 'Weakness'
+        };
+        return names[type] || type;
+    }
+
+    private updatePlayButton(): void {
+        const btn = document.getElementById('btn-play');
+        if (btn) btn.textContent = this.state.world.isPlaying ? '⏸️' : '▶️';
+    }
+
+    private updateTimeDisplay(): void {
+        const display = document.getElementById('current-time');
+        const slider = document.getElementById('time-slider') as HTMLInputElement;
+        if (display) display.textContent = this.state.world.currentTime.toFixed(1);
+        if (slider) slider.value = String(this.state.world.currentTime);
+    }
+
+    private addMotionKeyframe(plateId: string, newEulerPole: { position: Coordinate; rate: number; visible?: boolean }): void {
+        const currentTime = this.state.world.currentTime;
+        const plate = this.state.world.plates.find(p => p.id === plateId);
+        if (!plate) return;
+
+        // If keyframe exists at exactly currentTime, update it.
+        // Otherwise insert new one.
+        // Simplifying assumption: We usually work with the single active keyframe for MVP
+        // checking if we have keyframes...
+
+        // For now, simple update of 'motion' property (which mimics having a keyframe)
+        // AND adding to keyframes array if we support it.
+
+        const plates = this.state.world.plates.map(p => {
+            if (p.id === plateId) {
+                const updated = { ...p };
+
+                // Update Motion
+                updated.motion = {
+                    ...p.motion,
+                    eulerPole: {
+                        ...p.motion.eulerPole,
+                        position: newEulerPole.position,
+                        rate: newEulerPole.rate,
+                        visible: newEulerPole.visible ?? p.motion.eulerPole.visible
+                    }
+                };
+
+                // Add/Update Keyframe
+                const newKeyframe: MotionKeyframe = {
+                    time: currentTime,
+                    eulerPole: updated.motion.eulerPole,
+                    snapshotPolygons: p.polygons,
+                    snapshotFeatures: p.features
+                };
+
+                const otherKeyframes = (p.motionKeyframes || []).filter(k => Math.abs(k.time - currentTime) > 0.001);
+                updated.motionKeyframes = [...otherKeyframes, newKeyframe].sort((a, b) => a.time - b.time);
+
+                return updated;
+            }
+            return p;
+        });
+
+        this.state = {
+            ...this.state,
+            world: { ...this.state.world, plates }
+        };
+        this.updateUI();
+        this.simulation?.setTime(this.state.world.currentTime);
+        this.canvasManager?.render();
+    }
+
+    private handleDragTargetRequest(plateId: string, axis: Vector3, angleRad: number): void {
+        const current = this.state.world.currentTime;
+        const promptText = `Target Time(Ma) ? (Current: ${current})`;
+        const input = window.prompt(promptText);
+        if (!input) return;
+
+        const targetTime = parseFloat(input);
+        if (isNaN(targetTime)) return;
+
+        const dt = targetTime - current;
+        if (Math.abs(dt) < 0.001) {
+            alert("Time difference too small!");
+            return;
         }
-    });
 
-    document.getElementById('feature-death-time')?.addEventListener('change', (e) => {
-        const val = (e.target as HTMLInputElement).value;
-        if (val === '' || val === null) {
-            feature.deathTime = undefined; // Clear death time
-        } else {
-            const num = parseFloat(val);
-            if (!isNaN(num)) {
-                feature.deathTime = num;
+        const angleDeg = angleRad * 180 / Math.PI;
+        const rate = angleDeg / dt;
+
+        const pole = vectorToLatLon(axis);
+        this.handleMotionChange(plateId, pole, rate);
+    }
+
+    private handleMotionChange(plateId: string, pole: Coordinate, rate: number): void {
+        this.pushState();
+        const newEulerPole = { position: pole, rate, visible: true };
+
+        // Find linked plates
+        const plate = this.state.world.plates.find(p => p.id === plateId);
+        const linkedIds = plate?.linkedPlateIds || [];
+        const allIds = [plateId, ...linkedIds];
+        // Deduplicate
+        const uniqueIds = Array.from(new Set(allIds));
+
+        uniqueIds.forEach(id => this.addMotionKeyframe(id, newEulerPole));
+    }
+
+    /** Push current state to history (call before meaningful changes) */
+    private pushState(): void {
+        this.historyManager.push(this.state);
+        this.updateUndoRedoButtons();
+    }
+
+    /** Undo last action */
+    private undo(): void {
+        const prevState = this.historyManager.undo(this.state);
+        if (prevState) {
+            this.state = prevState;
+            this.updateUI();
+            this.canvasManager?.render();
+            // Update timeline if visible
+            if (this.state.world.selectedPlateId) {
+                const p = this.state.world.plates.find(pl => pl.id === this.state.world.selectedPlateId);
+                this.timelineSystem?.render(p || null);
             }
         }
-        this.canvasManager?.render(); // Refresh to show/hide if outside timeline
-    });
-}
+        this.updateUndoRedoButtons();
+    }
 
-  private getFeatureTypeName(type: FeatureType): string {
-    const names: Record<FeatureType, string> = {
-        mountain: 'Mountain',
-        volcano: 'Volcano',
-        hotspot: 'Hotspot',
-        rift: 'Rift',
-        trench: 'Trench',
-        island: 'Island',
-        poly_region: 'Region',
-        weakness: 'Weakness'
-    };
-    return names[type] || type;
-}
-
-  private updatePlayButton(): void {
-    const btn = document.getElementById('btn-play');
-    if(btn) btn.textContent = this.state.world.isPlaying ? '⏸️' : '▶️';
-}
-
-  private updateTimeDisplay(): void {
-    const display = document.getElementById('current-time');
-    const slider = document.getElementById('time-slider') as HTMLInputElement;
-    if(display) display.textContent = this.state.world.currentTime.toFixed(1);
-    if(slider) slider.value = String(this.state.world.currentTime);
-}
-
-  private addMotionKeyframe(plateId: string, newEulerPole: { position: Coordinate; rate: number; visible?: boolean }): void {
-    const currentTime = this.state.world.currentTime;
-    const plate = this.state.world.plates.find(p => p.id === plateId);
-    if(!plate) return;
-
-    // If keyframe exists at exactly currentTime, update it.
-    // Otherwise insert new one.
-    // Simplifying assumption: We usually work with the single active keyframe for MVP
-    // checking if we have keyframes...
-
-    // For now, simple update of 'motion' property (which mimics having a keyframe)
-    // AND adding to keyframes array if we support it.
-
-    const plates = this.state.world.plates.map(p => {
-        if (p.id === plateId) {
-            const updated = { ...p };
-
-            // Update Motion
-            updated.motion = {
-                ...p.motion,
-                eulerPole: {
-                    ...p.motion.eulerPole,
-                    position: newEulerPole.position,
-                    rate: newEulerPole.rate,
-                    visible: newEulerPole.visible ?? p.motion.eulerPole.visible
-                }
-            };
-
-            // Add/Update Keyframe
-            const newKeyframe: MotionKeyframe = {
-                time: currentTime,
-                eulerPole: updated.motion.eulerPole,
-                snapshotPolygons: p.polygons,
-                snapshotFeatures: p.features
-            };
-
-            const otherKeyframes = (p.motionKeyframes || []).filter(k => Math.abs(k.time - currentTime) > 0.001);
-            updated.motionKeyframes = [...otherKeyframes, newKeyframe].sort((a, b) => a.time - b.time);
-
-            return updated;
+    /** Redo last undone action */
+    private redo(): void {
+        const nextState = this.historyManager.redo(this.state);
+        if (nextState) {
+            this.state = nextState;
+            this.updateUI();
+            this.canvasManager?.render();
+            // Update timeline if visible
+            if (this.state.world.selectedPlateId) {
+                const p = this.state.world.plates.find(pl => pl.id === this.state.world.selectedPlateId);
+                this.timelineSystem?.render(p || null);
+            }
         }
-        return p;
-    });
+        this.updateUndoRedoButtons();
+    }
 
-    this.state = {
-        ...this.state,
-        world: { ...this.state.world, plates }
-    };
-    this.updateUI();
-    this.simulation?.setTime(this.state.world.currentTime);
-    this.canvasManager?.render();
-}
+    /** Update undo/redo button states */
+    private updateUndoRedoButtons(): void {
+        const undoBtn = document.getElementById('btn-undo') as HTMLButtonElement;
+        const redoBtn = document.getElementById('btn-redo') as HTMLButtonElement;
+        if (undoBtn) undoBtn.disabled = !this.historyManager.canUndo();
+        if (redoBtn) redoBtn.disabled = !this.historyManager.canRedo();
+    }
 
-  private handleDragTargetRequest(plateId: string, axis: Vector3, angleRad: number): void {
-    const current = this.state.world.currentTime;
-    const promptText = `Target Time(Ma) ? (Current: ${current})`;
-    const input = window.prompt(promptText);
-    if(!input) return;
+    // Helper for TimelineSystem to replace a plate (updating state)
+    public replacePlate(plate: TectonicPlate): void {
+        const index = this.state.world.plates.findIndex(p => p.id === plate.id);
+        if (index !== -1) {
+            const newPlates = [...this.state.world.plates];
+            newPlates[index] = plate;
 
-    const targetTime = parseFloat(input);
-    if(isNaN(targetTime)) return;
+            this.state = {
+                ...this.state,
+                world: { ...this.state.world, plates: newPlates }
+            };
 
-const dt = targetTime - current;
-if (Math.abs(dt) < 0.001) {
-    alert("Time difference too small!");
-    return;
-}
+            this.canvasManager?.render();
+        }
+    }
 
-const angleDeg = angleRad * 180 / Math.PI;
-const rate = angleDeg / dt;
-
-const pole = vectorToLatLon(axis);
-
-this.addMotionKeyframe(plateId, { position: pole, rate, visible: true });
-  }
-
-  private handleMotionChange(plateId: string, pole: Coordinate, rate: number): void {
-    const newEulerPole = { position: pole, rate, visible: true };
-    this.addMotionKeyframe(plateId, newEulerPole);
-}
-
-  /** Push current state to history (call before meaningful changes) */
-  private pushState(): void {
-    this.historyManager.push(this.state);
-    this.updateUndoRedoButtons();
-}
-
-  /** Undo last action */
-  private undo(): void {
-    const prevState = this.historyManager.undo(this.state);
-    if(prevState) {
-        this.state = prevState;
+    // Helper for TimelineSystem to delete multiple plates
+    public deletePlates(ids: string[]): void {
+        const idSet = new Set(ids);
+        this.state = {
+            ...this.state,
+            world: {
+                ...this.state.world,
+                plates: this.state.world.plates.filter(p => !idSet.has(p.id))
+            }
+        };
         this.updateUI();
         this.canvasManager?.render();
     }
-    this.updateUndoRedoButtons();
-}
-
-  /** Redo last undone action */
-  private redo(): void {
-    const nextState = this.historyManager.redo(this.state);
-    if(nextState) {
-        this.state = nextState;
-        this.updateUI();
-        this.canvasManager?.render();
-    }
-    this.updateUndoRedoButtons();
-}
-
-  /** Update undo/redo button states */
-  private updateUndoRedoButtons(): void {
-    const undoBtn = document.getElementById('btn-undo') as HTMLButtonElement;
-    const redoBtn = document.getElementById('btn-redo') as HTMLButtonElement;
-    if(undoBtn) undoBtn.disabled = !this.historyManager.canUndo();
-    if(redoBtn) redoBtn.disabled = !this.historyManager.canRedo();
-}
 }
 
 new TectoLiteApp();

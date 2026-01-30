@@ -592,3 +592,183 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
+
+/* Timeline Panel Styles */
+.right-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: var(--properties-width);
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-default);
+  height: 100%;
+  /* Fill available height */
+}
+
+/* Override existing .properties-panel to fit in flex */
+.properties-panel {
+  width: 100%;
+  /* Take full width of sidebar container */
+  border-left: none;
+  /* Border moved to container */
+  flex: 1;
+  /* Take available space, but allow shrinking */
+  min-height: 200px;
+}
+
+.timeline-panel {
+  flex: 1;
+  /* Split specific height or flex? Let's say 40% height */
+  /* Actually, let's make it fixed proportion or flexible */
+  flex-grow: 1;
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-title {
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  background: var(--bg-elevated);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.timeline-list {
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/* Event Items */
+.timeline-item {
+  background: var(--bg-elevated);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: all 0.15s ease;
+}
+
+.timeline-item:hover {
+  background: var(--bg-hover);
+}
+
+.timeline-header {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm);
+  cursor: pointer;
+  gap: var(--space-sm);
+}
+
+.timeline-icon {
+  width: 20px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.timeline-time {
+  font-family: monospace;
+  font-weight: 600;
+  color: var(--accent-primary);
+  min-width: 40px;
+  text-align: right;
+}
+
+.timeline-label {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.type-birth .timeline-icon {
+  color: var(--accent-success);
+}
+
+.type-motion .timeline-icon {
+  color: var(--accent-primary);
+}
+
+.type-split .timeline-icon {
+  color: var(--accent-warning);
+}
+
+.type-death .timeline-icon {
+  color: var(--text-muted);
+}
+
+/* Buttons */
+.btn-tiny-danger {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 16px;
+}
+
+.btn-tiny-danger:hover {
+  color: var(--accent-danger);
+}
+
+/* Content (Expanded) */
+.timeline-content {
+  display: none;
+  padding: var(--space-sm);
+  background: var(--bg-dark);
+  /* Slightly darker inner bg */
+  border-top: 1px solid var(--border-default);
+}
+
+.timeline-item.expanded .timeline-content {
+  display: block;
+}
+
+.timeline-item.expanded {
+  border-color: var(--border-default);
+}
+
+.timeline-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: 4px;
+}
+
+.timeline-row:last-child {
+  margin-bottom: 0;
+}
+
+.timeline-row-label {
+  width: 50px;
+  font-size: var(--font-size-xs);
+  /* Need to define or use sm */
+  color: var(--text-secondary);
+}
+
+.timeline-input {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  width: 100%;
+}
+
+.timeline-input-small {
+  width: 60px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
