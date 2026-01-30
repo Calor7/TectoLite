@@ -334,7 +334,7 @@ export class SimulationEngine {
             center: newCenter
         };
 
-        return this.checkAutoGeneration(updatedPlate, time);
+        return updatedPlate;
     }
 
     // Legacy fallback for plates without keyframes
@@ -502,48 +502,5 @@ export class SimulationEngine {
         };
     }
 
-    private checkAutoGeneration(plate: TectonicPlate, currentTime: number): TectonicPlate {
-        const newFeatures = [...plate.features];
-        let changed = false;
 
-        const state = this.getState(); // Need access to globalOptions
-        const enableHotspots = state.world.globalOptions.enableHotspotIslands ?? true;
-
-        for (const feature of plate.features) {
-            if (feature.type === 'hotspot') {
-                // Hotspot assumption: Creates islands.
-                const lastGen = feature.generatedAt || 0;
-                // Generate every 5 Ma if moving?
-                // Actually if pole.rate is 0, we shouldn't gen.
-                if (enableHotspots && currentTime - lastGen > 5) {
-                    const island: Feature = {
-                        id: Math.random().toString(36).substring(2, 9),
-                        type: 'island',
-                        position: [...feature.position] as Coordinate,
-                        rotation: Math.random() * 360,
-                        scale: 0.5 + Math.random() * 0.5,
-                        properties: {},
-                        generatedAt: currentTime,
-                        originalPosition: [...feature.position] as Coordinate // Set source of truth
-                    };
-                    newFeatures.push(island);
-
-                    const idx = newFeatures.indexOf(feature);
-                    if (idx !== -1) {
-                        newFeatures[idx] = { ...feature, generatedAt: currentTime };
-                    }
-                    changed = true;
-                }
-            }
-        }
-
-        if (changed) {
-            return {
-                ...plate,
-                features: newFeatures
-            };
-        }
-
-        return plate;
-    }
 }

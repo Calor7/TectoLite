@@ -116,7 +116,6 @@ export interface WorldState {
     maxDragSpeed: number;        // deg/Ma, default ~1.0 (≈10 cm/year)
     speedLimitEnabled: boolean;
     gridThickness: number;       // Pixel width of grid lines
-    enableHotspotIslands?: boolean; // Toggle for hotspot island generation
     // Advanced Tectonics (Worldbuilding Pasta) - Default OFF
     ratePresets?: number[]; // User-defined rate presets (e.g. [0.5, 1.0, 2.0, 5.0])
     enableBoundaryVisualization?: boolean;
@@ -186,7 +185,6 @@ export function createDefaultWorldState(): WorldState {
       maxDragSpeed: 1.0,  // ~10 cm/year (realistic plate speed)
       speedLimitEnabled: false,
       gridThickness: 1.0,
-      enableHotspotIslands: true,
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,
       enableDynamicFeatures: false
