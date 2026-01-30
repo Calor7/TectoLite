@@ -143,6 +143,72 @@ function drawFeature(
     ctx.restore();
 }
 
+// Heightmap Export Dialog
+export interface HeightmapExportOptions {
+    width: number;
+    height: number;
+}
+
+export function showHeightmapExportDialog(defaultWidth: number = 4096, defaultHeight: number = 2048): Promise<HeightmapExportOptions | null> {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #1e1e2e; border-radius: 12px; padding: 24px;
+            min-width: 300px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        `;
+
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🗺️ Export Heightmap</h3>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Resolution:</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
+                        <input type="number" id="hm-width" value="${defaultWidth}" 
+                            style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
+                    </div>
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
+                        <input type="number" id="hm-height" value="${defaultHeight}" 
+                            style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button id="hm-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
+                <button id="hm-confirm" style="padding: 8px 16px; border: none; border-radius: 6px; background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 500;">Export</button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const cleanup = () => document.body.removeChild(overlay);
+        const onCancel = () => { cleanup(); resolve(null); };
+
+        dialog.querySelector('#hm-cancel')?.addEventListener('click', onCancel);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
+
+        dialog.querySelector('#hm-confirm')?.addEventListener('click', () => {
+            const w = parseInt((dialog.querySelector('#hm-width') as HTMLInputElement).value);
+            const h = parseInt((dialog.querySelector('#hm-height') as HTMLInputElement).value);
+            cleanup();
+            if (w > 0 && h > 0) resolve({ width: w, height: h });
+            else resolve(null);
+        });
+    });
+}
+
 // PNG Export Dialog
 export function showPNGExportDialog(currentProjection: ProjectionType): Promise<PNGExportOptions | null> {
     return new Promise((resolve) => {

@@ -70,7 +70,7 @@ export interface TectonicPlate {
   id: string;
   name: string;
   color: string;
-  type: 'continental' | 'oceanic'; // Default: 'continental'
+
   density?: number; // Optional custom density
   elevation?: number; // Base elevation
 
@@ -118,7 +118,7 @@ export interface WorldState {
     gridThickness: number;       // Pixel width of grid lines
     enableHotspotIslands?: boolean; // Toggle for hotspot island generation
     // Advanced Tectonics (Worldbuilding Pasta) - Default OFF
-    enableCrustPhysics?: boolean;
+    ratePresets?: number[]; // User-defined rate presets (e.g. [0.5, 1.0, 2.0, 5.0])
     enableBoundaryVisualization?: boolean;
     enableDynamicFeatures?: boolean;
   };
@@ -187,7 +187,7 @@ export function createDefaultWorldState(): WorldState {
       speedLimitEnabled: false,
       gridThickness: 1.0,
       enableHotspotIslands: true,
-      enableCrustPhysics: false,
+      ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,
       enableDynamicFeatures: false
     }

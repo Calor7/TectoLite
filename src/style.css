@@ -155,6 +155,26 @@ body {
   background-clip: text;
 }
 
+.app-subtitle {
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-left: var(--space-xs);
+  -webkit-text-fill-color: initial;
+  /* Reset gradient text fill */
+}
+
+.app-subtitle a {
+  color: var(--accent-primary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.app-subtitle a:hover {
+  text-decoration: underline;
+  color: var(--accent-success);
+}
+
 .header-actions {
   display: flex;
   gap: var(--space-sm);

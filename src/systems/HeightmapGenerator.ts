@@ -34,15 +34,8 @@ export class HeightmapGenerator {
         const activePlates = state.world.plates.filter(p => !p.deathTime && p.birthTime <= state.world.currentTime);
 
         for (const plate of activePlates) {
-            const type = plate.type || 'continental';
-            // Elevation: 0-255. 
-            // Deep Ocean: 10
-            // Oceanic Crust: 50
-            // Continental Shelf: 100
-            // Lowlands: 120
-            // Highlands: 150
-
-            const baseVal = type === 'continental' ? 120 : 50;
+            // Default to continental elevation behavior
+            const baseVal = 120;
             const color = `rgb(${baseVal}, ${baseVal}, ${baseVal})`;
 
             ctx.beginPath();
