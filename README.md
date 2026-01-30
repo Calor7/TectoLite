@@ -1,8 +1,15 @@
 # TectoLite - Spherical Plate Tectonics Simulator
+made by refracturedgames 
 
-TectoLite has been updated to a fully spherical simulation engine using `d3-geo`.
+sounds fancy is in essence a small map making tool for worldbuilding hobbiests.
+Well Hello there :)
 
-## New Features
+
+# visit refracturedgames.com if you want to stay up to date with other
+awesome tools and my projects :)
+
+
+## Features
 
 ### 🌍 Spherical Earth Model
 - **Real 3D Geometry**: Plates now move on a sphere using vector mathematics.
