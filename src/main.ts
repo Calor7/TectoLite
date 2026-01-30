@@ -100,14 +100,14 @@ class TectoLiteApp {
             TECTOLITE <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a></span>
           </h1>
           <div class="header-actions">
-            <!-- Projection Selector -->
-            <select id="projection-select" class="projection-select">
-                <option value="orthographic">Globe (Orthographic)</option>
-                <option value="equirectangular">Equirectangular</option>
-                <option value="mercator">Mercator</option>
-                <option value="mollweide">Mollweide</option>
-                <option value="robinson">Robinson</option>
-            </select>
+            <!-- Projection Selector Moved to Sidebar -->
+
+            <button id="btn-toggle-sidebar" class="btn btn-secondary" title="Toggle Left Sidebar">
+               <span class="icon">☰</span>
+            </button>
+            <button id="btn-toggle-right-sidebar" class="btn btn-secondary" title="Toggle Right Sidebar">
+               <span class="icon">⚙️</span>
+            </button>
             
             <button id="btn-theme-toggle" class="btn btn-secondary" title="Toggle Theme">
               <span class="icon">🌙</span>
@@ -118,11 +118,11 @@ class TectoLiteApp {
             <button id="btn-redo" class="btn btn-secondary" title="Redo (Ctrl+Y)">
               <span class="icon">↷</span> Redo
             </button>
-            <button id="btn-export" class="btn btn-primary">
-              <span class="icon">📥</span> Export PNG
+            <button id="btn-export" class="btn btn-primary" title="Export PNG">
+              <span class="icon">📥</span> Export
             </button>
             <button id="btn-export-heightmap" class="btn btn-primary" title="Export Heightmap">
-              <span class="icon">🗺️</span> Heightmap
+              <span class="icon">🗺️</span> H-Map
             </button>
             <button id="btn-export-json" class="btn btn-secondary" title="Export JSON">
               <span class="icon">💾</span> Save
@@ -139,151 +139,165 @@ class TectoLiteApp {
         
         <div class="main-content">
           <aside class="toolbar">
+            <!-- 1. TOOLS GROUP -->
             <div class="tool-group">
-              <h3 class="tool-group-title">Tools</h3>
-              <button class="tool-btn active" data-tool="select" title="Select (V)">
-                <span class="tool-icon">👆</span>
-                <span class="tool-label">Select</span>
-              </button>
-              <button class="tool-btn" data-tool="pan" title="Rotate/Pan (H)">
-                <span class="tool-icon">🔄</span>
-                <span class="tool-label">Rotate</span>
-              </button>
-              <button class="tool-btn" data-tool="draw" title="Draw (D)">
-                <span class="tool-icon">✏️</span>
-                <span class="tool-label">Draw</span>
-              </button>
-              <button class="tool-btn" data-tool="feature" title="Feature (F)">
-                <span class="tool-icon">🏔️</span>
-                <span class="tool-label">Feature</span>
-              </button>
-              <button class="tool-btn" data-tool="split" title="Split (S)">
-                <span class="tool-icon">✂️</span>
-                <span class="tool-label">Split</span>
-              </button>
-
-              <button class="tool-btn" data-tool="fuse" title="Fuse Plates (G)">
-                <span class="tool-icon">🧬</span>
-                <span class="tool-label">Fuse</span>
-              </button>
-
-              <button class="tool-btn" data-tool="link" title="Link Plates (L)">
-                <span class="tool-icon">🔗</span>
-                <span class="tool-label">Link</span>
-              </button>
-            </div>
-            
-            <div class="tool-group" id="split-controls" style="display: none;">
-              <h3 class="tool-group-title">Split Preview</h3>
-              <button class="btn btn-success" id="btn-split-apply">✓ Apply</button>
-              <button class="btn btn-secondary" id="btn-split-cancel">✗ Cancel</button>
-            </div>
-
-            <div class="tool-group" id="motion-controls" style="display: none;">
-              <h3 class="tool-group-title">Confirm Motion</h3>
-              <p style="font-size: 11px; margin-bottom: 8px; color: #a6adc8; line-height: 1.2;">Drag ring to rotate.</p>
-              <div style="display: flex; gap: 4px;">
-                  <button class="btn btn-success" id="btn-motion-apply" style="flex: 1;">✓ Apply</button>
-                  <button class="btn btn-secondary" id="btn-motion-cancel" style="flex: 1;">✗ Cancel</button>
+              <h3 class="tool-group-title">Interaction</h3>
+              <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                  <button class="tool-btn active" data-tool="select" style="flex:1;">
+                    <span class="tool-icon">👆</span>
+                    <span class="tool-label">Select</span>
+                    <span class="info-icon" data-tooltip="Select plates/features to edit (Hotkey: V)">(i)</span>
+                  </button>
+                  <button class="tool-btn" data-tool="pan" style="flex:1;">
+                    <span class="tool-icon">🔄</span>
+                    <span class="tool-label">Rotate</span>
+                    <span class="info-icon" data-tooltip="Move camera or rotate globe (Hotkey: H)">(i)</span>
+                  </button>
+              </div>
+              <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                  <button class="tool-btn" data-tool="draw" style="flex:1;">
+                    <span class="tool-icon">✏️</span>
+                    <span class="tool-label">Draw</span>
+                    <span class="info-icon" data-tooltip="Draw new plate boundaries (Hotkey: D)">(i)</span>
+                  </button>
+                  <button class="tool-btn" data-tool="feature" style="flex:1;">
+                    <span class="tool-icon">🏔️</span>
+                    <span class="tool-label">Feature</span>
+                    <span class="info-icon" data-tooltip="Place mountains, volcanoes, etc (Hotkey: F)">(i)</span>
+                  </button>
+              </div>
+              <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                  <button class="tool-btn" data-tool="split" style="flex:1;">
+                    <span class="tool-icon">✂️</span>
+                    <span class="tool-label">Split</span>
+                    <span class="info-icon" data-tooltip="Divide a plate in two (Hotkey: S)">(i)</span>
+                  </button>
+                   <button class="tool-btn" data-tool="link" style="flex:1;">
+                    <span class="tool-icon">🔗</span>
+                    <span class="tool-label">Link</span>
+                    <span class="info-icon" data-tooltip="Group plates to move together (Hotkey: L)">(i)</span>
+                  </button>
+                  <button class="tool-btn" data-tool="fuse" style="flex:1;">
+                    <span class="tool-icon">🧬</span>
+                    <span class="tool-label">Fuse</span>
+                    <span class="info-icon" data-tooltip="Merge two plates (Hotkey: G)">(i)</span>
+                  </button>
               </div>
             </div>
-
-            <div class="tool-group" id="fuse-controls" style="display: none;">
-              <h3 class="tool-group-title">Fuse Options</h3>
-              <label class="view-option">
-                <input type="checkbox" id="check-add-weakness" checked> Add Weakness Features
-              </label>
-              <label class="view-option">
-                <input type="checkbox" id="check-add-mountains"> Auto Create Mountains
-              </label>
-            </div>
-
-
             
-            <div class="tool-group" id="feature-selector">
-              <h3 class="tool-group-title">Feature Type</h3>
-              <button class="feature-btn active" data-feature="mountain" title="Mountain">🏔️ Mtn</button>
-              <button class="feature-btn" data-feature="volcano" title="Volcano">🌋 Volc</button>
-              <button class="feature-btn" data-feature="hotspot" title="Hotspot">🔥 Hot</button>
-              <button class="feature-btn" data-feature="rift" title="Rift">⚡ Rift</button>
-              <button class="feature-btn" data-feature="trench" title="Trench">🌊 Trn</button>
-              <button class="feature-btn" data-feature="weakness" title="Weakness">💔 Weak</button>
-            </div>
-            
+            <!-- 2. CONTEXT / OPTIONS GROUP -->
             <div class="tool-group">
-                <h3 class="tool-group-title">View Options</h3>
+                 <h3 class="tool-group-title">Tool Options</h3>
+                 
+                 <!-- Dynamic Controls Stack -->
+                 <div id="feature-selector" style="display: none;">
+                      <button class="feature-btn active" data-feature="mountain" title="Mountain">🏔️ Mtn</button>
+                      <button class="feature-btn" data-feature="volcano" title="Volcano">🌋 Volc</button>
+                      <button class="feature-btn" data-feature="hotspot" title="Hotspot">🔥 Hot</button>
+                      <button class="feature-btn" data-feature="rift" title="Rift">⚡ Rift</button>
+                      <button class="feature-btn" data-feature="trench" title="Trench">🌊 Trn</button>
+                      <button class="feature-btn" data-feature="weakness" title="Weakness">💔 Weak</button>
+                 </div>
+
+                 <div id="split-controls" style="display: none; flex-direction:column; gap:4px;">
+                     <div style="align-self: center; font-size: 11px; color: var(--text-secondary);">Confirm Split?</div>
+                     <button class="btn btn-success" id="btn-split-apply">✓ Apply</button>
+                     <button class="btn btn-secondary" id="btn-split-cancel">✗ Cancel</button>
+                 </div>
+
+                 <div id="motion-controls" style="display: none; flex-direction:column; gap:4px;">
+                      <div style="font-size: 11px; color: var(--text-secondary);">Confirm Motion?</div>
+                      <button class="btn btn-success" id="btn-motion-apply">✓ Apply</button>
+                      <button class="btn btn-secondary" id="btn-motion-cancel">✗ Cancel</button>
+                 </div>
+
+                 <div id="fuse-controls" style="display: none;">
+                      <label class="view-option">
+                        <input type="checkbox" id="check-add-weakness" checked> Add Weakness Features
+                      </label>
+                      <label class="view-option">
+                        <input type="checkbox" id="check-add-mountains"> Auto Create Mountains
+                      </label>
+                 </div>
+
+                 <!-- Motion Mode Specifics -->
+                 <div style="margin-top: 8px;">
+                    <label class="property-label" style="font-size:11px;">Interaction Mode <span class="info-icon" data-tooltip="Classic (Pole) vs Dragging">(i)</span></label>
+                    <select id="motion-mode-select" class="tool-select" style="width:100%;">
+                        <option value="classic">Classic (Fixed Pole)</option>
+                        <option value="dynamic_pole">Dynamic Direction</option>
+                        <option value="drag_target">Drag Landmass</option>
+                    </select>
+                 </div>
+            </div>
+
+            <!-- 3. VIEW GROUP -->
+            <div class="tool-group">
+                <h3 class="tool-group-title">View Settings</h3>
+                
+                <div class="property-group">
+                    <label class="property-label">Projection <span class="info-icon" data-tooltip="Choose map projection (Globe, Mercator...)">(i)</span></label>
+                    <select id="projection-select" class="tool-select" style="width:100%;">
+                        <option value="orthographic">Globe (Orthographic)</option>
+                        <option value="equirectangular">Equirectangular</option>
+                        <option value="mercator">Mercator</option>
+                        <option value="mollweide">Mollweide</option>
+                        <option value="robinson">Robinson</option>
+                    </select>
+                </div>
+
                 <label class="view-option">
-                    <input type="checkbox" id="check-grid" checked> Grid
+                    <input type="checkbox" id="check-grid" checked> Show Grid <span class="info-icon" data-tooltip="Toggle the latitude/longitude grid">(i)</span>
                 </label>
-                <div class="property-group" style="margin-top: 4px; margin-bottom: 8px; margin-left: 20px;">
-                    <label class="property-label">Thickness</label>
-                    <select id="grid-thickness-select" class="tool-select" style="width: 100%;">
+                <div style="margin-left: 20px; margin-bottom: 4px;">
+                     <select id="grid-thickness-select" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
                         <option value="0.5">Thin (0.5px)</option>
                         <option value="1.0" selected>Medium (1.0px)</option>
                         <option value="2.0">Thick (2.0px)</option>
                     </select>
                 </div>
+
                 <label class="view-option">
-                    <input type="checkbox" id="check-euler"> Euler Poles
+                    <input type="checkbox" id="check-euler"> Show Euler Poles <span class="info-icon" data-tooltip="Display rotation axes for plates">(i)</span>
                 </label>
                 <label class="view-option">
-                    <input type="checkbox" id="check-features" checked> Features
+                    <input type="checkbox" id="check-features" checked> Show Features <span class="info-icon" data-tooltip="Show mountains, volcanoes, etc.">(i)</span>
+                </label>
+                 <label class="view-option">
+                    <input type="checkbox" id="check-boundary-vis"> Show Boundaries <span class="info-icon" data-tooltip="Visualize plate boundaries">(i)</span>
                 </label>
                 <label class="view-option">
-                    <input type="checkbox" id="check-future-features"> Future/Past Features
+                    <input type="checkbox" id="check-future-features"> Show Future/Past <span class="info-icon" data-tooltip="Show features not yet born">(i)</span>
                 </label>
             </div>
-
+            
+            <!-- 4. GLOBAL / SIMULATION GROUP -->
             <div class="tool-group">
-                <h3 class="tool-group-title">Motion Mode</h3>
-                <select id="motion-mode-select" class="tool-select">
-                    <option value="classic">Classic (Fixed Pole)</option>
-                    <option value="dynamic_pole">Dynamic Direction</option>
-                    <option value="drag_target">Drag Landmass</option>
-                </select>
+                <h3 class="tool-group-title">Simulation</h3>
+                 <label class="view-option">
+                    <input type="checkbox" id="check-speed-limit"> Enable Speed Limit <span class="info-icon" data-tooltip="Limit how fast plates can move">(i)</span>
+                </label>
+                <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
+                    <label class="property-label">Max Speed</label>
+                    <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 60px;">
+                </div>
+                 <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
+                    <label class="property-label">Max Time</label>
+                    <input type="number" id="global-max-time" class="property-input" value="500" step="100" min="100" style="width: 60px;">
+                </div>
+                
+                <hr class="property-divider" style="margin: 8px 0;">
+                <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Rate Presets <span class="info-icon" data-tooltip="Examples: 0.5 (Slow), 1.0 (Normal), 2.0 (Fast), 5.0+ (India-Asia Collision Speed!)">(i)</span></div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px;">
+                    <input type="number" id="global-rate-1" class="property-input" step="0.1">
+                    <input type="number" id="global-rate-2" class="property-input" step="0.1">
+                    <input type="number" id="global-rate-3" class="property-input" step="0.1">
+                    <input type="number" id="global-rate-4" class="property-input" step="0.1">
+                </div>
             </div>
 
-            <div class="tool-group">
-                <h3 class="tool-group-title">Global Options</h3>
-                <label class="view-option">
-                    <input type="checkbox" id="check-speed-limit"> Enable Speed Limit
-                </label>
-                <div class="property-group" style="margin-top: 8px;">
-                    <label class="property-label">Max Speed (deg/Ma)</label>
-                    <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 80px;">
-                </div>
-                <div class="property-group" style="margin-top: 8px;">
-                    <label class="property-label">Max Time (Ma)</label>
-                    <input type="number" id="global-max-time" class="property-input" value="500" step="100" min="100" style="width: 80px;">
-                </div>
-                <hr class="property-divider">
-                <h4 class="tool-group-title" style="font-size: 11px;">Advanced</h4>
-                <label class="view-option">
-                    <input type="checkbox" id="check-boundary-vis"> Show Boundaries
-                </label>
-                <div class="property-group" style="margin-top: 8px;">
-                    <label class="property-label">Rate Preset 1</label>
-                    <input type="number" id="global-rate-1" class="property-input" step="0.1" style="width: 80px;">
-                </div>
-                <div class="property-group" style="margin-top: 4px;">
-                    <label class="property-label">Rate Preset 2</label>
-                    <input type="number" id="global-rate-2" class="property-input" step="0.1" style="width: 80px;">
-                </div>
-                <div class="property-group" style="margin-top: 4px;">
-                    <label class="property-label">Rate Preset 3</label>
-                    <input type="number" id="global-rate-3" class="property-input" step="0.1" style="width: 80px;">
-                </div>
-                <div class="property-group" style="margin-top: 4px;">
-                    <label class="property-label">Rate Preset 4</label>
-                    <input type="number" id="global-rate-4" class="property-input" step="0.1" style="width: 80px;">
-                </div>
-                <label class="view-option">
-                    <input type="checkbox" id="check-boundary-vis"> Show Boundaries
-                </label>
-
-            </div>
-
-            <div class="tool-group">
+            <!-- 5. PLATES LIST -->
+            <div class="tool-group" style="flex:1; overflow-y:auto;">
               <h3 class="tool-group-title">Plates</h3>
               <div id="plate-list" class="plate-list"></div>
             </div>
@@ -326,11 +340,73 @@ class TectoLiteApp {
           </div>
           <button id="btn-reset-time" class="btn btn-secondary">Reset</button>
         </footer>
+        <div id="global-tooltip"></div>
       </div>
     `;
     }
 
     private setupEventListeners(): void {
+        // Sidebar Toggle
+        const sidebarBtn = document.getElementById('btn-toggle-sidebar');
+        const toolbar = document.querySelector('.toolbar');
+        sidebarBtn?.addEventListener('click', () => {
+            toolbar?.classList.toggle('collapsed');
+        });
+
+        // Right Sidebar Toggle
+        const rightSidebarBtn = document.getElementById('btn-toggle-right-sidebar');
+        const rightSidebar = document.querySelector('.right-sidebar');
+        rightSidebarBtn?.addEventListener('click', () => {
+            rightSidebar?.classList.toggle('collapsed');
+        });
+
+        // Global Tooltip Logic
+        const tooltip = document.getElementById('global-tooltip');
+        const infoIcons = document.querySelectorAll('.info-icon');
+
+        infoIcons.forEach(icon => {
+            icon.addEventListener('mouseenter', (e) => {
+                const text = icon.getAttribute('data-tooltip');
+                if (tooltip && text) {
+                    tooltip.textContent = text;
+                    tooltip.style.display = 'block';
+                    tooltip.style.opacity = '1';
+                }
+            });
+
+            icon.addEventListener('mouseleave', () => {
+                if (tooltip) {
+                    tooltip.style.display = 'none';
+                    tooltip.style.opacity = '0';
+                }
+            });
+
+            icon.addEventListener('mousemove', (e) => {
+                if (tooltip) {
+                    const x = (e as MouseEvent).clientX + 15;
+                    const y = (e as MouseEvent).clientY + 15;
+
+                    // Prevent overflow
+                    const rect = tooltip.getBoundingClientRect();
+                    const winWidth = window.innerWidth;
+                    const winHeight = window.innerHeight;
+
+                    let finalX = x;
+                    let finalY = y;
+
+                    if (x + rect.width > winWidth) {
+                        finalX = (e as MouseEvent).clientX - rect.width - 10;
+                    }
+                    if (y + rect.height > winHeight) {
+                        finalY = (e as MouseEvent).clientY - rect.height - 10;
+                    }
+
+                    tooltip.style.left = `${finalX}px`;
+                    tooltip.style.top = `${finalY}px`;
+                }
+            });
+        });
+
         // Tools
         document.querySelectorAll('.tool-btn').forEach(btn => {
             btn.addEventListener('click', () => {

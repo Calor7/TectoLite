@@ -76,9 +76,18 @@ export class CanvasManager {
         this.projectionManager = new ProjectionManager(ctx);
 
         this.setupEventListeners();
-        // Wait for next frame to ensure parent is sized
+
+        // Use ResizeObserver for robust layout handling
+        const container = canvas.parentElement;
+        if (container) {
+            const resizeObserver = new ResizeObserver(() => {
+                this.resizeCanvas();
+            });
+            resizeObserver.observe(container);
+        }
+
+        // Initial resize
         requestAnimationFrame(() => this.resizeCanvas());
-        window.addEventListener('resize', () => this.resizeCanvas());
     }
 
     public setMotionMode(mode: InteractionMode): void {
@@ -87,7 +96,7 @@ export class CanvasManager {
         this.render();
     }
 
-    private resizeCanvas(): void {
+    public resizeCanvas(): void {
         const container = this.canvas.parentElement;
         if (!container) return;
 

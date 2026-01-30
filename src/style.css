@@ -772,3 +772,70 @@ body {
   padding: 2px 4px;
   border-radius: var(--radius-sm);
 }
+
+/* Info Icons & Tooltips */
+.info-icon {
+  display: inline-block;
+  margin-left: 2px;
+  cursor: help;
+  font-style: normal;
+  font-size: 10px;
+  vertical-align: super;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+  color: var(--accent-primary);
+  font-weight: bold;
+}
+
+.info-icon:hover {
+  opacity: 1.0;
+}
+
+/* Global Fixed Tooltip */
+#global-tooltip {
+  position: fixed;
+  background: rgba(22, 27, 34, 0.95);
+  /* Dark background */
+  color: #e6edf3;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid var(--border-default);
+  pointer-events: none;
+  /* Let mouse events pass through */
+  z-index: 9999;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  max-width: 250px;
+  white-space: normal;
+  display: none;
+  /* Hidden by default */
+  line-height: 1.4;
+}
+
+/* Sidebar Toggle Transition */
+.toolbar {
+  transition: width 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
+  overflow-x: hidden;
+  /* Hide content when collapsing */
+}
+
+.toolbar.collapsed {
+  width: 0;
+  padding: var(--space-md) 0;
+  /* Keep vertical padding but remove horizontal? Or just 0 */
+  padding: 0;
+  opacity: 0;
+  border-right: none;
+}
+
+.right-sidebar {
+  transition: width 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
+  overflow-x: hidden;
+}
+
+.right-sidebar.collapsed {
+  width: 0;
+  padding: 0;
+  opacity: 0;
+  border-left: none;
+}
