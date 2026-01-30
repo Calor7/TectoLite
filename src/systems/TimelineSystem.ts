@@ -1,5 +1,5 @@
 
-import { TectonicPlate, AppState, MotionKeyframe, Coordinate, PlateEvent } from '../types';
+import { TectonicPlate, MotionKeyframe, Coordinate, PlateEvent } from '../types';
 import { SimulationEngine } from '../SimulationEngine';
 import { HistoryManager } from '../HistoryManager';
 
@@ -18,19 +18,16 @@ export interface TimelineEventItem {
 export class TimelineSystem {
     private container: HTMLElement | null = null;
     private plate: TectonicPlate | null = null;
-    private onStateChange: ((newState: Partial<AppState>) => void) | null = null;
     private simulationEngine: SimulationEngine | null = null;
-    private historyManager: HistoryManager | null = null;
     private app: any = null; // Reference to main app for state access if needed
 
     constructor(
-        containerId: string,
+        _containerId: string,
         simulationEngine: SimulationEngine,
-        historyManager: HistoryManager,
+        _historyManager: HistoryManager,
         app: any
     ) {
         this.simulationEngine = simulationEngine;
-        this.historyManager = historyManager;
         this.app = app;
 
         // We defer finding the element until render, or user can pass element

@@ -1,5 +1,5 @@
 // Fusion Tool - Merges two plates into one
-import { AppState, TectonicPlate, Feature, Polygon, Coordinate, generateId, MotionKeyframe } from './types';
+import { AppState, TectonicPlate, Feature, Polygon, Coordinate, generateId, MotionKeyframe, FeatureType } from './types';
 import { calculateSphericalCentroid } from './utils/sphericalMath';
 import polygonClipping from 'polygon-clipping';
 

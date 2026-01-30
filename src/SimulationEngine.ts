@@ -413,7 +413,7 @@ export class SimulationEngine {
             center: newCenter
         };
 
-        return this.checkAutoGeneration(updatedPlate, time);
+        return updatedPlate;
     }
 
     public recalculateMotionHistory(plate: TectonicPlate): TectonicPlate {

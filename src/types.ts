@@ -19,7 +19,7 @@ export interface Polygon {
   closed: boolean;
 }
 
-export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness';
+export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region';
 
 export interface Feature {
   id: string;
@@ -34,6 +34,9 @@ export interface Feature {
   // User-customizable fields
   name?: string;         // User-defined name (defaults to type name if not set)
   description?: string;  // User-defined description
+  // Polygon feature specific
+  polygon?: Coordinate[];
+  fillColor?: string;
 }
 
 export interface EulerPole {
@@ -138,7 +141,7 @@ export interface Boundary {
   velocity?: number; // Relative velocity magnitude
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'split' | 'pan' | 'fuse' | 'link';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link';
 
 export interface AppState {
   world: WorldState;

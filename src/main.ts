@@ -21,7 +21,7 @@ import { SimulationEngine } from './SimulationEngine';
 import { exportToPNG, showPNGExportDialog } from './export';
 import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
-import { vectorToLatLon, Vector3, distance } from './utils/sphericalMath';
+import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
 import { exportToJSON, parseImportFile, showImportDialog, showHeightmapExportDialog } from './export';
@@ -1941,7 +1941,8 @@ class TectoLiteApp {
             rift: 'Rift',
             trench: 'Trench',
             island: 'Island',
-            weakness: 'Weakness'
+            weakness: 'Weakness',
+            poly_region: 'Polygon Region'
         };
         return names[type] || type;
     }

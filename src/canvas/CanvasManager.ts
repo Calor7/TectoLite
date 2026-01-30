@@ -126,7 +126,7 @@ export class CanvasManager {
 
 
 
-    public setTheme(theme: string): void {
+    public setTheme(_theme: string): void {
         this.render();
     }
 
