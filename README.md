@@ -1,12 +1,16 @@
-# TectoLite - Spherical Plate Tectonics Simulator
-made by refracturedgames 
 
-sounds fancy is in essence a small map making tool for worldbuilding hobbiests.
+# What is Tectolite
+
 Well Hello there :)
 
+Tectolite is a small map making tool for worldbuilding hobbiests
 
-# visit refracturedgames.com if you want to stay up to date with other
-awesome tools and my projects :)
+
+
+www.refracturedgames.com
+
+if you want to stay up to date with other
+awesome tools feel free to visit my website :)
 
 
 ## Features
