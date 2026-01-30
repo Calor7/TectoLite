@@ -106,25 +106,73 @@ class TectoLiteApp {
           </h1>
           <div class="header-actions">
             <!-- Projection Selector Moved to Sidebar -->
+            
+            <!-- Retro Status Info Box -->
+            <div id="retro-status-box" class="retro-status-box" style="display: none;">
+                <span id="retro-status-text">INFO LOADING...</span>
+            </div>
 
             <!-- View Dropdown -->
             <div class="view-dropdown-container">
                 <button id="btn-view-panels" class="btn btn-secondary" title="View Options">
                     <span class="icon">👁️</span> View
                 </button>
-                <div id="view-dropdown-menu" class="view-dropdown-menu">
-                    <label class="view-dropdown-item">
-                        <input type="checkbox" id="check-view-tools" checked> Tools
-                    </label>
-                    <label class="view-dropdown-item">
-                        <input type="checkbox" id="check-view-plates" checked> Plates
-                    </label>
-                    <label class="view-dropdown-item">
-                        <input type="checkbox" id="check-view-props" checked> Properties
-                    </label>
-                    <label class="view-dropdown-item">
-                        <input type="checkbox" id="check-view-timeline" checked> Timeline
-                    </label>
+                <div id="view-dropdown-menu" class="view-dropdown-menu" style="min-width: 250px;">
+                    <!-- 1. BAR SETTING (Panels) -->
+                    <div class="dropdown-section">
+                        <div class="dropdown-header">Bars</div>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-view-tools" checked> Tools
+                        </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-view-plates" checked> Plates
+                        </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-view-props" checked> Properties
+                        </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-view-timeline" checked> Timeline
+                        </label>
+                    </div>
+
+                    <!-- 2. PROJECTION SETTING -->
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
+                        <div class="dropdown-header">Projection <span class="info-icon" data-tooltip="Choose map projection">(i)</span></div>
+                        <div style="padding: 4px 8px;">
+                            <select id="projection-select" class="tool-select" style="width:100%;">
+                                <option value="orthographic">Globe (Orthographic)</option>
+                                <option value="equirectangular">Equirectangular</option>
+                                <option value="mercator">Mercator</option>
+                                <option value="mollweide">Mollweide</option>
+                                <option value="robinson">Robinson</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 3. SHOW OBJECT SETTING -->
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
+                        <div class="dropdown-header">Effects</div>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-grid" checked> Show Grid <span class="info-icon" data-tooltip="Toggle the latitude/longitude grid">(i)</span>
+                        </label>
+                         <div style="padding: 2px 8px 4px 28px;">
+                             <select id="grid-thickness-select" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
+                                <option value="0.5">Thin (0.5px)</option>
+                                <option value="1.0" selected>Medium (1.0px)</option>
+                                <option value="2.0">Thick (2.0px)</option>
+                            </select>
+                        </div>
+
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-features" checked> Show Features <span class="info-icon" data-tooltip="Show mountains, volcanoes, etc.">(i)</span>
+                        </label>
+                         <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-boundary-vis"> Show Boundaries <span class="info-icon" data-tooltip="Visualize plate boundaries">(i)</span>
+                        </label>
+                        <label class="view-dropdown-item">
+                             <input type="checkbox" id="check-future-features"> Show Future/Past <span class="info-icon" data-tooltip="Show features not yet born">(i)</span>
+                        </label>
+                    </div>
                 </div>
             </div>
 
@@ -262,44 +310,7 @@ class TectoLiteApp {
             </div>
 
             <!-- 3. VIEW GROUP -->
-            <div class="tool-group">
-                <h3 class="tool-group-title">View Settings</h3>
-                
-                <div class="property-group">
-                    <label class="property-label">Projection <span class="info-icon" data-tooltip="Choose map projection (Globe, Mercator...)">(i)</span></label>
-                    <select id="projection-select" class="tool-select" style="width:100%;">
-                        <option value="orthographic">Globe (Orthographic)</option>
-                        <option value="equirectangular">Equirectangular</option>
-                        <option value="mercator">Mercator</option>
-                        <option value="mollweide">Mollweide</option>
-                        <option value="robinson">Robinson</option>
-                    </select>
-                </div>
 
-                <label class="view-option">
-                    <input type="checkbox" id="check-grid" checked> Show Grid <span class="info-icon" data-tooltip="Toggle the latitude/longitude grid">(i)</span>
-                </label>
-                <div style="margin-left: 20px; margin-bottom: 4px;">
-                     <select id="grid-thickness-select" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
-                        <option value="0.5">Thin (0.5px)</option>
-                        <option value="1.0" selected>Medium (1.0px)</option>
-                        <option value="2.0">Thick (2.0px)</option>
-                    </select>
-                </div>
-
-                <label class="view-option">
-                    <input type="checkbox" id="check-euler"> Show Euler Poles <span class="info-icon" data-tooltip="Display rotation axes for plates">(i)</span>
-                </label>
-                <label class="view-option">
-                    <input type="checkbox" id="check-features" checked> Show Features <span class="info-icon" data-tooltip="Show mountains, volcanoes, etc.">(i)</span>
-                </label>
-                 <label class="view-option">
-                    <input type="checkbox" id="check-boundary-vis"> Show Boundaries <span class="info-icon" data-tooltip="Visualize plate boundaries">(i)</span>
-                </label>
-                <label class="view-option">
-                    <input type="checkbox" id="check-future-features"> Show Future/Past <span class="info-icon" data-tooltip="Show features not yet born">(i)</span>
-                </label>
-            </div>
             
             <!-- 4. GLOBAL / SIMULATION GROUP -->
             <div class="tool-group">
@@ -455,7 +466,6 @@ class TectoLiteApp {
 
         // Global Tooltip Logic
         const tooltip = document.getElementById('global-tooltip');
-        const infoIcons = document.querySelectorAll('.info-icon');
 
         const updateTooltipPos = (e: MouseEvent) => {
             if (tooltip) {
@@ -482,51 +492,132 @@ class TectoLiteApp {
             }
         };
 
-        infoIcons.forEach(icon => {
-            // Icon Listeners (Modern Mode)
-            icon.addEventListener('mouseenter', () => {
-                const text = icon.getAttribute('data-tooltip');
-                if (tooltip && text) {
+        // Update active tool Info for Retro Status Box
+        let activeToolText = "INFO LOADING...";
+
+        const updateRetroStatusBox = (text: string | null) => {
+            const statusBox = document.getElementById('retro-status-text');
+            if (statusBox) statusBox.textContent = text || activeToolText || "INFO LOADING...";
+        };
+
+        // Delegated Tooltip Logic
+        const handleTooltipHover = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            // Find relevant interactive ancestor
+            // We want to capture the specific element that triggered it, but also check its context
+            const element = target.closest('[data-tooltip], [title], .info-icon, .tool-btn, .feature-btn, button, input, select, label, h3, .view-dropdown-item');
+
+            if (!element) return;
+
+            const appContainer = document.querySelector('.app-container');
+            const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
+
+            // In modern mode, only allow standard tooltip behavior
+            if (!isRetro && !element.classList.contains('info-icon') && !element.closest('.info-icon') && !element.hasAttribute('data-tooltip')) {
+                return;
+            }
+
+            // Determine text - PRIORITY SYSTEM
+            let text: string | null = null;
+
+            // 1. If we are hovering an info-icon directly, that is supreme
+            if (element.classList.contains('info-icon')) {
+                text = element.getAttribute('data-tooltip');
+            }
+
+            // 2. If valid text not found yet, check if the element HAS a child info-icon (common in buttons)
+            if (!text) {
+                const childIcon = element.querySelector('.info-icon');
+                if (childIcon) text = childIcon.getAttribute('data-tooltip');
+            }
+
+            // 3. Check the element's own data-tooltip
+            if (!text) {
+                text = element.getAttribute('data-tooltip');
+            }
+
+            // 4. Check sibling info icon (for labels next to icons)
+            if (!text) {
+                const next = element.nextElementSibling;
+                if (next && next.classList.contains('info-icon')) {
+                    text = next.getAttribute('data-tooltip');
+                }
+            }
+
+            // 5. Check title (and archive it)
+            if (!text && element.getAttribute('title')) {
+                text = element.getAttribute('title');
+                element.setAttribute('data-original-title', text || '');
+                element.removeAttribute('title');
+            }
+
+            // 6. Retro Fallbacks
+            if (!text && isRetro) {
+                if (element.tagName === 'H3') text = `[ ${element.textContent} ]`;
+                else if (element.tagName === 'LABEL') text = element.textContent;
+                else if (element.tagName === 'BUTTON' || element.classList.contains('tool-btn')) {
+                    const label = element.querySelector('.tool-label');
+                    text = label ? label.textContent : element.textContent;
+                }
+            }
+
+            if (text) {
+                if (isRetro) {
+                    // Update Retro Status Box
+                    updateRetroStatusBox(text);
+                } else if (tooltip) {
+                    // Modern Tooltip
                     tooltip.textContent = text;
                     tooltip.style.display = 'block';
                     tooltip.style.opacity = '1';
+                    updateTooltipPos(e);
                 }
-            });
+            }
+        };
 
-            icon.addEventListener('mouseleave', () => {
-                if (tooltip) {
-                    tooltip.style.display = 'none';
-                    tooltip.style.opacity = '0';
+        const handleTooltipOut = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            const related = e.relatedTarget as HTMLElement;
+
+            // Find the element we are leaving
+            const element = target.closest('[data-tooltip], [title], .info-icon, .tool-btn, .feature-btn, button, input, select, label, h3, .view-dropdown-item');
+
+            // Restore title if valid
+            if (element && element.hasAttribute('data-original-title')) {
+                const originalTitle = element.getAttribute('data-original-title');
+                if (originalTitle) {
+                    element.setAttribute('title', originalTitle);
+                    element.removeAttribute('data-original-title');
                 }
-            });
+            }
 
-            icon.addEventListener('mousemove', (e) => updateTooltipPos(e as MouseEvent));
+            // FLICKER PREVENTION
+            // If we are moving TO a child of the element we just left (or vice versa), do not reset.
+            // e.g. Button -> Icon inside Button
+            if (element && related && (element.contains(related) || related.contains(element))) {
+                return;
+            }
 
-            // Parent Listeners (Retro Mode)
-            const parent = icon.parentElement;
-            if (parent) {
-                parent.addEventListener('mouseenter', () => {
-                    if (!document.body.classList.contains('oldschool-mode')) return;
-                    const text = icon.getAttribute('data-tooltip');
-                    if (tooltip && text) {
-                        tooltip.textContent = text;
-                        tooltip.style.display = 'block';
-                        tooltip.style.opacity = '1';
-                    }
-                });
+            const appContainer = document.querySelector('.app-container');
+            const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
 
-                parent.addEventListener('mouseleave', () => {
-                    if (!document.body.classList.contains('oldschool-mode')) return;
-                    if (tooltip) {
-                        tooltip.style.display = 'none';
-                        tooltip.style.opacity = '0';
-                    }
-                });
+            if (isRetro) {
+                // Restore active tool text
+                updateRetroStatusBox(activeToolText);
+            } else if (tooltip) {
+                tooltip.style.display = 'none';
+                tooltip.style.opacity = '0';
+            }
+        };
 
-                parent.addEventListener('mousemove', (e) => {
-                    if (!document.body.classList.contains('oldschool-mode')) return;
-                    updateTooltipPos(e as MouseEvent);
-                });
+        document.body.addEventListener('mouseover', handleTooltipHover);
+        document.body.addEventListener('mouseout', handleTooltipOut);
+        document.body.addEventListener('mousemove', (e) => {
+            const appContainer = document.querySelector('.app-container');
+            const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
+
+            if (!isRetro && tooltip && tooltip.style.display === 'block') {
+                updateTooltipPos(e);
             }
         });
 
@@ -546,8 +637,6 @@ class TectoLiteApp {
         // UI Mode Toggle
         document.getElementById('btn-ui-mode')?.addEventListener('click', () => {
             document.querySelector('.app-container')?.classList.toggle('oldschool-mode');
-            // Optionally update button text/icon if needed, but CSS handles standard icon hiding.
-            // In oldschool mode, the icon is hidden, so we rely on the button border/style.
         });
 
         // Tools
@@ -555,7 +644,44 @@ class TectoLiteApp {
             btn.addEventListener('click', () => {
                 const tool = btn.getAttribute('data-tool') as ToolType;
                 this.setActiveTool(tool);
+
+                // Update Active Tool Status text
+                // Check child icon FIRST (Priority)
+                let text: string | null = null;
+                const childIcon = btn.querySelector('.info-icon');
+
+                if (childIcon) {
+                    text = childIcon.getAttribute('data-tooltip');
+                }
+
+                // Fallback to button tooltip
+                if (!text) {
+                    text = btn.getAttribute('data-tooltip');
+                }
+
+                if (text) {
+                    activeToolText = text;
+                    // Always update logic, even if not in retro mode, so state is correct when switching
+                    const appContainer = document.querySelector('.app-container');
+                    if (appContainer && appContainer.classList.contains('oldschool-mode')) {
+                        updateRetroStatusBox(activeToolText);
+                    }
+                }
             });
+
+            // Initial Check for active tool
+            if (btn.classList.contains('active')) {
+                // Initialize text based on default active button
+                let text: string | null = null;
+                const childIcon = btn.querySelector('.info-icon');
+                if (childIcon) text = childIcon.getAttribute('data-tooltip');
+                if (!text) text = btn.getAttribute('data-tooltip');
+
+                if (text) {
+                    activeToolText = text;
+                    updateRetroStatusBox(text);
+                }
+            }
         });
 
         // Features
@@ -591,10 +717,7 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
-        document.getElementById('check-euler')?.addEventListener('change', (e) => {
-            this.state.world.showEulerPoles = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
+
 
         document.getElementById('check-features')?.addEventListener('change', (e) => {
             this.state.world.showFeatures = (e.target as HTMLInputElement).checked;

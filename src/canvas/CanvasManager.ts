@@ -744,7 +744,7 @@ export class CanvasManager {
             }
 
             // Euler Pole Visualization
-            if (state.world.showEulerPoles && plate.motion.eulerPole.visible) {
+            if (plate.motion.eulerPole.visible) {
                 this.drawEulerPole(plate.motion.eulerPole);
             }
 

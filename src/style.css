@@ -199,6 +199,20 @@ body {
   gap: var(--space-lg);
 }
 
+.dropdown-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.dropdown-header {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-weight: 700;
+  padding: 4px 8px;
+  letter-spacing: 0.5px;
+}
+
 .tool-group {
   display: flex;
   flex-direction: column;
@@ -961,4 +975,28 @@ body {
 .oldschool-mode .feature-btn.active {
   border: 2px solid var(--accent-primary);
   background: var(--bg-hover);
+}
+
+.retro-status-box {
+  display: none !important;
+  /* Managed by .oldschool-mode parent selector */
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-default);
+  padding: 4px 12px;
+  margin-right: 12px;
+  min-width: 300px;
+  height: 32px;
+  background: var(--bg-elevated);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oldschool-mode .retro-status-box {
+  display: flex !important;
 }
