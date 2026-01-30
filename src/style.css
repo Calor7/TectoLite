@@ -839,3 +839,126 @@ body {
   opacity: 0;
   border-left: none;
 }
+
+/* Plate Sidebar */
+.plate-sidebar {
+  width: 220px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-default);
+  display: flex;
+  flex-direction: column;
+  transition: width 0.3s ease, opacity 0.3s ease;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.plate-sidebar.collapsed {
+  width: 0;
+  opacity: 0;
+  border-right: none;
+}
+
+/* View Dropdown */
+.view-dropdown-container {
+  position: relative;
+  display: inline-block;
+}
+
+.view-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background-color: var(--bg-elevated);
+  min-width: 160px;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  z-index: 1000;
+  margin-top: 4px;
+}
+
+.view-dropdown-menu.show {
+  display: block;
+}
+
+.view-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.view-dropdown-item:hover {
+  background-color: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+
+.timeline-bar {
+  transition: height 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
+}
+
+.timeline-bar.collapsed {
+  height: 0;
+  padding: 0;
+  opacity: 0;
+  border-top: none;
+  overflow: hidden;
+}
+
+/* --- Oldschool Mode (Retro/Text-Only) --- */
+.oldschool-mode {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+}
+
+.oldschool-text {
+  display: none;
+}
+
+.oldschool-mode .oldschool-text {
+  display: inline;
+  font-size: 12px;
+  font-weight: bold;
+  vertical-align: middle;
+}
+
+/* Specific exception for UI Mode button to show text in Modern Mode */
+#btn-ui-mode .oldschool-text {
+  display: inline;
+  font-size: 12px;
+  font-weight: bold;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.oldschool-mode .icon:not(#btn-play .icon),
+.oldschool-mode .tool-icon,
+.oldschool-mode .info-icon,
+.oldschool-mode .coffee-icon {
+  display: none !important;
+}
+
+.oldschool-mode .btn,
+.oldschool-mode .tool-btn,
+.oldschool-mode .feature-btn,
+.oldschool-mode .property-input,
+.oldschool-mode .tool-select {
+  border-radius: 0;
+  border: 1px solid var(--border-default);
+  text-transform: uppercase;
+  font-weight: bold;
+}
+
+.oldschool-mode .tool-btn.active,
+.oldschool-mode .feature-btn.active {
+  border: 2px solid var(--accent-primary);
+  background: var(--bg-hover);
+}

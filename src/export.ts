@@ -467,7 +467,8 @@ export async function exportToJSON(state: AppState): Promise<void> {
         name: options.filename,
         exportMode: options.mode,
         exportedAtTime: state.world.currentTime,
-        world: worldToSave
+        world: worldToSave,
+        viewport: state.viewport
     };
 
     const json = JSON.stringify(saveData, null, 2);
@@ -484,6 +485,7 @@ export type ImportMode = 'at_beginning' | 'at_current_time';
 
 export interface ImportResult {
     world: WorldState;
+    viewport?: any;
     mode: ImportMode;
     filename: string;
 }
@@ -599,7 +601,7 @@ export function importFromJSON(file: File): Promise<WorldState> {
 }
 
 // Parse file to get metadata without full import
-export function parseImportFile(file: File): Promise<{ world: WorldState; name: string }> {
+export function parseImportFile(file: File): Promise<{ world: WorldState; viewport?: any; name: string }> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -617,6 +619,7 @@ export function parseImportFile(file: File): Promise<{ world: WorldState; name: 
 
                 resolve({
                     world: data.world as WorldState,
+                    viewport: data.viewport as any, // Optional
                     name: data.name || file.name
                 });
             } catch (err) {

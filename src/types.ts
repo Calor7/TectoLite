@@ -113,10 +113,15 @@ export interface WorldState {
   showFeatures: boolean;
   showFutureFeatures: boolean;  // Show features outside current timeline (future/past)
   globalOptions: {
-    maxDragSpeed: number;        // deg/Ma, default ~1.0 (≈10 cm/year)
+    // Simulation
     speedLimitEnabled: boolean;
+    maxDragSpeed: number; // Degrees per Ma
+
+    // Planet Parameters
+    planetRadius: number; // km, default 6371 (Earth)
+
+    // Advanced
     gridThickness: number;       // Pixel width of grid lines
-    // Advanced Tectonics (Worldbuilding Pasta) - Default OFF
     ratePresets?: number[]; // User-defined rate presets (e.g. [0.5, 1.0, 2.0, 5.0])
     enableBoundaryVisualization?: boolean;
     enableDynamicFeatures?: boolean;
@@ -184,6 +189,7 @@ export function createDefaultWorldState(): WorldState {
     globalOptions: {
       maxDragSpeed: 1.0,  // ~10 cm/year (realistic plate speed)
       speedLimitEnabled: false,
+      planetRadius: 6371, // Earth radius in km
       gridThickness: 1.0,
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,

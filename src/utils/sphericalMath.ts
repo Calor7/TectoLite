@@ -163,3 +163,11 @@ export function axisAngleFromQuat(q: Quaternion): { axis: Vector3, angle: number
         angle: angle
     };
 }
+
+export function distance(a: Coordinate, b: Coordinate): number {
+    const v1 = latLonToVector(a);
+    const v2 = latLonToVector(b);
+    // Standard spherical distance: acos(dot product)
+    // Clamp to [-1, 1] to avoid NaN due to FP errors
+    return Math.acos(Math.min(1, Math.max(-1, dot(v1, v2))));
+}

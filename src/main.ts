@@ -21,11 +21,13 @@ import { SimulationEngine } from './SimulationEngine';
 import { exportToPNG, showPNGExportDialog } from './export';
 import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
-import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
+import { vectorToLatLon, Vector3, distance } from './utils/sphericalMath';
+import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
 import { exportToJSON, parseImportFile, showImportDialog, showHeightmapExportDialog } from './export';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
+import { geoArea } from 'd3-geo';
 
 class TectoLiteApp {
     private state: AppState;
@@ -98,19 +100,47 @@ class TectoLiteApp {
         <header class="app-header">
           <h1 class="app-title">
             TECTOLITE <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a></span>
+            <span style="margin-left: 20px; font-size: 0.7em;">
+                <a href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" style="color: var(--text-secondary); text-decoration: none;"><span class="coffee-icon">☕</span> Feed my coffee addiction</a>
+            </span>
           </h1>
           <div class="header-actions">
             <!-- Projection Selector Moved to Sidebar -->
 
-            <button id="btn-toggle-sidebar" class="btn btn-secondary" title="Toggle Left Sidebar">
-               <span class="icon">☰</span>
+            <!-- View Dropdown -->
+            <div class="view-dropdown-container">
+                <button id="btn-view-panels" class="btn btn-secondary" title="View Options">
+                    <span class="icon">👁️</span> View
+                </button>
+                <div id="view-dropdown-menu" class="view-dropdown-menu">
+                    <label class="view-dropdown-item">
+                        <input type="checkbox" id="check-view-tools" checked> Tools
+                    </label>
+                    <label class="view-dropdown-item">
+                        <input type="checkbox" id="check-view-plates" checked> Plates
+                    </label>
+                    <label class="view-dropdown-item">
+                        <input type="checkbox" id="check-view-props" checked> Properties
+                    </label>
+                    <label class="view-dropdown-item">
+                        <input type="checkbox" id="check-view-timeline" checked> Timeline
+                    </label>
+                </div>
+            </div>
+
+            <button id="btn-reset-camera" class="btn btn-secondary" title="Reset Camera">
+                <span class="icon">⟲</span><span class="oldschool-text">RESET</span>
             </button>
-            <button id="btn-toggle-right-sidebar" class="btn btn-secondary" title="Toggle Right Sidebar">
-               <span class="icon">⚙️</span>
+
+            <button id="btn-fullscreen" class="btn btn-secondary" title="Toggle Fullscreen">
+               <span class="icon">⛶</span><span class="oldschool-text">FULL</span>
             </button>
-            
+            <button id="btn-ui-mode" class="btn btn-secondary" title="Toggle UI Mode">
+               <span class="icon">💻</span><span class="oldschool-text">UI</span>
+            </button>
+
             <button id="btn-theme-toggle" class="btn btn-secondary" title="Toggle Theme">
-              <span class="icon">🌙</span>
+              <span class="icon">🌙</span><span class="oldschool-text">THEME</span>
             </button>
             <button id="btn-undo" class="btn btn-secondary" title="Undo (Ctrl+Z)">
               <span class="icon">↶</span> Undo
@@ -279,7 +309,16 @@ class TectoLiteApp {
                 </label>
                 <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
                     <label class="property-label">Max Speed</label>
-                    <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 60px;">
+                    <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 80px;">
+                </div>
+                 <div class="property-group" style="display:flex; flex-direction: column; gap: 4px;">
+                    <label class="view-option">
+                        <input type="checkbox" id="check-custom-radius"> Custom Planet Radius
+                    </label>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                         <label class="property-label" style="padding-left: 20px;">Radius (km)</label>
+                         <input type="number" id="global-planet-radius" class="property-input" value="${this.state.world.globalOptions.planetRadius || 6371}" step="100" style="width: 80px;" disabled>
+                    </div>
                 </div>
                  <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
                     <label class="property-label">Max Time</label>
@@ -297,10 +336,12 @@ class TectoLiteApp {
             </div>
 
             <!-- 5. PLATES LIST -->
-            <div class="tool-group" style="flex:1; overflow-y:auto;">
-              <h3 class="tool-group-title">Plates</h3>
-              <div id="plate-list" class="plate-list"></div>
-            </div>
+
+          </aside>
+          
+          <aside class="plate-sidebar" id="plate-sidebar">
+             <h3 class="tool-group-title" style="padding: 16px 16px 0 16px;">Plates</h3>
+             <div id="plate-list" class="plate-list" style="padding: 0 16px 16px 16px; overflow-y: auto; flex:1;"></div>
           </aside>
           
           <main class="canvas-container">
@@ -346,26 +387,104 @@ class TectoLiteApp {
     }
 
     private setupEventListeners(): void {
-        // Sidebar Toggle
-        const sidebarBtn = document.getElementById('btn-toggle-sidebar');
-        const toolbar = document.querySelector('.toolbar');
-        sidebarBtn?.addEventListener('click', () => {
-            toolbar?.classList.toggle('collapsed');
+        // Fullscreen Toggle
+        document.getElementById('btn-fullscreen')?.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    alert(`Error attempting to enable fullscreen: ${err.message}`);
+                });
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
         });
 
-        // Right Sidebar Toggle
-        const rightSidebarBtn = document.getElementById('btn-toggle-right-sidebar');
-        const rightSidebar = document.querySelector('.right-sidebar');
-        rightSidebarBtn?.addEventListener('click', () => {
-            rightSidebar?.classList.toggle('collapsed');
+        // Unified View Dropdown
+        const viewBtn = document.getElementById('btn-view-panels');
+        const viewMenu = document.getElementById('view-dropdown-menu');
+
+        // Toggle Dropdown
+        viewBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            viewMenu?.classList.toggle('show');
+        });
+
+        // Close on outside click
+        document.addEventListener('click', (e) => {
+            if (viewMenu?.classList.contains('show') && !viewMenu.contains(e.target as Node) && e.target !== viewBtn) {
+                viewMenu.classList.remove('show');
+            }
+        });
+
+        // Reset Camera
+        document.getElementById('btn-reset-camera')?.addEventListener('click', () => {
+            this.state.viewport.scale = 250;
+            this.state.viewport.rotate = [0, 0, 0];
+            this.canvasManager?.resizeCanvas();
+        });
+
+        // Checkbox Logic
+        interface PanelMap {
+            id: string; // Checkbox ID
+            target: string; // Target Selector
+            toggleClass: string; // Class to toggle
+            inverse: boolean; // True if 'checked' means remove class (e.g. collapsed)
+        }
+
+        const panels: PanelMap[] = [
+            { id: 'check-view-tools', target: '.toolbar', toggleClass: 'collapsed', inverse: true },
+            { id: 'check-view-plates', target: '.plate-sidebar', toggleClass: 'collapsed', inverse: true },
+            { id: 'check-view-props', target: '.right-sidebar', toggleClass: 'collapsed', inverse: true },
+            { id: 'check-view-timeline', target: '.timeline-bar', toggleClass: 'collapsed', inverse: true }
+        ];
+
+        panels.forEach(p => {
+            document.getElementById(p.id)?.addEventListener('change', (e) => {
+                const checked = (e.target as HTMLInputElement).checked;
+                const el = document.querySelector(p.target);
+                if (el) {
+                    if (p.inverse) {
+                        checked ? el.classList.remove(p.toggleClass) : el.classList.add(p.toggleClass);
+                    } else {
+                        checked ? el.classList.add(p.toggleClass) : el.classList.remove(p.toggleClass);
+                    }
+                }
+            });
         });
 
         // Global Tooltip Logic
         const tooltip = document.getElementById('global-tooltip');
         const infoIcons = document.querySelectorAll('.info-icon');
 
+        const updateTooltipPos = (e: MouseEvent) => {
+            if (tooltip) {
+                const x = e.clientX + 15;
+                const y = e.clientY + 15;
+
+                // Prevent overflow
+                const rect = tooltip.getBoundingClientRect();
+                const winWidth = window.innerWidth;
+                const winHeight = window.innerHeight;
+
+                let finalX = x;
+                let finalY = y;
+
+                if (x + rect.width > winWidth) {
+                    finalX = e.clientX - rect.width - 10;
+                }
+                if (y + rect.height > winHeight) {
+                    finalY = e.clientY - rect.height - 10;
+                }
+
+                tooltip.style.left = `${finalX}px`;
+                tooltip.style.top = `${finalY}px`;
+            }
+        };
+
         infoIcons.forEach(icon => {
-            icon.addEventListener('mouseenter', (e) => {
+            // Icon Listeners (Modern Mode)
+            icon.addEventListener('mouseenter', () => {
                 const text = icon.getAttribute('data-tooltip');
                 if (tooltip && text) {
                     tooltip.textContent = text;
@@ -381,30 +500,54 @@ class TectoLiteApp {
                 }
             });
 
-            icon.addEventListener('mousemove', (e) => {
-                if (tooltip) {
-                    const x = (e as MouseEvent).clientX + 15;
-                    const y = (e as MouseEvent).clientY + 15;
+            icon.addEventListener('mousemove', (e) => updateTooltipPos(e as MouseEvent));
 
-                    // Prevent overflow
-                    const rect = tooltip.getBoundingClientRect();
-                    const winWidth = window.innerWidth;
-                    const winHeight = window.innerHeight;
-
-                    let finalX = x;
-                    let finalY = y;
-
-                    if (x + rect.width > winWidth) {
-                        finalX = (e as MouseEvent).clientX - rect.width - 10;
+            // Parent Listeners (Retro Mode)
+            const parent = icon.parentElement;
+            if (parent) {
+                parent.addEventListener('mouseenter', () => {
+                    if (!document.body.classList.contains('oldschool-mode')) return;
+                    const text = icon.getAttribute('data-tooltip');
+                    if (tooltip && text) {
+                        tooltip.textContent = text;
+                        tooltip.style.display = 'block';
+                        tooltip.style.opacity = '1';
                     }
-                    if (y + rect.height > winHeight) {
-                        finalY = (e as MouseEvent).clientY - rect.height - 10;
-                    }
+                });
 
-                    tooltip.style.left = `${finalX}px`;
-                    tooltip.style.top = `${finalY}px`;
+                parent.addEventListener('mouseleave', () => {
+                    if (!document.body.classList.contains('oldschool-mode')) return;
+                    if (tooltip) {
+                        tooltip.style.display = 'none';
+                        tooltip.style.opacity = '0';
+                    }
+                });
+
+                parent.addEventListener('mousemove', (e) => {
+                    if (!document.body.classList.contains('oldschool-mode')) return;
+                    updateTooltipPos(e as MouseEvent);
+                });
+            }
+        });
+
+        // Fullscreen Toggle
+        document.getElementById('btn-fullscreen')?.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.error(`Error attempting to enable fullscreen: ${err.message}`);
+                });
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
                 }
-            });
+            }
+        });
+
+        // UI Mode Toggle
+        document.getElementById('btn-ui-mode')?.addEventListener('click', () => {
+            document.querySelector('.app-container')?.classList.toggle('oldschool-mode');
+            // Optionally update button text/icon if needed, but CSS handles standard icon hiding.
+            // In oldschool mode, the icon is hidden, so we rely on the button border/style.
         });
 
         // Tools
@@ -506,6 +649,37 @@ class TectoLiteApp {
                         this.updateTimeDisplay();
                     }
                 }
+            }
+        });
+
+        const radiusInput = document.getElementById('global-planet-radius') as HTMLInputElement;
+        const radiusCheck = document.getElementById('check-custom-radius') as HTMLInputElement;
+
+        radiusCheck?.addEventListener('change', (e) => {
+            const checked = (e.target as HTMLInputElement).checked;
+            if (radiusInput) {
+                radiusInput.disabled = !checked;
+                if (!checked) {
+                    // Reset to Earth Default
+                    this.state.world.globalOptions.planetRadius = 6371;
+                    radiusInput.value = "6371";
+                    this.updateUI();
+                } else {
+                    // Apply current input value if re-enabling?
+                    const val = parseFloat(radiusInput.value);
+                    if (!isNaN(val) && val > 0) {
+                        this.state.world.globalOptions.planetRadius = val;
+                        this.updateUI();
+                    }
+                }
+            }
+        });
+
+        radiusInput?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val) && val > 0) {
+                this.state.world.globalOptions.planetRadius = val;
+                this.updateUI(); // Refresh UI to update calculated stats
             }
         });
 
@@ -645,7 +819,7 @@ class TectoLiteApp {
             if (file) {
                 try {
                     // Parse file first to get metadata for the dialog
-                    const { world: importedWorld, name: filename } = await parseImportFile(file);
+                    const { world: importedWorld, viewport: importedViewport, name: filename } = await parseImportFile(file);
                     const currentTime = this.state.world.currentTime;
 
                     // Show import dialog
@@ -709,9 +883,6 @@ class TectoLiteApp {
                         return {
                             ...plate,
                             id: newPlateId,
-                            name: `${plate.name} (imported)`,
-                            birthTime: plate.birthTime + timeOffset, // Shift birth time
-                            deathTime: plate.deathTime !== null ? plate.deathTime + timeOffset : null, // Shift death time if present
                             polygons: newPolygons,
                             features: newFeatures,
                             initialPolygons: newInitialPolygons,
@@ -720,24 +891,50 @@ class TectoLiteApp {
                         };
                     });
 
-                    // Merge with existing plates
+                    // Update State
                     this.state = {
                         ...this.state,
                         world: {
                             ...this.state.world,
-                            plates: [...this.state.world.plates, ...processedPlates]
+                            plates: importMode === 'at_beginning'
+                                ? [...this.state.world.plates, ...processedPlates]
+                                : [...this.state.world.plates, ...processedPlates]
                         }
                     };
 
+                    // Restoring Settings Logic
+                    if (importedWorld.globalOptions) {
+                        this.state.world.globalOptions = {
+                            ...this.state.world.globalOptions,
+                            ...importedWorld.globalOptions
+                        };
+                    }
+                    if (importedWorld.projection) this.state.world.projection = importedWorld.projection;
+                    if (importedWorld.showGrid !== undefined) this.state.world.showGrid = importedWorld.showGrid;
+                    if (importedWorld.showFeatures !== undefined) this.state.world.showFeatures = importedWorld.showFeatures;
+                    if (importedWorld.showFutureFeatures !== undefined) this.state.world.showFutureFeatures = importedWorld.showFutureFeatures;
+
+                    // Restore Camera/Viewport if exists
+                    if (importedViewport) {
+                        this.state.viewport = importedViewport;
+                    }
+
+                    this.updatePlateList();
                     this.updateUI();
+                    this.syncUIToState();
                     this.canvasManager?.render();
 
                     const modeDesc = importMode === 'at_beginning' ? 'at time 0' : `at time ${currentTime.toFixed(1)} Ma`;
                     alert(`Successfully imported ${processedPlates.length} plate(s) ${modeDesc}!`);
+
+                    // Cleanup
+                    (e.target as HTMLInputElement).value = '';
+
                 } catch (err) {
+                    console.error(err);
                     alert('Failed to load file: ' + (err as Error).message);
+                    (e.target as HTMLInputElement).value = '';
                 }
-                (e.target as HTMLInputElement).value = ''; // Reset file input
             }
         });
 
@@ -754,11 +951,10 @@ class TectoLiteApp {
         const isDark = document.body.getAttribute('data-theme') !== 'light';
         const newTheme = isDark ? 'light' : 'dark';
 
-        if (newTheme === 'light') {
-            document.body.setAttribute('data-theme', 'light');
-        } else {
-            document.body.removeAttribute('data-theme');
-        }
+        document.body.setAttribute('data-theme', newTheme);
+        localStorage.setItem('theme', newTheme);
+
+        this.canvasManager?.setTheme(newTheme);
 
         const btn = document.getElementById('btn-theme-toggle');
         if (btn) {
@@ -766,7 +962,7 @@ class TectoLiteApp {
             if (icon) icon.textContent = newTheme === 'light' ? '☀️' : '🌙';
         }
 
-        // Force re-render of canvas to pick up new colors
+        // Force re-render
         this.canvasManager?.render();
     }
 
@@ -828,6 +1024,48 @@ class TectoLiteApp {
         const cleanup = () => document.body.removeChild(overlay);
         dialog.querySelector('#legend-close')?.addEventListener('click', cleanup);
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+    }
+
+    private syncUIToState(): void {
+        const w = this.state.world;
+        const g = w.globalOptions;
+
+        // View Option Checkboxes
+        (document.getElementById('check-grid') as HTMLInputElement).checked = w.showGrid;
+
+        // Grid Thickness Select
+        // Convert number to string for select value
+        const thickSelect = document.getElementById('grid-thickness-select') as HTMLSelectElement;
+        if (thickSelect) thickSelect.value = w.globalOptions.gridThickness.toString();
+
+        (document.getElementById('check-euler') as HTMLInputElement).checked = w.showEulerPoles;
+        (document.getElementById('check-features') as HTMLInputElement).checked = w.showFeatures;
+        (document.getElementById('check-future-features') as HTMLInputElement).checked = w.showFutureFeatures;
+
+        // Global Options
+        (document.getElementById('check-speed-limit') as HTMLInputElement).checked = g.speedLimitEnabled;
+        (document.getElementById('global-max-speed') as HTMLInputElement).value = g.maxDragSpeed.toString();
+        //(document.getElementById('global-max-time') as HTMLInputElement).value = // Max time isn't stored in globalOptions currently? Or is it hardcoded?
+        // Actually maxTime isn't in GlobalOptions in types.ts? Let's check types.ts later. 
+        // For now, assume it's not state-persisted or I need to add it.
+
+        if (g.planetRadius) {
+            (document.getElementById('global-planet-radius') as HTMLInputElement).value = g.planetRadius.toString();
+        }
+
+        (document.getElementById('check-boundary-vis') as HTMLInputElement).checked = !!g.enableBoundaryVisualization;
+
+        // Rate Presets
+        if (g.ratePresets && g.ratePresets.length === 4) {
+            (document.getElementById('global-rate-1') as HTMLInputElement).value = g.ratePresets[0].toString();
+            (document.getElementById('global-rate-2') as HTMLInputElement).value = g.ratePresets[1].toString();
+            (document.getElementById('global-rate-3') as HTMLInputElement).value = g.ratePresets[2].toString();
+            (document.getElementById('global-rate-4') as HTMLInputElement).value = g.ratePresets[3].toString();
+        }
+
+        // Projection Select
+        const projSelect = document.getElementById('projection-select') as HTMLSelectElement;
+        if (projSelect) projSelect.value = w.projection;
     }
 
     private updateUI(): void {
@@ -1280,6 +1518,57 @@ class TectoLiteApp {
              <input type="number" id="prop-birth-time" class="property-input" title="Start Time" value="${plate.birthTime}" step="5" style="flex:1">
              <span style="align-self: center;">-</span>
              <input type="number" id="prop-death-time" class="property-input" title="End Time" value="${plate.deathTime ?? ''}" placeholder="Active" step="5" style="flex:1">
+        </div>
+      </div>
+
+      <div class="property-group">
+        <label class="property-label">Stats</label>
+        <div style="background:var(--bg-elevated); padding:8px; border-radius:4px; font-size:11px; color:var(--text-secondary);">
+           ${(() => {
+                const R = this.state.world.globalOptions.planetRadius || 6371;
+                // Calculate Area
+                const geoJsonFeatures = {
+                    type: "FeatureCollection",
+                    features: plate.polygons.map(p => toGeoJSON(p))
+                };
+
+                // d3.geoArea returns steradians. Sphere is 4*PI steradians.
+                let areaSteradians = 0;
+                try {
+                    // @ts-ignore
+                    areaSteradians = geoArea(geoJsonFeatures);
+                } catch (e) { console.error(e); }
+
+                // Heuristic: If area > 2*PI, assume winding order inversion (unless plate is truly massive)
+                // For a tectonic editor where we draw small plates, > 50% usually means "rest of world".
+                if (areaSteradians > 2 * Math.PI) {
+                    areaSteradians = 4 * Math.PI - areaSteradians;
+                }
+
+                const areaSqKm = areaSteradians * R * R;
+                const percent = (areaSteradians / (4 * Math.PI)) * 100;
+
+                // Max velocity at 90 degrees from pole
+                // v = omega * R
+                const omega = pole.rate * (Math.PI / 180);
+                const vKmMa = omega * R; // km/Ma
+                const maxSpeedCmYr = vKmMa * 0.1; // cm/yr
+
+                return `
+                 <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+                    <span>Speed (Max):</span>
+                    <span style="color:var(--text-primary);">${maxSpeedCmYr.toFixed(1)} cm/yr</span>
+                 </div>
+                 <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+                    <span>Size:</span>
+                    <span style="color:var(--text-primary);">${(areaSqKm / 1000000).toFixed(2)} M km²</span>
+                 </div>
+                 <div style="display:flex; justify-content:space-between;">
+                    <span>Global Coverage:</span>
+                    <span style="color:var(--text-primary);">${percent.toFixed(2)}%</span>
+                 </div>
+               `;
+            })()}
         </div>
       </div>
 

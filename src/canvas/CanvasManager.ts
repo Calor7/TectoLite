@@ -124,6 +124,12 @@ export class CanvasManager {
         this.render();
     }
 
+
+
+    public setTheme(theme: string): void {
+        this.render();
+    }
+
     private setupEventListeners(): void {
         this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
         // Bind to window to catch drags outside canvas
