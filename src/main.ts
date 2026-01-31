@@ -28,6 +28,7 @@ import { exportToJSON, parseImportFile, showImportDialog, showHeightmapExportDia
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
 import { geoArea } from 'd3-geo';
+import { toDisplayTime, toInternalTime, parseTimeInput } from './utils/TimeTransformationUtils';
 
 class TectoLiteApp {
     private state: AppState;
@@ -361,10 +362,6 @@ class TectoLiteApp {
                          <input type="number" id="global-planet-radius" class="property-input" value="${this.state.world.globalOptions.planetRadius || 6371}" step="100" style="width: 80px;" disabled>
                     </div>
                 </div>
-                 <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
-                    <label class="property-label">Max Time</label>
-                    <input type="number" id="global-max-time" class="property-input" value="500" step="100" min="100" style="width: 60px;">
-                </div>
                 
                 <hr class="property-divider" style="margin: 8px 0;">
                 <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Rate Presets <span class="info-icon" data-tooltip="Examples: 0.5 (Slow), 1.0 (Normal), 2.0 (Fast), 5.0+ (India-Asia Collision Speed!)">(i)</span></div>
@@ -417,15 +414,39 @@ class TectoLiteApp {
           <div class="timeline">
             <input type="range" id="time-slider" class="time-slider" min="0" max="500" value="0">
             <div class="time-display">
-              <span id="current-time">0</span> Ma
+              <div class="time-controls-row">
+                <span id="current-time" class="current-time-display" style="cursor: pointer; font-weight: 600;" title="Click to set current time">0</span>
+                <span id="time-mode-label">Ma</span>
+                <span style="margin: 0 8px; color: var(--text-secondary);">|</span>
+                <label style="display: flex; align-items: center; gap: 4px; margin: 0; font-size: 11px; cursor: pointer; color: var(--text-secondary);">
+                  <input type="checkbox" id="check-time-mode" style="cursor: pointer;"> Ago
+                </label>
+                <span style="margin: 0 8px; color: var(--text-secondary);">|</span>
+                <label style="display: flex; align-items: center; gap: 4px; margin: 0;">
+                  <span style="font-size: 10px; color: var(--text-secondary);">Max:</span>
+                  <input type="number" id="timeline-max-time" class="property-input" value="500" step="100" min="100" style="width: 50px; padding: 2px 4px;">
+                </label>
+              </div>
             </div>
           </div>
           <button id="btn-reset-time" class="btn btn-secondary">Reset</button>
         </footer>
         <div id="global-tooltip"></div>
+        <!-- Time Input Modal -->
+        <div id="time-input-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
+          <div class="modal-content" style="background: var(--bg-secondary); border: 2px solid var(--border-default); border-radius: 4px; padding: 16px; min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+            <h3 style="margin-top: 0; color: var(--text-primary);">Set Current Time</h3>
+            <input type="number" id="time-input-field" class="property-input" style="width: 100%; padding: 8px; margin-bottom: 12px; font-size: 14px;" placeholder="Enter time value">
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button id="btn-time-input-cancel" class="btn btn-secondary" style="padding: 6px 12px;">Cancel</button>
+              <button id="btn-time-input-confirm" class="btn btn-primary" style="padding: 6px 12px;">Confirm</button>
+            </div>
+          </div>
+        </div>
       </div>
     `;
     }
+
 
     private updateRetroStatusBox(text: string | null): void {
         const statusBox = document.getElementById('retro-status-text');
@@ -907,7 +928,8 @@ class TectoLiteApp {
             }
         });
 
-        document.getElementById('global-max-time')?.addEventListener('change', (e) => {
+        // NEW: Timeline max-time control in footer
+        document.getElementById('timeline-max-time')?.addEventListener('change', (e) => {
             const val = parseInt((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
                 const slider = document.getElementById('time-slider') as HTMLInputElement;
@@ -1010,6 +1032,55 @@ class TectoLiteApp {
         document.getElementById('btn-reset-time')?.addEventListener('click', () => {
             this.simulation?.setTime(0);
             this.updateTimeDisplay();
+        });
+
+        // NEW: Time mode toggle (Positive/Negative/Ago)
+        document.getElementById('check-time-mode')?.addEventListener('change', (e) => {
+            const isChecked = (e.target as HTMLInputElement).checked;
+            this.state.world.timeMode = isChecked ? 'negative' : 'positive';
+            this.updateTimeDisplay();
+            this.canvasManager?.render();
+        });
+
+        // NEW: Clickable current time to set value
+        document.getElementById('current-time')?.addEventListener('click', () => {
+            const modal = document.getElementById('time-input-modal');
+            const input = document.getElementById('time-input-field') as HTMLInputElement;
+            if (modal && input) {
+                modal.style.display = 'flex';
+                
+                // Pre-populate with current display time
+                const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+                const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+                const displayTime = toDisplayTime(this.state.world.currentTime, {
+                    maxTime: maxTime,
+                    mode: this.state.world.timeMode
+                });
+                input.value = displayTime.toString();
+                input.focus();
+                input.select();
+            }
+        });
+
+        // Modal confirm button
+        document.getElementById('btn-time-input-confirm')?.addEventListener('click', () => {
+            this.confirmTimeInput();
+        });
+
+        // Modal cancel button
+        document.getElementById('btn-time-input-cancel')?.addEventListener('click', () => {
+            const modal = document.getElementById('time-input-modal');
+            if (modal) modal.style.display = 'none';
+        });
+
+        // Allow Enter key to confirm
+        document.getElementById('time-input-field')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                this.confirmTimeInput();
+            } else if (e.key === 'Escape') {
+                const modal = document.getElementById('time-input-modal');
+                if (modal) modal.style.display = 'none';
+            }
         });
 
         document.getElementById('btn-export')?.addEventListener('click', async () => {
@@ -2194,8 +2265,57 @@ class TectoLiteApp {
     private updateTimeDisplay(): void {
         const display = document.getElementById('current-time');
         const slider = document.getElementById('time-slider') as HTMLInputElement;
-        if (display) display.textContent = this.state.world.currentTime.toFixed(1);
+        const modeLabel = document.getElementById('time-mode-label');
+        
+        // Get current max time from timeline input
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+        
+        // Transform internal time to display time
+        const displayTime = toDisplayTime(this.state.world.currentTime, {
+            maxTime: maxTime,
+            mode: this.state.world.timeMode
+        });
+        
+        // Update display
+        if (display) display.textContent = Math.abs(displayTime).toFixed(1);
         if (slider) slider.value = String(this.state.world.currentTime);
+        
+        // Update label
+        const label = this.state.world.timeMode === 'negative' ? 'years ago' : 'Ma';
+        if (modeLabel) modeLabel.textContent = label;
+    }
+
+    private confirmTimeInput(): void {
+        const input = document.getElementById('time-input-field') as HTMLInputElement;
+        const modal = document.getElementById('time-input-modal');
+        
+        if (!input || !modal) return;
+        
+        const displayTimeStr = input.value.trim();
+        const parsedDisplayTime = parseTimeInput(displayTimeStr);
+        
+        if (parsedDisplayTime === null) {
+            alert('Please enter a valid time value');
+            return;
+        }
+        
+        // Get max time for transformation
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+        
+        // Transform display time to internal time
+        const internalTime = toInternalTime(parsedDisplayTime, {
+            maxTime: maxTime,
+            mode: this.state.world.timeMode
+        });
+        
+        // Set the time
+        this.simulation?.setTime(internalTime);
+        this.updateTimeDisplay();
+        
+        // Close modal
+        modal.style.display = 'none';
     }
 
     private addMotionKeyframe(plateId: string, newEulerPole: { position: Coordinate; rate: number; visible?: boolean }): void {

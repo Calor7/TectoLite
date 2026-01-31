@@ -11,6 +11,8 @@ export interface Point {
 
 export type ProjectionType = 'equirectangular' | 'mollweide' | 'mercator' | 'robinson' | 'orthographic';
 
+export type TimeMode = 'positive' | 'negative';
+
 export type InteractionMode = 'classic' | 'dynamic_pole' | 'drag_target';
 
 export interface Polygon {
@@ -116,6 +118,7 @@ export interface WorldState {
   selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
   selectedFeatureIds: string[];     // Support multiple selection
   projection: ProjectionType;
+  timeMode: TimeMode;               // NEW: Display mode for time (positive or negative/ago)
   showGrid: boolean;
   showEulerPoles: boolean;
   showFeatures: boolean;
@@ -206,6 +209,7 @@ export function createDefaultWorldState(): WorldState {
     selectedFeatureId: null,
     selectedFeatureIds: [],
     projection: 'orthographic', // Default to globe as requested
+    timeMode: 'positive',       // NEW: Default to positive time mode
     showGrid: true,
     showEulerPoles: false,
     showFeatures: true,

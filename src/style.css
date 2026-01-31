@@ -502,8 +502,35 @@ body {
   font-family: monospace;
   font-size: var(--font-size-md);
   color: var(--text-secondary);
-  min-width: 80px;
+  min-width: auto;
   text-align: right;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.time-controls-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
+}
+
+.current-time-display {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  transition: background-color 0.2s;
+  font-family: monospace;
+  font-weight: 600;
+  color: var(--accent-primary);
+  min-width: 40px;
+  text-align: center;
+}
+
+.current-time-display:hover {
+  background: var(--bg-hover);
+  cursor: pointer;
 }
 
 .speed-select {
@@ -999,4 +1026,33 @@ body {
 
 .oldschool-mode .retro-status-box {
   display: flex !important;
+}
+
+/* Time Input Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 10000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.modal-content {
+  background: var(--bg-secondary);
+  border: 2px solid var(--border-default);
+  border-radius: 4px;
+  padding: 16px;
+  min-width: 300px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.modal-content h3 {
+  margin-top: 0;
+  color: var(--text-primary);
+  margin-bottom: 12px;
 }

@@ -147,6 +147,7 @@ function drawFeature(
 export interface HeightmapExportOptions {
     width: number;
     height: number;
+    projection: ProjectionType;
 }
 
 export function showHeightmapExportDialog(defaultWidth: number = 4096, defaultHeight: number = 2048): Promise<HeightmapExportOptions | null> {
@@ -161,12 +162,24 @@ export function showHeightmapExportDialog(defaultWidth: number = 4096, defaultHe
         const dialog = document.createElement('div');
         dialog.style.cssText = `
             background: #1e1e2e; border-radius: 12px; padding: 24px;
-            min-width: 300px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            min-width: 350px; color: #cdd6f4; font-family: system-ui, sans-serif;
             box-shadow: 0 8px 32px rgba(0,0,0,0.4);
         `;
 
         dialog.innerHTML = `
             <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🗺️ Export Heightmap</h3>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Projection:</label>
+                <select id="hm-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
+                    <option value="equirectangular">Equirectangular</option>
+                    <option value="mercator">Mercator</option>
+                    <option value="mollweide">Mollweide</option>
+                    <option value="robinson">Robinson</option>
+                    <option value="orthographic">Orthographic (Globe)</option>
+                    <option value="qgis-note" disabled style="font-style: italic; color: #a6adc8;">QGIS: Export PNG first, then import</option>
+                </select>
+            </div>
             
             <div style="margin-bottom: 16px;">
                 <label style="display: block; margin-bottom: 8px; font-weight: 500;">Resolution:</label>
@@ -202,8 +215,9 @@ export function showHeightmapExportDialog(defaultWidth: number = 4096, defaultHe
         dialog.querySelector('#hm-confirm')?.addEventListener('click', () => {
             const w = parseInt((dialog.querySelector('#hm-width') as HTMLInputElement).value);
             const h = parseInt((dialog.querySelector('#hm-height') as HTMLInputElement).value);
+            const projection = (dialog.querySelector('#hm-projection') as HTMLSelectElement).value as ProjectionType;
             cleanup();
-            if (w > 0 && h > 0) resolve({ width: w, height: h });
+            if (w > 0 && h > 0) resolve({ width: w, height: h, projection });
             else resolve(null);
         });
     });
