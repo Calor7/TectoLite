@@ -76,7 +76,7 @@ export class TimelineSystem {
             label: 'Plate Formed',
             details: `Born at ${plate.birthTime} Ma`,
             isEditable: true, // Advanced usage: Shift birth time
-            isDeletable: false, // Cannot delete existence (unless deleting whole plate via delete tool)
+            isDeletable: true, // Allow deleting plate via its birth event
             originalRef: plate
         });
 
@@ -383,6 +383,12 @@ export class TimelineSystem {
     private deleteEvent(event: TimelineEventItem) {
         if (!confirm('Delete this event?')) return;
         this.pushHistory();
+
+        if (event.type === 'birth') {
+            const p = event.originalRef as TectonicPlate;
+            this.app.deletePlates([p.id]);
+            return; // Early return as the plate (and this timeline) is gone
+        }
 
         if (event.type === 'motion') {
             const kf = event.originalRef as MotionKeyframe;

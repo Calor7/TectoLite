@@ -61,7 +61,7 @@ export interface PlateMotion {
 export interface PlateEvent {
   id: string;
   time: number;
-  type: 'motion_change' | 'split';
+  type: 'motion_change' | 'split' | 'fusion' | 'birth';
   data: unknown;
 }
 
@@ -86,6 +86,7 @@ export interface TectonicPlate {
   birthTime: number; // Time when plate was created/split
   deathTime: number | null; // Time when plate was destroyed/split (null if active)
   parentPlateId?: string; // ID of parent plate if this plate was created from a split
+  parentPlateIds?: string[]; // IDs of parent plates (used for fusion and splits)
 
   // Geometry at birthTime (Basis for initial keyframe)
   initialPolygons: Polygon[];

@@ -291,7 +291,7 @@ class TectoLiteApp {
 
                  <div id="fuse-controls" style="display: none;">
                       <label class="view-option">
-                        <input type="checkbox" id="check-add-weakness" checked> Add Weakness Features
+                        <input type="checkbox" id="check-add-weakness"> Add Weakness Features
                       </label>
                       <label class="view-option">
                         <input type="checkbox" id="check-add-mountains"> Auto Create Mountains
@@ -1369,7 +1369,7 @@ class TectoLiteApp {
             // Second click - fuse plates
             this.pushState(); // Save state for undo
             // Read options
-            const addWeakness = (document.getElementById('check-add-weakness') as HTMLInputElement)?.checked ?? true;
+            const addWeakness = (document.getElementById('check-add-weakness') as HTMLInputElement)?.checked ?? false;
             const addMountains = (document.getElementById('check-add-mountains') as HTMLInputElement)?.checked ?? false;
 
             const result = fusePlates(this.state, this.fusionFirstPlateId, plateId, {
@@ -1520,17 +1520,21 @@ class TectoLiteApp {
             if (selectedFeatureId) idsToDelete.add(selectedFeatureId);
             if (selectedFeatureIds) selectedFeatureIds.forEach(id => idsToDelete.add(id));
 
-            // Remove these features from all plates
+            // Remove these features from all plates and their history
             this.state.world.plates = this.state.world.plates.map(p => ({
                 ...p,
-                features: p.features.filter(f => !idsToDelete.has(f.id))
+                features: p.features.filter(f => !idsToDelete.has(f.id)),
+                initialFeatures: p.initialFeatures ? p.initialFeatures.filter(f => !idsToDelete.has(f.id)) : p.initialFeatures,
+                motionKeyframes: p.motionKeyframes ? p.motionKeyframes.map(kf => ({
+                    ...kf,
+                    snapshotFeatures: kf.snapshotFeatures.filter(f => !idsToDelete.has(f.id))
+                })) : p.motionKeyframes
             }));
 
             this.state.world.selectedFeatureId = null;
             this.state.world.selectedFeatureIds = [];
         } else if (selectedPlateId) {
-            this.state.world.plates = this.state.world.plates.filter(p => p.id !== selectedPlateId);
-            this.state.world.selectedPlateId = null;
+            this.deletePlates([selectedPlateId]);
         }
         this.updateUI();
         this.simulation?.setTime(this.state.world.currentTime);
@@ -2113,11 +2117,54 @@ class TectoLiteApp {
     // Helper for TimelineSystem to delete multiple plates
     public deletePlates(ids: string[]): void {
         const idSet = new Set(ids);
+
+        // Find parents potentially affected by child deletion
+        const parentIds = new Set<string>();
+        const deletedPlates = this.state.world.plates.filter(p => idSet.has(p.id));
+        deletedPlates.forEach(p => {
+            if (p.parentPlateId) parentIds.add(p.parentPlateId);
+            if (p.parentPlateIds) p.parentPlateIds.forEach(id => parentIds.add(id));
+        });
+
+        // 1. Initial filter
+        let newPlates = this.state.world.plates.filter(p => !idSet.has(p.id));
+
+        // 2. Cleanup parents
+        if (parentIds.size > 0) {
+            newPlates = newPlates.map(p => {
+                if (parentIds.has(p.id)) {
+                    const plateBirthTimes = deletedPlates
+                        .filter(dp => dp.parentPlateId === p.id || (dp.parentPlateIds && dp.parentPlateIds.includes(p.id)))
+                        .map(dp => dp.birthTime);
+
+                    if (plateBirthTimes.length > 0) {
+                        const updatedEvents = (p.events || []).filter(evt => {
+                            if (evt.type === 'split' || evt.type === 'fusion') {
+                                return !plateBirthTimes.some(bt => Math.abs(evt.time - bt) < 0.1);
+                            }
+                            return true;
+                        });
+
+                        // If all splits/fusions at deathTime are gone, resurrect parent
+                        let newDeathTime = p.deathTime;
+                        if (p.deathTime !== null) {
+                            const stillHasEvent = updatedEvents.some(e => (e.type === 'split' || e.type === 'fusion') && Math.abs(e.time - p.deathTime!) < 0.1);
+                            if (!stillHasEvent) newDeathTime = null;
+                        }
+
+                        return { ...p, events: updatedEvents, deathTime: newDeathTime };
+                    }
+                }
+                return p;
+            });
+        }
+
         this.state = {
             ...this.state,
             world: {
                 ...this.state.world,
-                plates: this.state.world.plates.filter(p => !idSet.has(p.id))
+                plates: newPlates,
+                selectedPlateId: idSet.has(this.state.world.selectedPlateId || '') ? null : this.state.world.selectedPlateId
             }
         };
         this.updateUI();

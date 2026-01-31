@@ -16,7 +16,7 @@ interface FuseOptions {
 }
 
 const DEFAULT_OPTIONS: FuseOptions = {
-    addWeaknessFeatures: true,
+    addWeaknessFeatures: false,
     weaknessInterval: 1 // degrees (1 feature per degree)
 };
 
@@ -317,6 +317,7 @@ export function fusePlates(
         events: [],
         birthTime: currentTime,
         deathTime: null,
+        parentPlateIds: [plate1Id, plate2Id],
         initialPolygons: mergedPolygons,
         initialFeatures: combinedFeatures,
         visible: true,
@@ -326,7 +327,19 @@ export function fusePlates(
     // Mark original plates as dead at current time
     const updatedPlates = state.world.plates.map(p => {
         if (p.id === plate1Id || p.id === plate2Id) {
-            return { ...p, deathTime: currentTime };
+            return {
+                ...p,
+                deathTime: currentTime,
+                events: [
+                    ...(p.events || []),
+                    {
+                        id: generateId(),
+                        time: currentTime,
+                        type: 'fusion',
+                        description: `Plate fused with ${p.id === plate1Id ? plate2.name : plate1.name}`
+                    } as any
+                ]
+            };
         }
         return p;
     });

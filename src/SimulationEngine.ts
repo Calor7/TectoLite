@@ -179,30 +179,37 @@ export class SimulationEngine {
     }
 
     private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {
-        // First, check if we need to inherit features from parent plate
+        // First, check if we need to inherit features from parent plate(s)
         let inheritedFeatures: Feature[] = [];
-        if (plate.parentPlateId) {
-            const parentPlate = allPlates.find(p => p.id === plate.parentPlateId);
-            if (parentPlate) {
-                // Find features on parent that were added between parent's birth and this plate's birth (split time)
-                // These features should be inherited by the appropriate child
-                const candidateFeatures = parentPlate.features.filter(f =>
-                    f.generatedAt !== undefined &&
-                    f.generatedAt >= parentPlate.birthTime &&
-                    f.generatedAt < plate.birthTime // Feature was added before the split
-                );
+        const parentIds = plate.parentPlateIds || (plate.parentPlateId ? [plate.parentPlateId] : []);
 
-                // Check which features should belong to this child based on position containment
-                // Use the initial polygons of this child plate for the containment test
-                inheritedFeatures = candidateFeatures.filter(f => {
-                    return plate.initialPolygons.some(poly =>
-                        this.isPointInPolygon(f.position, poly.points)
-                    );
-                }).filter(f => {
-                    // Don't add if already in plate's features
-                    return !plate.features.some(existing => existing.id === f.id);
-                });
-            }
+        for (const pid of parentIds) {
+            const parentPlate = allPlates.find(p => p.id === pid);
+            if (!parentPlate) continue;
+
+            // Find features on parent that were added between parent's birth and this plate's birth (split/fusion time)
+            // These features should be inherited by the appropriate child
+            const candidateFeatures = parentPlate.features.filter(f =>
+                f.generatedAt !== undefined &&
+                f.generatedAt >= parentPlate.birthTime &&
+                f.generatedAt <= plate.birthTime // Feature was added before or at the moment of the transition
+            );
+
+            // Check which features should belong to this child based on position containment
+            // Use the initial polygons of this child plate for the containment test
+            const featuresToInherit = candidateFeatures.filter(f => {
+                // For fusion, the child covers both parents, so it will likely pick up all features.
+                // For split, it correctly picks only those within its half.
+                return plate.initialPolygons.some(poly =>
+                    this.isPointInPolygon(f.position, poly.points)
+                );
+            }).filter(f => {
+                // Don't add if already in plate's features (avoid duplicates if recalculating)
+                return !plate.features.some(existing => existing.id === f.id) &&
+                    !inheritedFeatures.some(existing => existing.id === f.id);
+            });
+
+            inheritedFeatures.push(...featuresToInherit);
         }
 
         // Find the active keyframe for this time (latest keyframe with time <= query time)
