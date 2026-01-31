@@ -877,7 +877,9 @@ class TectoLiteApp {
                     // Load image to check dimensions and potentially resize
                     const img = new Image();
                     img.onload = () => {
-                        const maxDimension = 2048; // Max width or height
+                        // Max dimension to balance quality with performance and prevent canvas memory issues
+                        // 2048px is sufficient for most displays while keeping memory usage reasonable
+                        const maxDimension = 2048;
                         let finalImageData = imageData;
                         
                         // Scale down if image is too large
@@ -903,6 +905,7 @@ class TectoLiteApp {
                         if (mode === 'projection') {
                             const aspectRatio = img.width / img.height;
                             const expectedRatio = 2.0; // Equirectangular is 2:1
+                            // Allow 10% tolerance to account for minor variations in map data
                             const tolerance = 0.1;
                             
                             if (Math.abs(aspectRatio - expectedRatio) > tolerance) {

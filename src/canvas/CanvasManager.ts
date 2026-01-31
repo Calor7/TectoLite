@@ -1456,7 +1456,8 @@ export class CanvasManager {
                 const offsetX = overlay.offsetX || 0;
                 const offsetY = overlay.offsetY || 0;
 
-                // Calculate scaled dimensions
+                // Calculate scaled dimensions (stretch to fit viewport, no aspect ratio preservation)
+                // This differs from fixed mode which maintains aspect ratio
                 const scaledWidth = width * scale;
                 const scaledHeight = height * scale;
 
