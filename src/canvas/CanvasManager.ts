@@ -812,6 +812,9 @@ export class CanvasManager {
                     const showFuture = state.world.showFutureFeatures;
 
                     for (const feature of plate.features) {
+                        // Skip seafloor features - ocean visualization handled by ocean age map
+                        if (feature.type === 'seafloor') continue;
+
                         // Check if feature is within timeline
                         const isBorn = feature.generatedAt === undefined || feature.generatedAt <= currentTime;
                         const isDead = feature.deathTime !== undefined && feature.deathTime <= currentTime;
