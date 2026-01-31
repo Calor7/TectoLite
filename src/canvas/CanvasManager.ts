@@ -752,8 +752,16 @@ export class CanvasManager {
                 return zA - zB;
             });
 
+<<<<<<< HEAD
             for (const plate of sortedPlates) {
                 if (!plate.visible) continue;
+=======
+        // Collect poly_region features to render after all plates (image overlays should be on top)
+        const polyRegionFeatures: { feature: Feature; isSelected: boolean; isGhosted: boolean }[] = [];
+
+        for (const plate of sortedPlates) {
+            if (!plate.visible) continue;
+>>>>>>> origin/copilot/remove-ocean-crust-creation
 
                 // Lifecycle check: Only render valid plates for current time
                 if (state.world.currentTime < plate.birthTime) continue;
@@ -801,9 +809,31 @@ export class CanvasManager {
                     this.ctx.fillStyle = plate.color;
                     this.ctx.fill();
 
+<<<<<<< HEAD
                     this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
                     this.ctx.lineWidth = isSelected ? 2 : 1;
                     this.ctx.stroke();
+=======
+                for (const feature of plate.features) {
+                    // Check if feature is within timeline
+                    const isBorn = feature.generatedAt === undefined || feature.generatedAt <= currentTime;
+                    const isDead = feature.deathTime !== undefined && feature.deathTime <= currentTime;
+                    const isInTimeline = isBorn && !isDead;
+
+                    // Skip if not in timeline and not showing future/past features
+                    if (!isInTimeline && !showFuture) continue;
+
+                    const isFeatureSelected = feature.id === state.world.selectedFeatureId ||
+                        (state.world.selectedFeatureIds && state.world.selectedFeatureIds.includes(feature.id));
+
+                    // Collect poly_region features to render later (on top of all plates)
+                    if (feature.type === 'poly_region') {
+                        polyRegionFeatures.push({ feature, isSelected: isFeatureSelected, isGhosted: !isInTimeline });
+                    } else {
+                        // Draw other features immediately with their plate
+                        this.drawFeature(feature, isFeatureSelected, !isInTimeline);
+                    }
+>>>>>>> origin/copilot/remove-ocean-crust-creation
                 }
 
                 // Draw Features (if visible)
@@ -860,6 +890,11 @@ export class CanvasManager {
         // Let's draw if Link tool is active OR if a linked plate is selected
         if (state.activeTool === 'link' || (state.world.selectedPlateId && state.world.plates.find(p => p.id === state.world.selectedPlateId)?.linkedPlateIds?.length)) {
             this.drawLinks(state, path);
+        }
+
+        // Draw poly_region features (image overlays) ABOVE all plates
+        for (const { feature, isSelected, isGhosted } of polyRegionFeatures) {
+            this.drawFeature(feature, isSelected, isGhosted);
         }
 
         // Clear gizmo if no plate selected
