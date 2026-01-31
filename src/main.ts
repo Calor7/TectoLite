@@ -161,6 +161,27 @@ class TectoLiteApp {
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-show-age-map"> Ocean Age Map <span class="info-icon" data-tooltip="Show rasterized seafloor age layer">(i)</span>
                         </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-show-overlay"> Reference Overlay <span class="info-icon" data-tooltip="Show uploaded reference map for tracing">(i)</span>
+                        </label>
+                        <div style="padding: 2px 8px 4px 28px; display: flex; flex-direction: column; gap: 4px;">
+                            <button id="btn-upload-overlay" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">
+                                📤 Upload Map
+                            </button>
+                            <div style="display: flex; align-items: center; gap: 4px;">
+                                <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Opacity:</label>
+                                <input type="range" id="overlay-opacity-slider" min="0" max="100" value="50" style="flex: 1; height: 4px;">
+                                <span id="overlay-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 30px;">50%</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 4px;">
+                                <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Scale:</label>
+                                <input type="range" id="overlay-scale-slider" min="50" max="200" value="100" style="flex: 1; height: 4px;">
+                                <span id="overlay-scale-value" style="font-size: 10px; color: var(--text-secondary); min-width: 30px;">100%</span>
+                            </div>
+                            <button id="btn-clear-overlay" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">
+                                🗑️ Clear
+                            </button>
+                        </div>
                     </div>
 
                     <!-- 4. EFFECTS SETTING -->
@@ -229,6 +250,7 @@ class TectoLiteApp {
               <span class="icon">❓</span> Legend
             </button>
             <input type="file" id="file-import" accept=".json" style="display: none;">
+            <input type="file" id="file-overlay-upload" accept="image/*" style="display: none;">
           </div>
         </header>
         
@@ -814,6 +836,70 @@ class TectoLiteApp {
 
         document.getElementById('check-show-age-map')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.showAgeMap = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        // Image Overlay Controls
+        document.getElementById('check-show-overlay')?.addEventListener('change', (e) => {
+            if (this.state.world.imageOverlay) {
+                this.state.world.imageOverlay.visible = (e.target as HTMLInputElement).checked;
+                this.canvasManager?.render();
+            }
+        });
+
+        document.getElementById('btn-upload-overlay')?.addEventListener('click', () => {
+            document.getElementById('file-overlay-upload')?.click();
+        });
+
+        document.getElementById('file-overlay-upload')?.addEventListener('change', (e) => {
+            const input = e.target as HTMLInputElement;
+            const file = input.files?.[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const imageData = event.target?.result as string;
+                    this.state.world.imageOverlay = {
+                        imageData,
+                        visible: true,
+                        opacity: 0.5,
+                        scale: 1.0,
+                        offsetX: 0,
+                        offsetY: 0,
+                        rotation: 0
+                    };
+                    const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
+                    if (checkbox) checkbox.checked = true;
+                    this.canvasManager?.render();
+                };
+                reader.readAsDataURL(file);
+            }
+            input.value = ''; // Reset input to allow same file re-upload
+        });
+
+        document.getElementById('overlay-opacity-slider')?.addEventListener('input', (e) => {
+            const value = parseInt((e.target as HTMLInputElement).value);
+            const valueLabel = document.getElementById('overlay-opacity-value');
+            if (valueLabel) valueLabel.textContent = `${value}%`;
+            if (this.state.world.imageOverlay) {
+                this.state.world.imageOverlay.opacity = value / 100;
+                this.canvasManager?.render();
+            }
+        });
+
+        document.getElementById('overlay-scale-slider')?.addEventListener('input', (e) => {
+            const value = parseInt((e.target as HTMLInputElement).value);
+            const valueLabel = document.getElementById('overlay-scale-value');
+            if (valueLabel) valueLabel.textContent = `${value}%`;
+            if (this.state.world.imageOverlay) {
+                this.state.world.imageOverlay.scale = value / 100;
+                this.canvasManager?.render();
+            }
+        });
+
+        document.getElementById('btn-clear-overlay')?.addEventListener('click', () => {
+            this.state.world.imageOverlay = undefined;
+            const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
+            if (checkbox) checkbox.checked = false;
             this.canvasManager?.render();
         });
 

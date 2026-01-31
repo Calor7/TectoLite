@@ -738,6 +738,11 @@ export class CanvasManager {
             this.drawOceanAgeMap(state);
         }
 
+        // Draw Image Overlay (for tracing reference maps)
+        if (state.world.imageOverlay) {
+            this.drawImageOverlay(state);
+        }
+
         // Draw Plates
         if (state.world.showPlates !== false) {
             // Sort plates by zIndex (default to 0 if undefined)
@@ -1374,5 +1379,116 @@ export class CanvasManager {
                 this.ctx.fill();
             }
         }
+    }
+
+    private cachedOverlayImage: HTMLImageElement | null = null;
+    private cachedOverlayImageData: string | null = null;
+    private tempCanvas: HTMLCanvasElement | null = null;
+    private tempCanvasImageData: ImageData | null = null;
+
+    private drawImageOverlay(state: AppState): void {
+        const overlay = state.world.imageOverlay;
+        if (!overlay || !overlay.visible || !overlay.imageData) return;
+
+        // Load and cache the image
+        if (this.cachedOverlayImageData !== overlay.imageData) {
+            this.cachedOverlayImage = new Image();
+            this.cachedOverlayImage.src = overlay.imageData;
+            this.cachedOverlayImageData = overlay.imageData;
+            // Clear cached canvas data when image changes
+            this.tempCanvas = null;
+            this.tempCanvasImageData = null;
+        }
+
+        const img = this.cachedOverlayImage;
+        if (!img || !img.complete) return; // Image not loaded yet
+
+        this.ctx.save();
+        this.ctx.globalAlpha = overlay.opacity;
+
+        // For equirectangular projection, we can draw directly
+        if (state.world.projection === 'equirectangular') {
+            // Get viewport dimensions
+            const width = this.canvas.width / (window.devicePixelRatio || 1);
+            const height = this.canvas.height / (window.devicePixelRatio || 1);
+
+            // Apply transformations
+            const scale = overlay.scale || 1.0;
+            const offsetX = overlay.offsetX || 0;
+            const offsetY = overlay.offsetY || 0;
+
+            // Calculate scaled dimensions
+            const scaledWidth = width * scale;
+            const scaledHeight = height * scale;
+
+            // Calculate position with offset (in pixels)
+            const x = (width - scaledWidth) / 2 + offsetX;
+            const y = (height - scaledHeight) / 2 + offsetY;
+
+            // Draw the image
+            this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+        } else {
+            // For other projections, sample the equirectangular image
+            // Cache the temp canvas and image data
+            if (!this.tempCanvas || !this.tempCanvasImageData) {
+                this.tempCanvas = document.createElement('canvas');
+                this.tempCanvas.width = img.width;
+                this.tempCanvas.height = img.height;
+                const tempCtx = this.tempCanvas.getContext('2d');
+                if (tempCtx) {
+                    tempCtx.drawImage(img, 0, 0);
+                    // Get entire image data once for efficiency
+                    this.tempCanvasImageData = tempCtx.getImageData(0, 0, img.width, img.height);
+                }
+            }
+
+            if (!this.tempCanvasImageData) {
+                this.ctx.restore();
+                return;
+            }
+
+            const sampleSize = 5; // degrees
+            const pathGen = this.projectionManager.getPathGenerator();
+            const imgData = this.tempCanvasImageData;
+            const imgWidth = img.width;
+
+            for (let lat = -90; lat < 90; lat += sampleSize) {
+                for (let lon = -180; lon < 180; lon += sampleSize) {
+                    // Sample the image at this lat/lon
+                    const u = (lon + 180) / 360;
+                    const v = (90 - lat) / 180;
+
+                    // Get color from image - clamp to prevent out of bounds
+                    const px = Math.min(Math.floor(u * img.width), img.width - 1);
+                    const py = Math.min(Math.floor(v * img.height), img.height - 1);
+
+                    // Access pixel data directly from cached ImageData
+                    const idx = (py * imgWidth + px) * 4;
+                    const r = imgData.data[idx];
+                    const g = imgData.data[idx + 1];
+                    const b = imgData.data[idx + 2];
+                    const a = imgData.data[idx + 3] / 255;
+
+                    const color = `rgba(${r}, ${g}, ${b}, ${a})`;
+
+                    // Draw a small polygon at this location
+                    this.ctx.fillStyle = color;
+                    this.ctx.beginPath();
+                    pathGen({
+                        type: 'Polygon',
+                        coordinates: [[
+                            [lon, lat],
+                            [lon + sampleSize, lat],
+                            [lon + sampleSize, lat + sampleSize],
+                            [lon, lat + sampleSize],
+                            [lon, lat]
+                        ]]
+                    } as any);
+                    this.ctx.fill();
+                }
+            }
+        }
+
+        this.ctx.restore();
     }
 }
