@@ -14,8 +14,7 @@ import {
     getNextPlateColor,
     Coordinate,
     ProjectionType,
-    MotionKeyframe,
-    OverlayMode
+    MotionKeyframe
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
