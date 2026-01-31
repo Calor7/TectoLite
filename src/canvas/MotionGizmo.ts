@@ -61,9 +61,8 @@ export class MotionGizmo {
         if (!this.state) return;
 
         const poleProj = projectionManager.project(this.state.polePosition);
-        const centerProj = projectionManager.project(plateCenter);
 
-        if (!poleProj || !centerProj) return;
+        if (!poleProj) return;
 
         ctx.save();
 
@@ -71,7 +70,7 @@ export class MotionGizmo {
         this.drawPoleHandle(ctx, poleProj[0], poleProj[1]);
 
         // Draw rate arrow from plate center - now on globe surface
-        this.drawRateArrowOnGlobe(ctx, projectionManager, plateCenter, centerProj, planetRadiusKm);
+        this.drawRateArrowOnGlobe(ctx, projectionManager, plateCenter, planetRadiusKm);
 
         ctx.restore();
     }
@@ -108,7 +107,6 @@ export class MotionGizmo {
         ctx: CanvasRenderingContext2D,
         projectionManager: ProjectionManager,
         plateCenter: Coordinate,
-        centerProj: [number, number],
         planetRadiusKm: number
     ): void {
         if (!this.state) return;
@@ -132,6 +130,9 @@ export class MotionGizmo {
             // Fallback to screen-space arrow if projection fails
             return;
         }
+
+        const centerProj = projectionManager.project(plateCenter);
+        if (!centerProj) return;
 
         // Draw the arc on globe
         ctx.strokeStyle = isDragging ? '#3498db' : '#2980b9';
@@ -177,9 +178,8 @@ export class MotionGizmo {
         ctx.stroke();
 
         // Rate labels around the arrow midpoint
-        const midIdx = Math.floor(projectedPoints.length / 2);
-        const midX = projectedPoints[midIdx][0];
-        const midY = projectedPoints[midIdx][1];
+        const midX = (centerProj[0] + endX) / 2;
+        const midY = (centerProj[1] + endY) / 2;
 
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
