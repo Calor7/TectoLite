@@ -2469,10 +2469,8 @@ class TectoLiteApp {
         
         // Refresh property panel to show updated Euler pole position
         this.updatePropertiesPanel();
-        // Update motion gizmo to show new pole position
-        if (this.canvasManager && plate) {
-            this.canvasManager.setSelectedPlate(plate.id);
-        }
+        // Force a canvas render to update Euler pole visualization
+        this.canvasManager?.render();
     }
 
     /** Push current state to history (call before meaningful changes) */
