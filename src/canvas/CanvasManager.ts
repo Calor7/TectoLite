@@ -70,7 +70,8 @@ export class CanvasManager {
         private onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void,
         private onPolyFeatureComplete?: (points: Coordinate[], fillColor: string) => void,
         private onMotionPreviewChange?: (active: boolean) => void,
-        private onDrawUpdate?: (count: number) => void
+        private onDrawUpdate?: (count: number) => void,
+        private onGizmoUpdate?: (rate: number) => void
     ) {
         this.canvas = canvas;
         const ctx = canvas.getContext('2d');
@@ -477,11 +478,14 @@ export class CanvasManager {
                 const state = this.getState();
                 const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
                 if (selectedPlate) {
-                    this.motionGizmo.updateDrag(
+                    const result = this.motionGizmo.updateDrag(
                         mousePos.x, mousePos.y,
                         this.projectionManager,
                         selectedPlate.center
                     );
+                    if (result && result.rate !== undefined && this.onGizmoUpdate) {
+                        this.onGizmoUpdate(result.rate);
+                    }
                 }
             } else if (this.interactionMode === 'drag_target') {
                 this.updateDragTarget(e);

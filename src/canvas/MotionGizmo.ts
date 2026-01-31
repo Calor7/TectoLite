@@ -221,8 +221,10 @@ export class MotionGizmo {
         const ay = Math.cos(poleLat) * Math.sin(poleLon);
         const az = Math.sin(poleLat);
 
-        // Arc length proportional to rate (show ~5 degrees of movement per degree/Ma)
-        const totalAngle = rate * 5 * Math.PI / 180;
+        // Arc length proportional to rate (reduced strength)
+        // Scale 33 means visual arc angle = rate * 33
+        // e.g. 1 deg/Ma will show as a 33 degree arc on the globe
+        const totalAngle = rate * 33 * Math.PI / 180;
 
         for (let i = 0; i <= numPoints; i++) {
             const angle = (i / numPoints) * totalAngle;
@@ -332,10 +334,11 @@ export class MotionGizmo {
                         // Set new state
                         const newPole = vectorToLatLon(poleVec);
                         // Rate is always positive magnitude, direction determined by pole
-                        const newRate = angleDeg / 5;
+                        // Division by 33 to match visual scale (33 deg arc = 1 deg/Ma)
+                        const newRate = angleDeg / 33;
 
                         this.state.polePosition = newPole;
-                        this.state.rate = Math.round(newRate * 10) / 10;
+                        this.state.rate = Math.round(newRate * 20) / 20;
 
                         return { polePosition: newPole, rate: this.state.rate };
                     }
@@ -359,9 +362,10 @@ export class MotionGizmo {
                         const crossN = cross(N1, N2);
                         const sign = dot(crossN, P) >= 0 ? 1 : -1;
 
-                        const newRate = sign * angleDeg / 5;
+                        // Division by 33 to match visual scale
+                        const newRate = sign * angleDeg / 33;
 
-                        this.state.rate = Math.round(newRate * 10) / 10;
+                        this.state.rate = Math.round(newRate * 20) / 20;
                         return { rate: this.state.rate };
                     }
                 }

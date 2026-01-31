@@ -72,7 +72,13 @@ class TectoLiteApp {
                 const el = document.getElementById('motion-controls');
                 if (el) el.style.display = active ? 'block' : 'none';
             },
-            (count) => this.handleDrawUpdate(count)
+            (count) => this.handleDrawUpdate(count),
+            (rate) => {
+                 const speedCmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
+                 const speedDegInput = document.getElementById('speed-input-deg') as HTMLInputElement;
+                 if (speedDegInput) speedDegInput.value = rate.toFixed(2);
+                 if (speedCmInput) speedCmInput.value = this.convertDegMaToCmYr(rate).toFixed(2);
+            }
         );
 
         // Initialize simulation
@@ -427,6 +433,19 @@ class TectoLiteApp {
             <div class="tool-group">
                 <h3 class="tool-group-title">Simulation</h3>
                 <hr class="property-divider" style="margin: 8px 0;">
+                <div style="margin-bottom:6px;">
+                    <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Speed</div>
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <input type="number" id="speed-input-cm" class="property-input" step="0.05" style="width:70px;">
+                            <span style="font-size:10px; color:var(--text-secondary);">cm/yr</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <input type="number" id="speed-input-deg" class="property-input" step="0.05" style="width:70px;">
+                            <span style="font-size:10px; color:var(--text-secondary);">deg/Ma</span>
+                        </div>
+                    </div>
+                </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                   <div style="font-size:11px; font-weight:600; color:var(--text-secondary);">
                     Speed Presets
@@ -914,6 +933,27 @@ class TectoLiteApp {
             if (rwContainer && customContainer) {
                 rwContainer.style.display = isCustom ? 'none' : 'flex';
                 customContainer.style.display = isCustom ? 'flex' : 'none';
+            }
+        });
+
+        const speedCmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
+        const speedDegInput = document.getElementById('speed-input-deg') as HTMLInputElement;
+
+        speedCmInput?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val)) {
+                const deg = this.convertCmYrToDegMa(val);
+                if (speedDegInput) speedDegInput.value = deg.toFixed(2);
+                this.applySpeedToSelected(deg);
+            }
+        });
+
+        speedDegInput?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val)) {
+                const cm = this.convertDegMaToCmYr(val);
+                if (speedCmInput) speedCmInput.value = cm.toFixed(2);
+                this.applySpeedToSelected(val);
             }
         });
 
@@ -1580,6 +1620,7 @@ class TectoLiteApp {
         if (plate) {
             plate.motion.eulerPole.rate = rate;
             this.updatePropertiesPanel();
+            this.updateSpeedInputsFromSelected();
             this.canvasManager?.render();
             this.pushState();
         } else {
@@ -1592,6 +1633,38 @@ class TectoLiteApp {
         const kmPerMa = cmPerYr * 10; // 1 km/Ma = 0.1 cm/yr
         const radPerMa = radiusKm > 0 ? (kmPerMa / radiusKm) : 0;
         return radPerMa * (180 / Math.PI);
+    }
+
+    private convertDegMaToCmYr(degPerMa: number): number {
+        const radiusKm = this.state.world.globalOptions.planetRadius || 6371;
+        const radPerMa = degPerMa * Math.PI / 180;
+        const kmPerMa = radPerMa * radiusKm;
+        return kmPerMa / 10; // cm/yr
+    }
+
+    private updateSpeedInputsFromSelected(): void {
+        const cmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
+        const degInput = document.getElementById('speed-input-deg') as HTMLInputElement;
+        if (!cmInput || !degInput) return;
+
+        const plate = this.state.world.selectedPlateId 
+            ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
+            : null;
+
+        if (!plate) {
+            cmInput.value = '';
+            degInput.value = '';
+            cmInput.disabled = true;
+            degInput.disabled = true;
+            return;
+        }
+
+        cmInput.disabled = false;
+        degInput.disabled = false;
+        const deg = plate.motion.eulerPole.rate || 0;
+        const cm = this.convertDegMaToCmYr(deg);
+        degInput.value = deg.toFixed(2);
+        cmInput.value = cm.toFixed(2);
     }
 
     private showPresetInfoDialog(idx: number): void {
@@ -1723,6 +1796,7 @@ class TectoLiteApp {
         this.updateToolbarState();
         this.updatePlateList();
         this.updatePropertiesPanel();
+        this.updateSpeedInputsFromSelected();
         this.updatePlayButton();
         this.updateTimeDisplay();
     }
@@ -2331,16 +2405,6 @@ class TectoLiteApp {
         <input type="number" id="prop-pole-lat" class="property-input" value="${pole.position[1]}" step="1">
       </div>
       <div class="property-group">
-        <label class="property-label">Rate (deg/Ma)</label>
-        <input type="number" id="prop-pole-rate" class="property-input" value="${pole.rate}" step="0.1" style="width: 70px;">
-        <select id="rate-presets" class="tool-select" style="margin-left: 8px; width: auto;">
-          <option value="">Presets...</option>
-          ${(this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0]).map(r => `
-             <option value="${r}">${r.toFixed(1)}</option>
-          `).join('')}
-        </select>
-      </div>
-      <div class="property-group">
         <label class="property-label">
            <input type="checkbox" id="prop-pole-vis" ${pole.visible ? 'checked' : ''}> Show Pole
         </label>
@@ -2415,23 +2479,9 @@ class TectoLiteApp {
             const newLat = parseFloat((e.target as HTMLInputElement).value);
             this.addMotionKeyframe(plate.id, { ...pole, position: [pole.position[0], newLat] });
         });
-        document.getElementById('prop-pole-rate')?.addEventListener('change', (e) => {
-            const newRate = parseFloat((e.target as HTMLInputElement).value);
-            this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
-        });
         document.getElementById('prop-pole-vis')?.addEventListener('change', (e) => {
             pole.visible = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
-        });
-
-        document.getElementById('rate-presets')?.addEventListener('change', (e) => {
-            const val = (e.target as HTMLSelectElement).value;
-            if (val) {
-                const newRate = parseFloat(val);
-                (document.getElementById('prop-pole-rate') as HTMLInputElement).value = val;
-                this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
-                (e.target as HTMLSelectElement).value = ''; // Reset dropdown
-            }
         });
 
         document.getElementById('btn-copy-momentum')?.addEventListener('click', () => {
