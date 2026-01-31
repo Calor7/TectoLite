@@ -563,22 +563,24 @@ class TectoLiteApp {
         </div>
         <!-- Apply Edit Modal -->
         <div id="apply-edit-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
-          <div class="modal-content" style="background: var(--bg-secondary); border: 2px solid var(--border-default); border-radius: 4px; padding: 16px; min-width: 350px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); display: flex; flex-direction: column; gap: 12px;">
-            <h3 style="margin: 0; color: var(--text-primary); font-size: 16px;">Apply Plate Geometry</h3>
-            <div style="font-size: 12px; color: var(--text-secondary);">Choose how to apply these changes to the timeline:</div>
+          <div class="modal-content" style="background: #1e1e2e; border: 1px solid var(--border-default); border-radius: 8px; padding: 20px; min-width: 400px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;">
+            <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">Apply Plate Geometry</h3>
+            <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">Choose how to apply these changes to the timeline:</div>
             
-            <button id="btn-apply-generation" class="btn btn-primary" style="text-align: left; padding: 10px; display: flex; flex-direction: column;">
-                <span style="font-weight: 600;">Apply at Generation (Rewrite History)</span>
-                <span style="font-size: 10px; opacity: 0.8; font-weight: normal;">Modifies the plate's base shape. The change will propagate through all time.</span>
-            </button>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <button id="btn-apply-generation" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
+                    <span style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--color-primary);">Apply at Generation (Rewrite History)</span>
+                    <span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Modifies the plate's base shape from birth. The change propagates through all time.</span>
+                </button>
+                
+                <button id="btn-apply-event" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
+                    <span style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--color-success);">Insert Event at Current Time</span>
+                    <span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Creates a new 'Edit' event at <span id="lbl-current-time" style="color:white; font-weight:bold;">0</span> Ma. The shape changes only from this point forward.</span>
+                </button>
+            </div>
             
-            <button id="btn-apply-event" class="btn btn-secondary" style="text-align: left; padding: 10px; display: flex; flex-direction: column;">
-                <span style="font-weight: 600;">Insert Event at Current Time</span>
-                <span style="font-size: 10px; opacity: 0.8; font-weight: normal;">Creates a new keyframe at <span id="lbl-current-time">0</span> Ma. The shape changes only from this point forward.</span>
-            </button>
-            
-            <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
-              <button id="btn-apply-cancel" class="btn btn-secondary" style="padding: 6px 16px;">Cancel</button>
+            <div style="display: flex; justify-content: flex-end; margin-top: 8px; border-top: 1px solid var(--border-default); padding-top: 16px;">
+              <button id="btn-apply-cancel" class="btn btn-secondary" style="padding: 8px 16px;">Cancel</button>
             </div>
           </div>
         </div>
@@ -586,6 +588,91 @@ class TectoLiteApp {
     `;
     }
 
+
+    public showModal(options: { 
+        title: string; 
+        content: string; 
+        width?: string;
+        buttons: { 
+            text: string; 
+            subtext?: string; 
+            isSecondary?: boolean;
+            onClick: () => void 
+        }[] 
+    }): void {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0,0,0,0.6); z-index: 10000;
+          display: flex; align-items: center; justify-content: center;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+          background: #1e1e2e; border: 1px solid var(--border-default); border-radius: 8px; padding: 20px;
+          min-width: ${options.width || '400px'}; color: var(--text-primary); font-family: system-ui, sans-serif;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;
+        `;
+
+        dialog.innerHTML = `
+          <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">${options.title}</h3>
+          <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">${options.content}</div>
+          <div id="modal-btn-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;"></div>
+        `;
+        
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const btnContainer = dialog.querySelector('#modal-btn-container');
+        if(btnContainer) {
+            // Check if we have a simple cancel button to group at bottom right
+            const mainButtons = options.buttons.filter(b => !b.isSecondary);
+            const secondaryButtons = options.buttons.filter(b => b.isSecondary);
+
+            mainButtons.forEach(btn => {
+                const b = document.createElement('button');
+                b.className = 'btn';
+                b.style.cssText = `
+                    text-align: left; padding: 12px; display: flex; flex-direction: column; 
+                    background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;
+                    cursor: pointer; color: var(--text-primary);
+                `;
+                
+                let inner = `<span style="font-weight: 600; font-size: 14px; color: var(--color-primary); margin-bottom: 2px;">${btn.text}</span>`;
+                if(btn.subtext) {
+                    inner += `<span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">${btn.subtext}</span>`;
+                }
+                b.innerHTML = inner;
+
+                b.addEventListener('mouseenter', () => b.style.borderColor = 'var(--color-primary)');
+                b.addEventListener('mouseleave', () => b.style.borderColor = 'var(--border-default)');
+                
+                b.addEventListener('click', () => {
+                    document.body.removeChild(overlay);
+                    btn.onClick();
+                });
+                btnContainer.appendChild(b);
+            });
+
+            if(secondaryButtons.length > 0) {
+                const row = document.createElement('div');
+                row.style.cssText = `display: flex; justify-content: flex-end; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);`;
+                
+                secondaryButtons.forEach(btn => {
+                    const b = document.createElement('button');
+                    b.className = 'btn btn-secondary';
+                    b.innerText = btn.text;
+                    b.style.cssText = `padding: 6px 16px; margin-left: 8px;`;
+                    b.addEventListener('click', () => {
+                        document.body.removeChild(overlay);
+                        btn.onClick();
+                    });
+                    row.appendChild(b);
+                });
+                btnContainer.appendChild(row);
+            }
+        }
+    }
 
     private updateRetroStatusBox(text: string | null): void {
         const statusBox = document.getElementById('retro-status-text');
@@ -1067,6 +1154,7 @@ class TectoLiteApp {
                              // Create a new keyframe at current time with the CURRENT polygons as snapshot
                              const newKeyframe: MotionKeyframe = {
                                  time: this.state.world.currentTime,
+                                 label: 'Edit', // Explicit label for timeline
                                  eulerPole: p.motion.eulerPole, // Inherit current pole
                                  snapshotPolygons: JSON.parse(JSON.stringify(result.polygons)), // Snapshot current shape
                                  snapshotFeatures: [...p.features] // Snapshot current features
@@ -1660,51 +1748,51 @@ class TectoLiteApp {
         const overlay = document.createElement('div');
         overlay.style.cssText = `
           position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0,0,0,0.7); z-index: 10000;
+          background: rgba(0,0,0,0.6); z-index: 10000;
           display: flex; align-items: center; justify-content: center;
       `;
 
         const dialog = document.createElement('div');
         dialog.style.cssText = `
-          background: #1e1e2e; border-radius: 12px; padding: 24px;
-          min-width: 400px; color: #cdd6f4; font-family: system-ui, sans-serif;
-          box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+          background: #1e1e2e; border: 1px solid var(--border-default); border-radius: 8px; padding: 20px;
+          min-width: 400px; color: var(--text-primary); font-family: system-ui, sans-serif;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;
       `;
 
         dialog.innerHTML = `
-          <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🗺️ Map Legend</h3>
+          <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">🗺️ Map Legend</h3>
           
-          <div style="margin-bottom: 20px;">
-              <h4 style="margin: 0 0 8px 0; color: #fab387;">Boundaries</h4>
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                  <span style="width: 20px; height: 3px; background: #ff3333; display: inline-block;"></span>
+          <div style="margin-bottom: 10px;">
+              <h4 style="margin: 0 0 8px 0; color: #fab387; font-size: 14px;">Boundaries</h4>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px;">
+                  <span style="width: 20px; height: 3px; background: #ff3333; display: inline-block; border-radius: 2px;"></span>
                   <span><strong>Convergent</strong> (Collision)</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                  <span style="width: 20px; height: 3px; background: #3333ff; display: inline-block;"></span>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px;">
+                  <span style="width: 20px; height: 3px; background: #3333ff; display: inline-block; border-radius: 2px;"></span>
                   <span><strong>Divergent</strong> (Rifting)</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="width: 20px; height: 3px; background: #33ff33; display: inline-block;"></span>
+              <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+                  <span style="width: 20px; height: 3px; background: #33ff33; display: inline-block; border-radius: 2px;"></span>
                   <span><strong>Transform</strong> (Sliding)</span>
               </div>
-              <p style="font-size: 12px; color: #a6adc8; margin-top: 4px;">
+              <div style="font-size: 11px; color: var(--text-secondary); margin-top: 8px; font-style: italic;">
                   *Boundaries only appear when plates overlap/touch AND have velocity.
-              </p>
-          </div>
-
-          <div style="margin-bottom: 20px;">
-              <h4 style="margin: 0 0 8px 0; color: #a6e3a1;">Features</h4>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                  <div>🏔️ Mountain (Cont-Cont)</div>
-                  <div>🌋 Volcano (Subduction)</div>
-                  <div>⚡ Rift (Div-Cont)</div>
-                  <div>🏝️ Island (Hotspot/Ocean)</div>
               </div>
           </div>
 
-          <div style="display: flex; justify-content: flex-end;">
-              <button id="legend-close" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer;">Close</button>
+          <div style="margin-bottom: 10px;">
+              <h4 style="margin: 0 0 8px 0; color: #a6e3a1; font-size: 14px;">Features</h4>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px;">
+                  <div style="display:flex; align-items:center; gap:6px;"><span>🏔️</span> Mountain</div>
+                  <div style="display:flex; align-items:center; gap:6px;"><span>🌋</span> Volcano</div>
+                  <div style="display:flex; align-items:center; gap:6px;"><span>⚡</span> Rift</div>
+                  <div style="display:flex; align-items:center; gap:6px;"><span>🏝️</span> Island</div>
+              </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 16px;">
+              <button id="legend-close" class="btn btn-secondary" style="padding: 8px 16px;">Close</button>
           </div>
       `;
 
@@ -2188,31 +2276,42 @@ class TectoLiteApp {
                 return;
             }
 
-            if (!confirm(`Do you want to Fuse plate ${firstPlate.name} and ${plate.name}?`)) {
-                // User cancelled - reset to Stage 1
-                this.fusionFirstPlateId = null;
-                this.updateHint("Select first plate to fuse");
-                return;
-            }
-
-            // Second click - fuse plates
-            this.pushState(); // Save state for undo
-
-            const result = fusePlates(this.state, this.fusionFirstPlateId, plateId);
-
-            if (result.success && result.newState) {
-                this.state = result.newState;
-                this.updateUI();
-                this.canvasManager?.render();
-                // Clear hint and reset
-                this.updateHint(null);
-            } else {
-                alert(result.error || 'Failed to fuse plates');
-            }
-
-            // Reset fusion state
-            this.fusionFirstPlateId = null;
-            this.setActiveTool('select');
+            this.showModal({
+                title: 'Confirm Fusion',
+                content: `Do you want to fuse plate <strong>${firstPlate.name}</strong> and <strong>${plate.name}</strong> into a single plate?`,
+                buttons: [
+                    {
+                        text: 'Fuse Plates',
+                        subtext: 'Combine geometries and features. The new plate will inherit motion from the larger parent.',
+                        onClick: () => {
+                            this.pushState();
+                            const result = fusePlates(this.state, this.fusionFirstPlateId!, plateId);
+                            
+                            if (result.success && result.newState) {
+                                this.state = result.newState;
+                                this.fusionFirstPlateId = null;
+                                this.updatePropertiesPanel();
+                                this.updateUI();
+                                this.canvasManager?.render();
+                                this.updateHint(`Fused plates into new plate.`);
+                            } else {
+                                this.updateHint(`Fusion failed: ${result.error || 'Unknown error'}`);
+                                setTimeout(() => this.updateHint(null), 3000);
+                            }
+                        }
+                    },
+                    {
+                        text: 'Cancel',
+                        isSecondary: true,
+                        onClick: () => {
+                           this.fusionFirstPlateId = null;
+                           this.updateHint("Select first plate to fuse");
+                        }
+                    }
+                ]
+            });
+            // We exit here because modal is async
+            return;
         }
     }
 
@@ -2257,57 +2356,57 @@ class TectoLiteApp {
         const isLinked = sourcePlate.linkedPlateIds?.includes(targetId);
         const actionText = isLinked ? "Unlink" : "Link";
 
-        // Stage 3 - Confirmation
-        if (!confirm(`Do you want to ${actionText} plate ${sourcePlate.name} and ${plate.name}?`)) {
-            // User cancelled - reset to Stage 1
-            this.activeLinkSourceId = null;
-            this.updateHint("Select first plate to link");
-            this.updateUI();
-            this.canvasManager?.render();
-            return;
-        }
+        this.showModal({
+            title: `${actionText} Plates`,
+            content: `Do you want to <strong>${actionText.toLowerCase()}</strong> plate <strong>${sourcePlate.name}</strong> and <strong>${plate.name}</strong>?`,
+            buttons: [
+                 {
+                    text: actionText,
+                    subtext: isLinked ? 'Plates will move independently.' : 'Plates will move together.',
+                    onClick: () => {
+                        // Logic
+                         this.pushState();
+                        this.state.world.plates = this.state.world.plates.map(p => {
+                            if (p.id === sourceId) {
+                                let links = p.linkedPlateIds || [];
+                                if (isLinked) links = links.filter(id => id !== targetId);
+                                else links = [...links, targetId];
+                                return { ...p, linkedPlateIds: links };
+                            }
+                            if (p.id === targetId) {
+                                let links = p.linkedPlateIds || [];
+                                if (isLinked) links = links.filter(id => id !== sourceId);
+                                else links = [...links, sourceId];
+                                return { ...p, linkedPlateIds: links };
+                            }
+                            return p;
+                        });
 
-        if (isLinked) {
-            // Already linked - Unlink
-            this.pushState();
-            this.state.world.plates = this.state.world.plates.map(p => {
-                // Remove link ID from both plates
-                if (p.id === sourceId) {
-                    return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== targetId) };
-                }
-                if (p.id === targetId) {
-                    return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== sourceId) };
-                }
-                return p;
-            });
-            const hint = document.getElementById('canvas-hint');
-            if (hint) {
-                hint.textContent = `Unlinked ${sourcePlate.name} and ${plate.name}`;
-                setTimeout(() => { if (hint && this.state.activeTool !== 'link') hint.style.display = 'none'; }, 2000);
-            }
-        } else {
-            // Create Link
-            this.pushState();
-            this.state.world.plates = this.state.world.plates.map(p => {
-                if (p.id === sourceId) {
-                    return { ...p, linkedPlateIds: [...(p.linkedPlateIds || []), targetId] };
-                }
-                if (p.id === targetId) {
-                    return { ...p, linkedPlateIds: [...(p.linkedPlateIds || []), sourceId] };
-                }
-                return p;
-            });
-            this.updateHint(`Linked ${sourcePlate.name} and ${plate.name}`);
-            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-        }
+                        this.updateHint(`${isLinked ? 'Unlinked' : 'Linked'} ${sourcePlate.name} and ${plate.name}`);
+                        setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
 
-        // Reset
-        this.activeLinkSourceId = null;
-        this.state.world.selectedPlateId = plateId; // Select the target
-        this.activeToolText = "Select first plate to link"; // Reset for next use
-        this.updateRetroStatusBox(this.activeToolText);
-        this.updateUI();
-        this.canvasManager?.render();
+                        // Reset
+                        this.activeLinkSourceId = null;
+                        this.state.world.selectedPlateId = plateId; // Select the target
+                        this.activeToolText = "Select first plate to link"; // Reset for next use
+                        this.updateRetroStatusBox(this.activeToolText);
+                        this.updateUI();
+                        this.canvasManager?.render();
+                    }
+                 },
+                 {
+                    text: 'Cancel',
+                    isSecondary: true,
+                    onClick: () => {
+                        // User cancelled - reset to Stage 1
+                        this.activeLinkSourceId = null;
+                        this.updateHint("Select first plate to link");
+                        this.updateUI();
+                        this.canvasManager?.render();
+                    }
+                 }
+            ]
+        });
     }
 
     private handleSplitApply(points: Coordinate[]): void {
@@ -2315,18 +2414,40 @@ class TectoLiteApp {
 
         let plateToSplit = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
 
-        // Pass the full polyline for zig-zag splits
         if (plateToSplit) {
-            if (confirm('Inherit momentum from parent plate?')) {
-                this.pushState(); // Save state for undo
-                this.state = splitPlate(this.state, plateToSplit.id, { points }, true);
-            } else {
-                this.pushState(); // Save state for undo
-                this.state = splitPlate(this.state, plateToSplit.id, { points }, false);
-            }
-            this.updateUI();
-            this.simulation?.setTime(this.state.world.currentTime);
-            this.canvasManager?.render();
+            this.showModal({
+                title: 'Split Plate Configuration',
+                content: `You are about to split <strong>${plateToSplit.name}</strong> along the drawn boundary. How should the new plates behave?`,
+                buttons: [
+                    {
+                        text: 'Inherit Momentum',
+                        subtext: 'New plates will keep the parent\'s current velocity and rotation.',
+                        onClick: () => {
+                            this.pushState();
+                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, true);
+                            this.updateUI();
+                            this.simulation?.setTime(this.state.world.currentTime);
+                            this.canvasManager?.render();
+                        }
+                    },
+                    {
+                        text: 'Reset Momentum',
+                        subtext: 'New plates will start stationary (0 velocity).',
+                        onClick: () => {
+                            this.pushState();
+                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, false);
+                            this.updateUI();
+                            this.simulation?.setTime(this.state.world.currentTime);
+                            this.canvasManager?.render();
+                        }
+                    },
+                    {
+                        text: 'Cancel',
+                        isSecondary: true,
+                        onClick: () => { /* Do nothing */ }
+                    }
+                ]
+            });
         }
     }
 

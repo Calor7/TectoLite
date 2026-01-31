@@ -92,15 +92,12 @@ export class TimelineSystem {
                 // Let's call it "Motion & Shape" or just "Keyframe".
                 // But user asked for specific distinction if it's an "Event". 
 
-                let label = `Keyframe #${index + 1}`;
+                let label = kf.label || `Keyframe #${index + 1}`;
                 let type: 'motion' | 'shape' = 'motion';
                 
-                // If it's the result of "Insert Event at Current Time" from edit tool,
-                // it might have identical motion to previous keyframe? Not necessarily.
-                // Let's label it generically Keyframe, or check context. 
-                // Without extra metadata, we can inspect if pole rate changed?
-                
-                // For now, let's allow distinguishing via UI logic or just list as Keyframe
+                if (kf.label === 'Edit') {
+                    type = 'shape';
+                }
                 
                 list.push({
                     id: `motion-${index}`,
@@ -411,7 +408,34 @@ export class TimelineSystem {
     }
 
     private deleteEvent(event: TimelineEventItem) {
-        if (!confirm('Delete this event?')) return;
+        if (!this.app || !this.app.showModal) {
+            if (confirm('Delete this event?')) {
+                this.performDeleteEvent(event);
+            }
+            return;
+        }
+
+        this.app.showModal({
+            title: 'Delete Event',
+            content: 'Are you sure you want to delete this event?',
+            buttons: [
+                {
+                    text: 'Delete',
+                    subtext: 'This action cannot be undone.',
+                    onClick: () => {
+                        this.performDeleteEvent(event);
+                    }
+                },
+                {
+                    text: 'Cancel',
+                    isSecondary: true,
+                    onClick: () => {}
+                }
+            ]
+        });
+    }
+
+    private performDeleteEvent(event: TimelineEventItem) {
         this.pushHistory();
 
         if (event.type === 'birth') {

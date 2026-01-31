@@ -54,6 +54,7 @@ export interface EulerPole {
 // A keyframe captures motion parameters and plate geometry at a specific time
 export interface MotionKeyframe {
   time: number;                    // When this motion segment starts
+  label?: string;                  // Optional label for the timeline (e.g. "Edit", "Motion Change")
   eulerPole: EulerPole;            // Motion parameters for this segment
   snapshotPolygons: Polygon[];     // Plate geometry at keyframe time
   snapshotFeatures: Feature[];     // Features at keyframe time
