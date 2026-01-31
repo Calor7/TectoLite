@@ -751,6 +751,7 @@ export class CanvasManager {
                 const zB = b.zIndex ?? 0;
                 return zA - zB;
             });
+<<<<<<< Updated upstream
 
 <<<<<<< HEAD
             for (const plate of sortedPlates) {
@@ -781,6 +782,33 @@ export class CanvasManager {
                     const vRotCenter = rotateVector(vCenter, axis, angle);
                     transformedCenter = vectorToLatLon(vRotCenter);
 
+=======
+
+            // Collect poly_region features to render after all plates (image overlays should be on top)
+            const polyRegionFeatures: { feature: Feature; isSelected: boolean; isGhosted: boolean }[] = [];
+
+            for (const plate of sortedPlates) {
+                if (!plate.visible) continue;
+
+                // Lifecycle check: Only render valid plates for current time
+                if (state.world.currentTime < plate.birthTime) continue;
+                if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
+
+                const isSelected = plate.id === state.world.selectedPlateId;
+
+                let polygonsToDraw = plate.polygons;
+                let transformedCenter = plate.center;
+
+                if (this.ghostRotation?.plateId === plate.id) {
+                    const { axis, angle } = this.ghostRotation;
+                    const spinRad = -this.ghostSpin * Math.PI / 180; // Negative for CW alignment
+
+                    // Calculate transformed center for spin axis and widget
+                    const vCenter = latLonToVector(plate.center);
+                    const vRotCenter = rotateVector(vCenter, axis, angle);
+                    transformedCenter = vectorToLatLon(vRotCenter);
+
+>>>>>>> Stashed changes
                     polygonsToDraw = plate.polygons.map(poly => {
                         const newPoints = poly.points.map(pt => {
                             const v = latLonToVector(pt);
@@ -809,6 +837,7 @@ export class CanvasManager {
                     this.ctx.fillStyle = plate.color;
                     this.ctx.fill();
 
+<<<<<<< Updated upstream
 <<<<<<< HEAD
                     this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
                     this.ctx.lineWidth = isSelected ? 2 : 1;
@@ -834,6 +863,11 @@ export class CanvasManager {
                         this.drawFeature(feature, isFeatureSelected, !isInTimeline);
                     }
 >>>>>>> origin/copilot/remove-ocean-crust-creation
+=======
+                    this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
+                    this.ctx.lineWidth = isSelected ? 2 : 1;
+                    this.ctx.stroke();
+>>>>>>> Stashed changes
                 }
 
                 // Draw Features (if visible)
@@ -856,8 +890,18 @@ export class CanvasManager {
                         const isFeatureSelected = feature.id === state.world.selectedFeatureId ||
                             (state.world.selectedFeatureIds && state.world.selectedFeatureIds.includes(feature.id));
 
+<<<<<<< Updated upstream
                         // Draw with reduced opacity if outside timeline
                         this.drawFeature(feature, isFeatureSelected, !isInTimeline);
+=======
+                        // Collect poly_region features to render later (on top of all plates)
+                        if (feature.type === 'poly_region') {
+                            polyRegionFeatures.push({ feature, isSelected: isFeatureSelected, isGhosted: !isInTimeline });
+                        } else {
+                            // Draw other features immediately with their plate
+                            this.drawFeature(feature, isFeatureSelected, !isInTimeline);
+                        }
+>>>>>>> Stashed changes
                     }
                 }
 
@@ -1421,8 +1465,11 @@ export class CanvasManager {
 
     private cachedOverlayImage: HTMLImageElement | null = null;
     private cachedOverlayImageData: string | null = null;
+<<<<<<< Updated upstream
     private tempCanvas: HTMLCanvasElement | null = null;
     private tempCanvasImageData: ImageData | null = null;
+=======
+>>>>>>> Stashed changes
 
     private drawImageOverlay(state: AppState): void {
         const overlay = state.world.imageOverlay;
@@ -1433,9 +1480,12 @@ export class CanvasManager {
             this.cachedOverlayImage = new Image();
             this.cachedOverlayImage.src = overlay.imageData;
             this.cachedOverlayImageData = overlay.imageData;
+<<<<<<< Updated upstream
             // Clear cached canvas data when image changes
             this.tempCanvas = null;
             this.tempCanvasImageData = null;
+=======
+>>>>>>> Stashed changes
         }
 
         const img = this.cachedOverlayImage;
@@ -1444,6 +1494,7 @@ export class CanvasManager {
         this.ctx.save();
         this.ctx.globalAlpha = overlay.opacity;
 
+<<<<<<< Updated upstream
         const mode = overlay.mode || 'fixed'; // Default to fixed for backward compatibility
 
         if (mode === 'fixed') {
@@ -1565,6 +1616,40 @@ export class CanvasManager {
             }
         }
 
+=======
+        // Fixed screen overlay - independent of projection
+        // Get viewport dimensions
+        const width = this.canvas.width / (window.devicePixelRatio || 1);
+        const height = this.canvas.height / (window.devicePixelRatio || 1);
+
+        // Apply transformations
+        const scale = overlay.scale || 1.0;
+        const offsetX = overlay.offsetX || 0;
+        const offsetY = overlay.offsetY || 0;
+
+        // Calculate scaled dimensions (maintain aspect ratio)
+        const imgAspect = img.width / img.height;
+        const viewportAspect = width / height;
+        
+        let scaledWidth, scaledHeight;
+        if (imgAspect > viewportAspect) {
+            // Image is wider than viewport
+            scaledWidth = width * scale;
+            scaledHeight = (width / imgAspect) * scale;
+        } else {
+            // Image is taller than viewport
+            scaledHeight = height * scale;
+            scaledWidth = (height * imgAspect) * scale;
+        }
+
+        // Calculate position with offset (in pixels)
+        const x = (width - scaledWidth) / 2 + offsetX;
+        const y = (height - scaledHeight) / 2 + offsetY;
+
+        // Draw the image
+        this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+
+>>>>>>> Stashed changes
         this.ctx.restore();
     }
 }
