@@ -2048,7 +2048,7 @@ class TectoLiteApp {
 
     private handleMotionChange(plateId: string, pole: Coordinate, rate: number): void {
         this.pushState();
-        const newEulerPole = { position: pole, rate, visible: true };
+        const newEulerPole = { position: pole, rate };
 
         // Find linked plates
         const plate = this.state.world.plates.find(p => p.id === plateId);
