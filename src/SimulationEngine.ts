@@ -7,7 +7,6 @@ import {
     calculateSphericalCentroid
 } from './utils/sphericalMath';
 import { BoundarySystem } from './BoundarySystem';
-import polygonClipping from 'polygon-clipping';
 
 export class SimulationEngine {
     private isRunning = false;
@@ -139,7 +138,7 @@ export class SimulationEngine {
         });
 
         this.updateOceanAgeMap();
-        this.updateTrailingSeafloor(deltaMa);
+        // Feature-based seafloor generation removed - using grid-based ocean age map only
         this.updateFlowlines();
     }
 
@@ -440,92 +439,5 @@ export class SimulationEngine {
                 world: { ...s.world, oceanAgeMap: newMap }
             }));
         }
-    }
-
-    private updateTrailingSeafloor(deltaMa: number): void {
-        const state = this.getState();
-
-        const currentTime = state.world.currentTime;
-        const plates = state.world.plates;
-        const activePlates = plates.filter(p => !p.deathTime && p.birthTime <= currentTime && p.id !== 'plate-seafloor');
-
-        this.setState(s => {
-            const nextPlates = [...s.world.plates];
-            let targetIdx = nextPlates.findIndex(p => p.id === 'plate-seafloor');
-
-            if (targetIdx === -1) {
-                const targetPlate: TectonicPlate = {
-                    id: 'plate-seafloor',
-                    name: 'Oceanic Mantle',
-                    color: '#1a1a1a',
-                    visible: true,
-                    locked: true,
-                    polygons: [],
-                    features: [],
-                    center: [0, 0],
-                    birthTime: -1000,
-                    deathTime: null,
-                    initialPolygons: [],
-                    initialFeatures: [],
-                    motionKeyframes: [{
-                        time: -1000,
-                        eulerPole: { position: [0, 0], rate: 0, visible: false },
-                        snapshotPolygons: [],
-                        snapshotFeatures: []
-                    }],
-                    motion: { eulerPole: { position: [0, 0], rate: 0, visible: false } },
-                    events: [],
-                    generateSeafloor: false,
-                    zIndex: -1000  // Very low zIndex to be below all other plates
-                };
-                nextPlates.push(targetPlate);
-                targetIdx = nextPlates.length - 1;
-            }
-
-            const newSeafloorFeatures: Feature[] = [];
-            for (const plate of activePlates) {
-                if (plate.generateSeafloor === false) continue;
-                const pole = plate.motion.eulerPole;
-                const invRate = -pole.rate * deltaMa;
-                for (const poly of plate.polygons) {
-                    const prevPoints = poly.points.map(pt => {
-                        const v = latLonToVector(pt);
-                        const vPrev = rotateVector(v, latLonToVector(pole.position), invRate);
-                        return vectorToLatLon(vPrev);
-                    });
-                    const sPrev: any = [prevPoints.map(p => [p[0], p[1]])];
-                    const sCurr: any = [poly.points.map(p => [p[0], p[1]])];
-                    try {
-                        const diff = polygonClipping.difference(sPrev, sCurr);
-                        for (const geom of diff) {
-                            for (const ring of geom) {
-                                if (ring.length < 3) continue;
-                                const coords: Coordinate[] = ring.map((p: any) => [p[0], p[1]]);
-                                newSeafloorFeatures.push({
-                                    id: `sf-${Date.now()}-${Math.random()}`,
-                                    type: 'seafloor',
-                                    position: coords[0],
-                                    polygon: coords,
-                                    age: currentTime,
-                                    generatedAt: currentTime,
-                                    rotation: 0,
-                                    scale: 1,
-                                    properties: { birthTime: currentTime }
-                                });
-                            }
-                        }
-                    } catch (e) { }
-                }
-            }
-
-            if (newSeafloorFeatures.length > 0) {
-                nextPlates[targetIdx] = {
-                    ...nextPlates[targetIdx],
-                    features: [...nextPlates[targetIdx].features, ...newSeafloorFeatures]
-                };
-                return { ...s, world: { ...s.world, plates: nextPlates } };
-            }
-            return s;
-        });
     }
 }
