@@ -35,7 +35,7 @@ jobs:
         run: npm run build
       
       - name: Package Electron app
-        run: npm run dist
+        run: npm run electron-build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
