@@ -2,6 +2,8 @@
   "name": "tectolite",
   "private": true,
   "version": "0.0.0",
+  "description": "Tectonic Plate Simulation Engine",
+  "author": "TectoLite Team",
   "type": "module",
   "main": "electron-main.cjs",
   "homepage": "./",
@@ -10,7 +12,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "electron-dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron-build": "npm run build && electron-builder"
+    "electron-build": "npm run build && electron-builder",
+    "dist": "npm run build && electron-builder --win --mac --linux"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
@@ -26,6 +29,7 @@
     "@types/d3-geo": "^3.1.0",
     "d3-geo": "^3.1.1",
     "d3-geo-projection": "^4.0.0",
-    "polygon-clipping": "^0.15.7"
+    "polygon-clipping": "^0.15.7",
+    "sql.js": "^1.10.3"
   }
 }

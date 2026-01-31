@@ -6,22 +6,19 @@ directories:
 
 win:
   target:
-    - nsis
     - portable
-  certificateFile: null
-  certificatePassword: null
-
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
-  createStartMenuShortcut: true
-  shortcutName: TectoLite
 
 portable:
-  artifactName: ${productName}-${version}-portable.exe
+  artifactName: ${productName}-${version}.exe
 
 files:
+  - electron-main.cjs
+  - preload.cjs
   - dist/**/*
   - package.json
   - node_modules/**/*
+
+
+
+
+

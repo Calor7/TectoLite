@@ -24,8 +24,9 @@ import { fusePlates } from './FusionTool';
 import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
-import { exportToJSON, parseImportFile, showImportDialog, showHeightmapExportDialog } from './export';
+import { exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog } from './export';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
+import { GeoPackageExporter } from './GeoPackageExporter';
 import { TimelineSystem } from './systems/TimelineSystem';
 import { geoArea } from 'd3-geo';
 import { toDisplayTime, toInternalTime, parseTimeInput } from './utils/TimeTransformationUtils';
@@ -224,11 +225,8 @@ class TectoLiteApp {
             <button id="btn-redo" class="btn btn-secondary" title="Redo (Ctrl+Y)">
               <span class="icon">↷</span> Redo
             </button>
-            <button id="btn-export" class="btn btn-primary" title="Export PNG">
-              <span class="icon">📥</span> Export
-            </button>
-            <button id="btn-export-heightmap" class="btn btn-primary" title="Export Heightmap">
-              <span class="icon">🗺️</span> H-Map
+            <button id="btn-export" class="btn btn-primary" title="Export (PNG, Heightmap, QGIS)">
+              <span class="icon">📤</span> Export
             </button>
             <button id="btn-export-json" class="btn btn-secondary" title="Export JSON">
               <span class="icon">💾</span> Save
@@ -364,12 +362,23 @@ class TectoLiteApp {
                 </div>
                 
                 <hr class="property-divider" style="margin: 8px 0;">
-                <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Rate Presets <span class="info-icon" data-tooltip="Examples: 0.5 (Slow), 1.0 (Normal), 2.0 (Fast), 5.0+ (India-Asia Collision Speed!)">(i)</span></div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px;">
-                    <input type="number" id="global-rate-1" class="property-input" step="0.1">
-                    <input type="number" id="global-rate-2" class="property-input" step="0.1">
-                    <input type="number" id="global-rate-3" class="property-input" step="0.1">
-                    <input type="number" id="global-rate-4" class="property-input" step="0.1">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                  <div style="font-size:11px; font-weight:600; color:var(--text-secondary);">
+                    Speed Presets
+                  </div>
+                  <label style="display:flex; align-items:center; gap:4px; font-size:10px; cursor:pointer;" title="Switch between real-world examples and custom preset values">
+                      <input type="checkbox" id="check-use-custom-presets"> Costum 
+                  </label>
+                </div>
+                
+                <!-- Real World List -->
+                <div id="preset-container-realworld" style="display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; padding-right:4px;">
+                    ${this.generateRealWorldPresetList()}
+                </div>
+
+                <!-- Custom List -->
+                <div id="preset-container-custom" style="display:none; flex-direction:column; gap:6px;">
+                    ${this.generateCustomPresetList()}
                 </div>
             </div>
 
@@ -814,20 +823,86 @@ class TectoLiteApp {
         });
 
         // Advanced Toggles
-        // Rate Preset Inputs
-        const updateRatePreset = (index: number, val: number) => {
-            if (!isNaN(val) && val > 0) {
-                const newPresets = [...(this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0])];
-                newPresets[index] = val;
-                this.state.world.globalOptions.ratePresets = newPresets;
-                this.updateUI(); // Refresh properties panel to show new values
+        // Speed Preset Logic
+        
+        // 1. Toggle between Real World and Custom
+        document.getElementById('check-use-custom-presets')?.addEventListener('change', (e) => {
+            const isCustom = (e.target as HTMLInputElement).checked;
+            const rwContainer = document.getElementById('preset-container-realworld');
+            const customContainer = document.getElementById('preset-container-custom');
+            if (rwContainer && customContainer) {
+                rwContainer.style.display = isCustom ? 'none' : 'flex';
+                customContainer.style.display = isCustom ? 'flex' : 'none';
             }
-        };
+        });
 
-        document.getElementById('global-rate-1')?.addEventListener('change', (e) => updateRatePreset(0, parseFloat((e.target as HTMLInputElement).value)));
-        document.getElementById('global-rate-2')?.addEventListener('change', (e) => updateRatePreset(1, parseFloat((e.target as HTMLInputElement).value)));
-        document.getElementById('global-rate-3')?.addEventListener('change', (e) => updateRatePreset(2, parseFloat((e.target as HTMLInputElement).value)));
-        document.getElementById('global-rate-4')?.addEventListener('change', (e) => updateRatePreset(3, parseFloat((e.target as HTMLInputElement).value)));
+        // 2. Event Delegation for Presets
+        document.addEventListener('click', (e) => {
+            const target = e.target as HTMLElement;
+            
+            // Real World Apply
+            if (target.classList.contains('speed-preset-apply')) {
+                const idx = parseInt(target.getAttribute('data-idx') || '0');
+                const presets = this.getSpeedPresetData();
+                const preset = presets[idx];
+                if (preset) {
+                    const speedKmMa = preset.speed * 0.01; // cm/yr -> km/Ma
+                    this.applySpeedToSelected(speedKmMa);
+                }
+            }
+            
+            // Custom Preset Apply
+            if (target.classList.contains('custom-preset-apply')) {
+                const idx = parseInt(target.getAttribute('data-idx') || '0');
+                const pList = this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0];
+                const speedCmYr = pList[idx] || 0;
+                const speedKmMa = speedCmYr * 0.01; // Scale factor assumption same as UI
+                // Note: original code treated input as direct factor or cm/yr depending on usage.
+                // In main.ts:2093: const maxSpeedCmYr = vKmMa * 0.1; // cm/yr  => vKmMa = cmYr * 10 ??
+                // Wait, previous code:
+                // updateRatePreset -> just stores val.
+                // When we used `global-rate-*` inputs before, what did they do?
+                // They were just presets. BUT when applied to eulerPole.rate?
+                // The MotionGizmo or properties panel calls setRate or similar.
+                // Here we are setting `plate.motion.eulerPole.rate` directly.
+                // A rate of 0.01 rad/Ma is huge.
+                // Let's check `types.ts`: maxDragSpeed: 1.0 // ~10 cm/yr
+                // So 1.0 internal unit ~= 10 cm/yr.
+                // So 1 cm/yr ~= 0.1 internal unit.
+                // 15 cm/yr => 1.5 internal unit.
+                // My previous calc `preset.speed * 0.01` was probably wrong if 1 unit ~ 10cm/yr.
+                
+                // Let's correct the scaling based on known values:
+                // 10 cm/yr ~ 1.0 unit.
+                // So cm/yr / 10 = unit.
+                // 15 cm/yr -> 1.5.
+                // 8.5 cm/yr -> 0.85.
+                
+                this.applySpeedToSelected(speedCmYr * 0.1); 
+            }
+            
+            // Show info dialog
+            if (target.classList.contains('speed-preset-info')) {
+                const idx = parseInt(target.getAttribute('data-idx') || '0');
+                this.showPresetInfoDialog(idx);
+            }
+        });
+        
+        // 3. Custom Preset Input Changes
+        document.addEventListener('change', (e) => {
+             const target = e.target as HTMLInputElement;
+             if (target.classList.contains('custom-preset-input')) {
+                 const idx = parseInt(target.getAttribute('data-idx') || '0');
+                 const val = parseFloat(target.value);
+                 if (!isNaN(val) && val >= 0) {
+                     const current = [...(this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0])];
+                     current[idx] = val;
+                     this.state.world.globalOptions.ratePresets = current;
+                     // We don't need to full updateUI here, just state update so it exports
+                 }
+             }
+        });
+
         document.getElementById('check-boundary-vis')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
         });
@@ -1093,26 +1168,46 @@ class TectoLiteApp {
             }
         });
 
-        document.getElementById('btn-export-heightmap')?.addEventListener('click', async () => {
-            // Heightmap Export
+        // Unified Export Handler
+        document.getElementById('btn-export')?.addEventListener('click', async () => {
             try {
-                const options = await showHeightmapExportDialog();
+                const options = await showUnifiedExportDialog();
                 if (!options) return;
 
-                const dataUrl = await HeightmapGenerator.generate(this.state, {
-                    width: options.width,
-                    height: options.height,
-                    projection: 'equirectangular',
-                    smooth: true
-                });
-
-                const link = document.createElement('a');
-                link.download = `tectolite-heightmap-${Date.now()}.png`;
-                link.href = dataUrl;
-                link.click();
+                if (options.format === 'png') {
+                    // PNG Export
+                    const pngOptions = {
+                        projection: options.projection || 'orthographic',
+                        waterMode: 'color' as const,
+                        plateColorMode: 'native' as const,
+                        showGrid: false
+                    };
+                    exportToPNG(this.state, pngOptions, options.width || 1920, options.height || 1080);
+                } else if (options.format === 'heightmap') {
+                    // Heightmap Export
+                    const dataUrl = await HeightmapGenerator.generate(this.state, {
+                        width: options.width || 4096,
+                        height: options.height || 2048,
+                        projection: options.projection || 'equirectangular',
+                        smooth: true
+                    });
+                    const link = document.createElement('a');
+                    link.download = `tectolite-heightmap-${Date.now()}.png`;
+                    link.href = dataUrl;
+                    link.click();
+                } else if (options.format === 'qgis') {
+                    // GeoPackage (QGIS) Export
+                    const exporter = new GeoPackageExporter(this.state, {
+                        width: options.width || 2048,
+                        height: options.height || 1024,
+                        projection: options.projection || 'equirectangular',
+                        includeHeightmap: options.includeHeightmap ?? true
+                    });
+                    await exporter.export();
+                }
             } catch (e) {
-                console.error('Heightmap generation failed', e);
-                alert('Heightmap generation failed');
+                console.error('Export failed', e);
+                alert(`Export failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
             }
         });
 
@@ -1364,6 +1459,130 @@ class TectoLiteApp {
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
     }
 
+    private getSpeedPresetData() {
+        return [
+            { name: 'East Pacific Rise', speed: 15, unit: 'cm/yr', type: 'Spreading Center', details: '<strong>Location:</strong> South Pacific Ocean (between the Pacific and Nazca plates).<br><br><strong>Context:</strong> This is the fastest spreading center on Earth. The plates here rip apart so quickly that the "gap" is filled by smooth volcanic domes rather than a deep valley.' },
+            { name: 'Cocos Plate', speed: 8.5, unit: 'cm/yr', type: 'Absolute Motion', details: '<strong>Location:</strong> Off the west coast of Central America.<br><br><strong>Context:</strong> It is crashing into the Caribbean plate, creating the string of volcanoes in Costa Rica and Guatemala.' },
+            { name: 'Australia', speed: 7.0, unit: 'cm/yr', type: 'Continental Drift', details: '<strong>Location:</strong> The entire continent of Australia.<br><br><strong>Context:</strong> Australia is the fastest-moving continent, racing north toward Asia. (GPS systems in Australia actually have to be adjusted periodically to account for this rapid drift).' },
+            { name: 'India (Himalayas)', speed: 5.5, unit: 'cm/yr', type: 'Collision', details: '<strong>Location:</strong> India.<br><br><strong>Context:</strong> India is still ramming into Asia. This speed is fast for a continental collision, which is why the Himalayas are still rising today.' },
+            { name: 'San Andreas Fault', speed: 3.0, unit: 'cm/yr', type: 'Transform Boundary', details: '<strong>Location:</strong> California, USA.<br><br><strong>Context:</strong> The Pacific plate sliding past the North American plate.' },
+            { name: 'Mid-Atlantic Ridge', speed: 2.5, unit: 'cm/yr', type: 'Spreading (Slow)', details: '<strong>Location:</strong> Down the center of the Atlantic Ocean.' },
+            { name: 'Eurasia', speed: 0.95, unit: 'cm/yr', type: 'Absolute Motion', details: '<strong>Location:</strong> Europe and Asia.<br><br><strong>Context:</strong> One of the slowest plates on Earth.' }
+        ];
+    }
+
+    private generateRealWorldPresetList(): string {
+        const presets = this.getSpeedPresetData();
+        return presets.map((preset, idx) => `
+            <div style="display:grid; grid-template-columns: 1fr auto; gap:4px; align-items:center; background:#1e1e2e; border-radius:4px; padding:4px;">
+                <div style="display:flex; align-items:center; gap:4px; overflow:hidden;">
+                    <span style="font-size:11px; color:#cdd6f4; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${preset.name}">${preset.name}</span>
+                    <button class="speed-preset-info" data-idx="${idx}" style="
+                        background:none; border:none; color:#89b4fa; cursor:pointer; padding:0 3px; font-size:10px; opacity:0.7;
+                    " title="More info">(i)</button>
+                </div>
+                <button class="speed-preset-apply" data-idx="${idx}" style="
+                    background:#313244; border:1px solid #45475a; border-radius:3px;
+                    padding:2px 8px; cursor:pointer; color:#89b4fa; font-size:11px;
+                    transition:all 0.2s; min-width:60px;
+                " title="Apply speed">${preset.speed}</button>
+            </div>
+        `).join('');
+    }
+
+    private generateCustomPresetList(): string {
+        const presets = this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0];
+        // Ensure always 4 slots
+        const slots = Array(4).fill(0).map((_, i) => presets[i] ?? (i + 1));
+        
+        return slots.map((val, idx) => `
+            <div style="display:flex; align-items:center; gap:6px;">
+                 <label style="font-size:10px; color:#a6adc8; width:15px;">#${idx + 1}</label>
+                 <input type="number" class="custom-preset-input property-input" data-idx="${idx}" value="${val}" step="0.1" style="flex:1;">
+                 <button class="custom-preset-apply" data-idx="${idx}" style="
+                    background:#313244; border:1px solid #45475a; border-radius:4px;
+                    padding:4px 8px; cursor:pointer; color:#89b4fa; font-size:10px;
+                 ">Apply</button>
+            </div>
+        `).join('');
+    }
+
+    private applySpeedToSelected(rate: number): void {
+        const plate = this.state.world.selectedPlateId 
+            ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
+            : null;
+        if (plate) {
+            plate.motion.eulerPole.rate = rate;
+            this.updatePropertiesPanel();
+            this.canvasManager?.render();
+            this.pushState();
+        } else {
+            alert('Please select a plate first to apply this speed preset.');
+        }
+    }
+
+    private showPresetInfoDialog(idx: number): void {
+        const presets = this.getSpeedPresetData();
+        const preset = presets[idx];
+        if (!preset) return;
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+            padding: 20px;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #1e1e2e; border-radius: 12px; padding: 24px;
+            max-width: 500px; width: 100%; color: #cdd6f4; font-family: system-ui, sans-serif;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        `;
+
+        dialog.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+                <h3 style="margin:0; color:#89b4fa; font-size:18px;">${preset.name}</h3>
+                <div style="font-size:16px; color:#f38ba8; font-weight:600;">${preset.speed} ${preset.unit}</div>
+            </div>
+            <div style="margin-bottom:12px; padding:8px 12px; background:#313244; border-radius:6px; border-left:3px solid #89b4fa;">
+                <div style="font-size:11px; color:#a6adc8; text-transform:uppercase; font-weight:600; margin-bottom:4px;">Type</div>
+                <div style="font-size:14px; color:#cdd6f4;">${preset.type}</div>
+            </div>
+            <div style="font-size:13px; color:#bac2de; line-height:1.6;">
+                ${preset.details}
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button id="preset-info-apply" style="padding:8px 16px; border:1px solid #89b4fa; border-radius:6px; background:#313244; color:#89b4fa; cursor:pointer; font-weight:500;">Apply Speed</button>
+                <button id="preset-info-close" style="padding:8px 16px; border:1px solid #45475a; border-radius:6px; background:#313244; color:#cdd6f4; cursor:pointer;">Close</button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const cleanup = () => document.body.removeChild(overlay);
+        
+        dialog.querySelector('#preset-info-close')?.addEventListener('click', cleanup);
+        dialog.querySelector('#preset-info-apply')?.addEventListener('click', () => {
+            // Correct scaling: 10 cm/yr ~ 1.0 unit => cm/yr * 0.1
+            const speedScaled = preset.speed * 0.1;
+            const plate = this.state.world.selectedPlateId 
+                ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
+                : null;
+            if (plate) {
+                plate.motion.eulerPole.rate = speedScaled;
+                this.updatePropertiesPanel();
+                this.canvasManager?.render();
+                this.pushState();
+                cleanup();
+            } else {
+                alert('Please select a plate first to apply this speed preset.');
+            }
+        });
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+    }
 
     private syncUIToState(): void {
         const w = this.state.world;
@@ -1398,13 +1617,17 @@ class TectoLiteApp {
 
         (document.getElementById('check-boundary-vis') as HTMLInputElement).checked = !!g.enableBoundaryVisualization;
 
-        // Rate Presets
+        // Rate Presets (Custom)
         if (g.ratePresets && g.ratePresets.length === 4) {
-            (document.getElementById('global-rate-1') as HTMLInputElement).value = g.ratePresets[0].toString();
-            (document.getElementById('global-rate-2') as HTMLInputElement).value = g.ratePresets[1].toString();
-            (document.getElementById('global-rate-3') as HTMLInputElement).value = g.ratePresets[2].toString();
-            (document.getElementById('global-rate-4') as HTMLInputElement).value = g.ratePresets[3].toString();
+            const inputs = document.querySelectorAll('.custom-preset-input');
+            inputs.forEach((input) => {
+                const idx = parseInt(input.getAttribute('data-idx') || '0');
+                if (g.ratePresets && g.ratePresets[idx] !== undefined) {
+                    (input as HTMLInputElement).value = g.ratePresets[idx].toString();
+                }
+            });
         }
+
 
         // Projection Select
         const projSelect = document.getElementById('projection-select') as HTMLSelectElement;

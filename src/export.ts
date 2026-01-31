@@ -1,5 +1,5 @@
 // PNG Export functionality
-import { AppState, Feature, WorldState, ProjectionType } from './types';
+import { AppState, Feature, WorldState, ProjectionType, GeoPackageExportOptions } from './types';
 import { ProjectionManager } from './canvas/ProjectionManager';
 import { geoGraticule } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
@@ -645,3 +645,279 @@ export function parseImportFile(file: File): Promise<{ world: WorldState; viewpo
     });
 }
 
+// GeoPackage (QGIS) Export Dialog
+export function showGeoPackageExportDialog(): Promise<GeoPackageExportOptions | null> {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #1e1e2e; border-radius: 12px; padding: 24px;
+            min-width: 400px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        `;
+
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🗺️ Export to QGIS (GeoPackage)</h3>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Projection:</label>
+                <select id="gpkg-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
+                    <option value="equirectangular">Equirectangular</option>
+                    <option value="mercator">Mercator</option>
+                    <option value="mollweide">Mollweide</option>
+                    <option value="robinson">Robinson</option>
+                    <option value="orthographic">Orthographic (Globe)</option>
+                </select>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="gpkg-heightmap" checked style="cursor: pointer;">
+                    <span>Include Heightmap Raster Layer</span>
+                </label>
+            </div>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Resolution:</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
+                        <input type="number" id="gpkg-width" value="2048" min="512" max="8192"
+                            style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
+                    </div>
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
+                        <input type="number" id="gpkg-height" value="1024" min="512" max="8192"
+                            style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
+                    </div>
+                </div>
+            </div>
+
+            <div style="background: #313244; border-left: 4px solid #89b4fa; padding: 12px; border-radius: 4px; margin-bottom: 16px; font-size: 13px; color: #a6adc8;">
+                <strong style="color: #89b4fa;">ℹ️ Info:</strong> GeoPackage exports plates, features, and optional heightmap raster for use in QGIS.
+            </div>
+
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button id="gpkg-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
+                <button id="gpkg-confirm" style="padding: 8px 16px; border: none; border-radius: 6px; background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 500;">Export to QGIS</button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const cleanup = () => document.body.removeChild(overlay);
+        const onCancel = () => { cleanup(); resolve(null); };
+
+        dialog.querySelector('#gpkg-cancel')?.addEventListener('click', onCancel);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
+
+        dialog.querySelector('#gpkg-confirm')?.addEventListener('click', () => {
+            const w = parseInt((dialog.querySelector('#gpkg-width') as HTMLInputElement).value);
+            const h = parseInt((dialog.querySelector('#gpkg-height') as HTMLInputElement).value);
+            const projection = (dialog.querySelector('#gpkg-projection') as HTMLSelectElement).value as ProjectionType;
+            const includeHeightmap = (dialog.querySelector('#gpkg-heightmap') as HTMLInputElement).checked;
+            cleanup();
+            if (w > 0 && h > 0) {
+                resolve({ width: w, height: h, projection, includeHeightmap });
+            } else {
+                resolve(null);
+            }
+        });
+    });
+}
+// Unified Export Dialog (consolidates PNG, Heightmap, and QGIS options)
+export type UnifiedExportFormat = 'png' | 'heightmap' | 'qgis';
+
+export interface UnifiedExportOptions {
+    format: UnifiedExportFormat;
+    projection?: ProjectionType;
+    width?: number;
+    height?: number;
+    includeHeightmap?: boolean;
+}
+
+export function showUnifiedExportDialog(): Promise<UnifiedExportOptions | null> {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #1e1e2e; border-radius: 12px; padding: 24px;
+            min-width: 450px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            max-height: 80vh; overflow-y: auto;
+        `;
+
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 20px 0; color: #89b4fa;">📤 Export Options</h3>
+            
+            <!-- Format Selector -->
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Export Format:</label>
+                <div style="display: flex; gap: 8px;">
+                    <button id="fmt-png" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid #89b4fa; background: #313244; border-radius: 6px; color: #cdd6f4; cursor: pointer; font-weight: 600;">
+                        🖼️ PNG Image
+                    </button>
+                    <button id="fmt-heightmap" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid #45475a; background: #313244; border-radius: 6px; color: #cdd6f4; cursor: pointer; font-weight: 600;">
+                        🗺️ Heightmap
+                    </button>
+                    <button id="fmt-qgis" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid #45475a; background: #313244; border-radius: 6px; color: #cdd6f4; cursor: pointer; font-weight: 600;">
+                        🌍 QGIS
+                    </button>
+                </div>
+            </div>
+
+            <!-- PNG Options -->
+            <div id="options-png" style="display: block; margin-bottom: 20px; padding: 16px; background: #313244; border-radius: 6px; border-left: 4px solid #89b4fa;">
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Projection:</label>
+                <select id="export-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4; margin-bottom: 12px;">
+                    <option value="orthographic">Globe (Orthographic)</option>
+                    <option value="equirectangular">Flat Map (Equirectangular)</option>
+                    <option value="mercator">Mercator</option>
+                    <option value="mollweide">Mollweide</option>
+                    <option value="robinson">Robinson</option>
+                </select>
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution:</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
+                        <input type="number" id="export-width" value="1920" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                    </div>
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
+                        <input type="number" id="export-height" value="1080" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Heightmap Options -->
+            <div id="options-heightmap" style="display: none; margin-bottom: 20px; padding: 16px; background: #313244; border-radius: 6px; border-left: 4px solid #89b4fa;">
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Projection:</label>
+                <select id="hm-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4; margin-bottom: 12px;">
+                    <option value="equirectangular">Equirectangular</option>
+                    <option value="mercator">Mercator</option>
+                    <option value="mollweide">Mollweide</option>
+                    <option value="robinson">Robinson</option>
+                    <option value="orthographic">Orthographic (Globe)</option>
+                </select>
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution:</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
+                        <input type="number" id="hm-width" value="4096" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                    </div>
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
+                        <input type="number" id="hm-height" value="2048" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- QGIS Options -->
+            <div id="options-qgis" style="display: none; margin-bottom: 20px; padding: 16px; background: #313244; border-radius: 6px; border-left: 4px solid #89b4fa;">
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Projection:</label>
+                <select id="qgis-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4; margin-bottom: 12px;">
+                    <option value="equirectangular">Equirectangular</option>
+                    <option value="mercator">Mercator</option>
+                    <option value="mollweide">Mollweide</option>
+                    <option value="robinson">Robinson</option>
+                    <option value="orthographic">Orthographic (Globe)</option>
+                </select>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 12px;">
+                    <input type="checkbox" id="qgis-heightmap" checked style="cursor: pointer;">
+                    <span>Include Heightmap Raster Layer</span>
+                </label>
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution:</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
+                        <input type="number" id="qgis-width" value="2048" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                    </div>
+                    <div>
+                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
+                        <input type="number" id="qgis-height" value="1024" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button id="export-cancel" style="padding: 10px 20px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer; font-weight: 500;">Cancel</button>
+                <button id="export-confirm" style="padding: 10px 20px; border: none; border-radius: 6px; background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 600;">Export</button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        let selectedFormat: UnifiedExportFormat = 'png';
+
+        // Format selector buttons
+        const formatBtns = dialog.querySelectorAll('.format-btn');
+        formatBtns.forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const formatId = target.id;
+                const format = formatId.replace('fmt-', '') as UnifiedExportFormat;
+                
+                selectedFormat = format;
+                
+                // Update button styles
+                formatBtns.forEach((b) => {
+                    (b as HTMLElement).style.borderColor = '#45475a';
+                });
+                (target as HTMLElement).style.borderColor = '#89b4fa';
+                
+                // Show/hide option panels
+                (dialog.querySelector('#options-png') as HTMLElement).style.display = format === 'png' ? 'block' : 'none';
+                (dialog.querySelector('#options-heightmap') as HTMLElement).style.display = format === 'heightmap' ? 'block' : 'none';
+                (dialog.querySelector('#options-qgis') as HTMLElement).style.display = format === 'qgis' ? 'block' : 'none';
+            });
+        });
+
+        const cleanup = () => document.body.removeChild(overlay);
+        const onCancel = () => { cleanup(); resolve(null); };
+
+        dialog.querySelector('#export-cancel')?.addEventListener('click', onCancel);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
+
+        dialog.querySelector('#export-confirm')?.addEventListener('click', () => {
+            cleanup();
+            
+            if (selectedFormat === 'png') {
+                const w = parseInt((dialog.querySelector('#export-width') as HTMLInputElement).value);
+                const h = parseInt((dialog.querySelector('#export-height') as HTMLInputElement).value);
+                const proj = (dialog.querySelector('#export-projection') as HTMLSelectElement).value as ProjectionType;
+                if (w > 0 && h > 0) {
+                    resolve({ format: 'png', projection: proj, width: w, height: h });
+                }
+            } else if (selectedFormat === 'heightmap') {
+                const w = parseInt((dialog.querySelector('#hm-width') as HTMLInputElement).value);
+                const h = parseInt((dialog.querySelector('#hm-height') as HTMLInputElement).value);
+                const proj = (dialog.querySelector('#hm-projection') as HTMLSelectElement).value as ProjectionType;
+                if (w > 0 && h > 0) {
+                    resolve({ format: 'heightmap', projection: proj, width: w, height: h });
+                }
+            } else if (selectedFormat === 'qgis') {
+                const w = parseInt((dialog.querySelector('#qgis-width') as HTMLInputElement).value);
+                const h = parseInt((dialog.querySelector('#qgis-height') as HTMLInputElement).value);
+                const proj = (dialog.querySelector('#qgis-projection') as HTMLSelectElement).value as ProjectionType;
+                const hm = (dialog.querySelector('#qgis-heightmap') as HTMLInputElement).checked;
+                if (w > 0 && h > 0) {
+                    resolve({ format: 'qgis', projection: proj, width: w, height: h, includeHeightmap: hm });
+                }
+            }
+        });
+    });
+}

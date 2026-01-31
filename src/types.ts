@@ -263,3 +263,10 @@ export function getNextPlateColor(existingPlates: TectonicPlate[]): string {
   return PLATE_COLORS[existingPlates.length % PLATE_COLORS.length];
 }
 
+// GeoPackage Export Options
+export interface GeoPackageExportOptions {
+  width: number;
+  height: number;
+  projection: ProjectionType;
+  includeHeightmap: boolean;
+}
