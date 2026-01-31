@@ -1,0 +1,27 @@
+appId: com.tectolite.app
+productName: TectoLite
+directories:
+  buildResources: assets
+  output: release
+
+win:
+  target:
+    - nsis
+    - portable
+  certificateFile: null
+  certificatePassword: null
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: TectoLite
+
+portable:
+  artifactName: ${productName}-${version}-portable.exe
+
+files:
+  - dist/**/*
+  - package.json
+  - node_modules/**/*
