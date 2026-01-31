@@ -1383,6 +1383,8 @@ export class CanvasManager {
 
     private cachedOverlayImage: HTMLImageElement | null = null;
     private cachedOverlayImageData: string | null = null;
+    private tempCanvas: HTMLCanvasElement | null = null;
+    private tempCanvasImageData: ImageData | null = null;
 
     private drawImageOverlay(state: AppState): void {
         const overlay = state.world.imageOverlay;
@@ -1393,6 +1395,9 @@ export class CanvasManager {
             this.cachedOverlayImage = new Image();
             this.cachedOverlayImage.src = overlay.imageData;
             this.cachedOverlayImageData = overlay.imageData;
+            // Clear cached canvas data when image changes
+            this.tempCanvas = null;
+            this.tempCanvasImageData = null;
         }
 
         const img = this.cachedOverlayImage;
@@ -1424,9 +1429,28 @@ export class CanvasManager {
             this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
         } else {
             // For other projections, sample the equirectangular image
-            // This is more complex - for now, render a grid of points
+            // Cache the temp canvas and image data
+            if (!this.tempCanvas || !this.tempCanvasImageData) {
+                this.tempCanvas = document.createElement('canvas');
+                this.tempCanvas.width = img.width;
+                this.tempCanvas.height = img.height;
+                const tempCtx = this.tempCanvas.getContext('2d');
+                if (tempCtx) {
+                    tempCtx.drawImage(img, 0, 0);
+                    // Get entire image data once for efficiency
+                    this.tempCanvasImageData = tempCtx.getImageData(0, 0, img.width, img.height);
+                }
+            }
+
+            if (!this.tempCanvasImageData) {
+                this.ctx.restore();
+                return;
+            }
+
             const sampleSize = 5; // degrees
             const pathGen = this.projectionManager.getPathGenerator();
+            const imgData = this.tempCanvasImageData;
+            const imgWidth = img.width;
 
             for (let lat = -90; lat < 90; lat += sampleSize) {
                 for (let lon = -180; lon < 180; lon += sampleSize) {
@@ -1434,26 +1458,18 @@ export class CanvasManager {
                     const u = (lon + 180) / 360;
                     const v = (90 - lat) / 180;
 
-                    // Get color from image
-                    const px = Math.floor(u * img.width);
-                    const py = Math.floor(v * img.height);
+                    // Get color from image - clamp to prevent out of bounds
+                    const px = Math.min(Math.floor(u * img.width), img.width - 1);
+                    const py = Math.min(Math.floor(v * img.height), img.height - 1);
 
-                    // Create temporary canvas to read pixel data
-                    if (!this.tempCanvas) {
-                        this.tempCanvas = document.createElement('canvas');
-                        this.tempCanvas.width = img.width;
-                        this.tempCanvas.height = img.height;
-                        const tempCtx = this.tempCanvas.getContext('2d');
-                        if (tempCtx) {
-                            tempCtx.drawImage(img, 0, 0);
-                        }
-                    }
+                    // Access pixel data directly from cached ImageData
+                    const idx = (py * imgWidth + px) * 4;
+                    const r = imgData.data[idx];
+                    const g = imgData.data[idx + 1];
+                    const b = imgData.data[idx + 2];
+                    const a = imgData.data[idx + 3] / 255;
 
-                    const tempCtx = this.tempCanvas.getContext('2d');
-                    if (!tempCtx) continue;
-
-                    const imageData = tempCtx.getImageData(px, py, 1, 1).data;
-                    const color = `rgba(${imageData[0]}, ${imageData[1]}, ${imageData[2]}, ${imageData[3] / 255})`;
+                    const color = `rgba(${r}, ${g}, ${b}, ${a})`;
 
                     // Draw a small polygon at this location
                     this.ctx.fillStyle = color;
@@ -1475,6 +1491,4 @@ export class CanvasManager {
 
         this.ctx.restore();
     }
-
-    private tempCanvas: HTMLCanvasElement | null = null;
 }
