@@ -1039,6 +1039,9 @@ class TectoLiteApp {
             const isChecked = (e.target as HTMLInputElement).checked;
             this.state.world.timeMode = isChecked ? 'negative' : 'positive';
             this.updateTimeDisplay();
+            // Refresh property panels to show transformed time values
+            this.updatePropertiesPanel();
+            this.bindFeatureEvents();
             this.canvasManager?.render();
         });
 
@@ -1951,9 +1954,9 @@ class TectoLiteApp {
       <div class="property-group">
         <label class="property-label">Timeline (Ma)</label>
         <div style="display: flex; gap: 4px;">
-             <input type="number" id="prop-birth-time" class="property-input" title="Start Time" value="${plate.birthTime}" step="5" style="flex:1">
+             <input type="number" id="prop-birth-time" class="property-input" title="Start Time" value="${this.getDisplayTimeValue(plate.birthTime)}" step="5" style="flex:1">
              <span style="align-self: center;">-</span>
-             <input type="number" id="prop-death-time" class="property-input" title="End Time" value="${plate.deathTime ?? ''}" placeholder="Active" step="5" style="flex:1">
+             <input type="number" id="prop-death-time" class="property-input" title="End Time" value="${this.getDisplayTimeValue(plate.deathTime) ?? ''}" placeholder="Active" step="5" style="flex:1">
         </div>
       </div>
 
@@ -2201,12 +2204,12 @@ class TectoLiteApp {
       </div>
       <div class="property-group">
         <label class="property-label">Created At(Ma)</label>
-        <input type="number" id="feature-created-at" class="property-input" value="${createdAt.toFixed(1)}" step="0.1" style="width: 80px;">
+        <input type="number" id="feature-created-at" class="property-input" value="${this.getDisplayTimeValue(feature.generatedAt)?.toFixed(1) ?? ''}" step="0.1" style="width: 80px;">
         <span class="property-hint" style="margin-left: 8px; color: #888;">Age: ${age} Ma</span>
       </div>
       <div class="property-group">
         <label class="property-label">Ends At(Ma)</label>
-        <input type="number" id="feature-death-time" class="property-input" value="${feature.deathTime?.toFixed(1) ?? ''}" step="0.1" style="width: 80px;" placeholder="Never">
+        <input type="number" id="feature-death-time" class="property-input" value="${this.getDisplayTimeValue(feature.deathTime) !== null ? this.getDisplayTimeValue(feature.deathTime)?.toFixed(1) : ''}" step="0.1" style="width: 80px;" placeholder="Never">
       </div>
       <div class="property-group">
         <label class="property-label">Name</label>
@@ -2337,11 +2340,23 @@ class TectoLiteApp {
     }
 
     /**
-     * Helper method to transform user-entered time values based on current time mode
-     * Used when users input times in property fields, during dragging, or other interactions
-     * @param userInputTime - Time value entered by user (positive or negative depending on mode)
-     * @returns Internal positive time value
+     * Get display value for a time based on current time mode
+     * Used for showing time in property fields and attributes
+     * @param internalTime - Internal positive time value
+     * @returns Display value (positive or negative based on mode)
      */
+    private getDisplayTimeValue(internalTime: number | null | undefined): number | null {
+        if (internalTime === null || internalTime === undefined) return null;
+        
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+        
+        return toDisplayTime(internalTime, {
+            maxTime: maxTime,
+            mode: this.state.world.timeMode
+        });
+    }
+
     private transformInputTime(userInputTime: number): number {
         const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
         const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
@@ -2350,6 +2365,11 @@ class TectoLiteApp {
             maxTime: maxTime,
             mode: this.state.world.timeMode
         });
+    }
+
+    private getMaxTime(): number {
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        return maxTimeInput ? parseInt(maxTimeInput.value) : 500;
     }
 
     private addMotionKeyframe(plateId: string, newEulerPole: { position: Coordinate; rate: number; visible?: boolean }): void {
@@ -2407,12 +2427,19 @@ class TectoLiteApp {
 
     private handleDragTargetRequest(plateId: string, axis: Vector3, angleRad: number): void {
         const current = this.state.world.currentTime;
-        const promptText = `Target Time(Ma) ? (Current: ${current})`;
+        const displayCurrent = toDisplayTime(current, {
+            maxTime: this.getMaxTime(),
+            mode: this.state.world.timeMode
+        });
+        const promptText = `Target Time(Ma) ? (Current: ${displayCurrent})`;
         const input = window.prompt(promptText);
         if (!input) return;
 
-        const targetTime = parseFloat(input);
-        if (isNaN(targetTime)) return;
+        const userInputTime = parseFloat(input);
+        if (isNaN(userInputTime)) return;
+
+        // Transform user input based on time mode
+        const targetTime = this.transformInputTime(userInputTime);
 
         const dt = targetTime - current;
         if (Math.abs(dt) < 0.001) {
@@ -2439,6 +2466,13 @@ class TectoLiteApp {
         const uniqueIds = Array.from(new Set(allIds));
 
         uniqueIds.forEach(id => this.addMotionKeyframe(id, newEulerPole));
+        
+        // Refresh property panel to show updated Euler pole position
+        this.updatePropertiesPanel();
+        // Update motion gizmo to show new pole position
+        if (this.canvasManager && plate) {
+            this.canvasManager.setSelectedPlate(plate.id);
+        }
     }
 
     /** Push current state to history (call before meaningful changes) */

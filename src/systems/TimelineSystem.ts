@@ -2,6 +2,7 @@
 import { TectonicPlate, MotionKeyframe, Coordinate, PlateEvent } from '../types';
 import { SimulationEngine } from '../SimulationEngine';
 import { HistoryManager } from '../HistoryManager';
+import { toDisplayTime, toInternalTime } from '../utils/TimeTransformationUtils';
 
 // Unified Event Interface for UI
 export interface TimelineEventItem {
@@ -126,7 +127,10 @@ export class TimelineSystem {
 
         const timeBadge = document.createElement('span');
         timeBadge.className = 'timeline-time';
-        timeBadge.textContent = event.time.toFixed(1);
+        
+        // Apply display transformation based on app's time mode
+        const displayTime = this.getDisplayTime(event.time);
+        timeBadge.textContent = displayTime.toFixed(1);
 
         const label = document.createElement('span');
         label.className = 'timeline-label';
@@ -148,10 +152,9 @@ export class TimelineSystem {
         if (event.isEditable) {
             // Only show cascade option for Birth and Split and Fuse events where it matters most
             const showCascade = event.type === 'birth' || event.type === 'split' || event.type === 'fuse';
-
             const timeRow = this.createInputRow('Time', event.time, (val, cascade) => {
                 this.updateEventTime(event, val, cascade);
-            }, 1, showCascade);
+            }, 1, showCascade, true);  // true = isTimeField
             content.appendChild(timeRow);
         }
 
@@ -223,7 +226,7 @@ export class TimelineSystem {
         return item;
     }
 
-    private createInputRow(label: string, value: number, onChange: (val: number, cascade: boolean) => void, step = 1, showCascade = false): HTMLElement {
+    private createInputRow(label: string, value: number, onChange: (val: number, cascade: boolean) => void, step = 1, showCascade = false, isTimeField = false): HTMLElement {
         const row = document.createElement('div');
         row.className = 'timeline-row';
 
@@ -234,7 +237,10 @@ export class TimelineSystem {
         const input = document.createElement('input');
         input.type = 'number';
         input.step = step.toString();
-        input.value = value.toFixed(1);
+        
+        // For time fields, display the transformed value
+        const displayValue = isTimeField ? this.getDisplayTime(value) : value;
+        input.value = displayValue.toFixed(1);
         input.className = 'timeline-input';
 
         // Cascade Checkbox
@@ -292,11 +298,17 @@ export class TimelineSystem {
     }
 
     private updateEventTime(event: TimelineEventItem, newTime: number, cascade: boolean) {
+        // Convert display time to internal time
+        const internalTime = toInternalTime(newTime, {
+            maxTime: this.getMaxTime(),
+            mode: this.app?.state?.world?.timeMode || 'positive'
+        });
+
         this.pushHistory();
 
         if (event.type === 'birth') {
-            const delta = newTime - (this.plate?.birthTime || 0);
-            this.plate!.birthTime = newTime;
+            const delta = internalTime - (this.plate?.birthTime || 0);
+            this.plate!.birthTime = internalTime;
 
             if (cascade) {
                 // Shift all keyframes
@@ -312,18 +324,18 @@ export class TimelineSystem {
                 const parent = plates.find(p => p.id === this.plate!.parentPlateId);
                 if (parent) {
                     // 1. Update Parent's Death Time
-                    parent.deathTime = newTime;
+                    parent.deathTime = internalTime;
 
                     // 2. Update Parent's Split Event
-                    const splitEvt = (parent.events || []).find(e => e.type === 'split' && Math.abs(e.time - (newTime - delta)) < 0.1);
+                    const splitEvt = (parent.events || []).find(e => e.type === 'split' && Math.abs(e.time - (internalTime - delta)) < 0.1);
                     if (splitEvt) {
-                        splitEvt.time = newTime;
+                        splitEvt.time = internalTime;
                     }
 
                     // 3. Update Sibling
-                    const sibling = plates.find(p => p.id !== this.plate!.id && p.parentPlateId === parent.id && Math.abs(p.birthTime - (newTime - delta)) < 0.1);
+                    const sibling = plates.find(p => p.id !== this.plate!.id && p.parentPlateId === parent.id && Math.abs(p.birthTime - (internalTime - delta)) < 0.1);
                     if (sibling) {
-                        sibling.birthTime = newTime;
+                        sibling.birthTime = internalTime;
                         if (cascade) {
                             sibling.motionKeyframes.forEach(skf => skf.time += delta);
                             sibling.events.forEach(sevt => sevt.time += delta);
@@ -446,5 +458,21 @@ export class TimelineSystem {
 
             this.render(this.plate); // Re-render the UI for current plate
         }
+    }
+
+    private getDisplayTime(internalTime: number): number {
+        // Get max time and time mode from app state
+        const maxTime = this.getMaxTime();
+        const timeMode = this.app?.state?.world?.timeMode || 'positive';
+        
+        return toDisplayTime(internalTime, {
+            maxTime: maxTime,
+            mode: timeMode
+        });
+    }
+
+    private getMaxTime(): number {
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        return maxTimeInput ? parseInt(maxTimeInput.value) : 500;
     }
 }
