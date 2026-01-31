@@ -579,6 +579,8 @@ export class CanvasManager {
         // Check features first
         for (const plate of state.world.plates) {
             if (!plate.visible) continue;
+            // Lifecycle check: Only hit test valid plates for current time
+            if (state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
             for (const feature of plate.features) {
                 const proj = this.projectionManager.project(feature.position);
                 if (proj) {
@@ -600,6 +602,8 @@ export class CanvasManager {
         for (let i = state.world.plates.length - 1; i >= 0; i--) {
             const plate = state.world.plates[i];
             if (!plate.visible) continue;
+            // Lifecycle check
+            if (state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
 
             for (const poly of plate.polygons) {
                 const geojson = toGeoJSON(poly);

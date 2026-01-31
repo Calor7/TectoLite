@@ -1549,6 +1549,28 @@ class TectoLiteApp {
         this.canvasManager?.render();
     }
 
+    private updateFeature(featureId: string, updates: Partial<Feature>): void {
+        this.pushState();
+        this.state.world.plates = this.state.world.plates.map(p => {
+            const applyUpdates = (f: Feature) => (f.id === featureId ? { ...f, ...updates } : f);
+
+            return {
+                ...p,
+                features: p.features.map(applyUpdates),
+                initialFeatures: p.initialFeatures ? p.initialFeatures.map(applyUpdates) : p.initialFeatures,
+                motionKeyframes: p.motionKeyframes ? p.motionKeyframes.map(kf => ({
+                    ...kf,
+                    snapshotFeatures: kf.snapshotFeatures.map(applyUpdates)
+                })) : p.motionKeyframes
+            };
+        });
+
+        // Re-calculate the current state of plates at current time to reflect changes
+        this.simulation?.setTime(this.state.world.currentTime);
+        this.updatePropertiesPanel();
+        this.canvasManager?.render();
+    }
+
     private updatePlateList(): void {
         const list = document.getElementById('plate-list');
         if (!list) return;
@@ -1839,7 +1861,7 @@ class TectoLiteApp {
         });
 
         // Bind feature property events
-        this.bindFeatureEvents(plate);
+        this.bindFeatureEvents();
 
         // Update Timeline Panel
         if (this.timelineSystem) {
@@ -1904,7 +1926,7 @@ class TectoLiteApp {
     `;
     }
 
-    private bindFeatureEvents(plate: TectonicPlate): void {
+    private bindFeatureEvents(): void {
         const { selectedFeatureId, selectedFeatureIds } = this.state.world;
         const singleFeatureId = selectedFeatureIds.length === 1
             ? selectedFeatureIds[0]
@@ -1912,36 +1934,31 @@ class TectoLiteApp {
 
         if (!singleFeatureId) return;
 
-        const feature = plate.features.find(f => f.id === singleFeatureId);
-        if (!feature) return;
-
         document.getElementById('feature-name')?.addEventListener('change', (e) => {
-            feature.name = (e.target as HTMLInputElement).value;
+            this.updateFeature(singleFeatureId, { name: (e.target as HTMLInputElement).value });
         });
 
         document.getElementById('feature-description')?.addEventListener('change', (e) => {
-            feature.description = (e.target as HTMLTextAreaElement).value;
+            this.updateFeature(singleFeatureId, { description: (e.target as HTMLTextAreaElement).value });
         });
 
         document.getElementById('feature-created-at')?.addEventListener('change', (e) => {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val)) {
-                feature.generatedAt = val;
-                this.updatePropertiesPanel(); // Refresh to show updated age
+                this.updateFeature(singleFeatureId, { generatedAt: val });
             }
         });
 
         document.getElementById('feature-death-time')?.addEventListener('change', (e) => {
             const val = (e.target as HTMLInputElement).value;
             if (val === '' || val === null) {
-                feature.deathTime = undefined; // Clear death time
+                this.updateFeature(singleFeatureId, { deathTime: undefined });
             } else {
                 const num = parseFloat(val);
                 if (!isNaN(num)) {
-                    feature.deathTime = num;
+                    this.updateFeature(singleFeatureId, { deathTime: num });
                 }
             }
-            this.canvasManager?.render(); // Refresh to show/hide if outside timeline
         });
     }
 
