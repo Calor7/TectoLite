@@ -2072,13 +2072,27 @@ class TectoLiteApp {
         });
 
         document.getElementById('prop-birth-time')?.addEventListener('change', (e) => {
-            plate.birthTime = parseFloat((e.target as HTMLInputElement).value);
-            this.canvasManager?.render();
+            const userInput = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(userInput)) {
+                // Transform user input (positive or negative) to internal time
+                plate.birthTime = this.transformInputTime(userInput);
+                this.canvasManager?.render();
+            }
         });
 
         document.getElementById('prop-death-time')?.addEventListener('change', (e) => {
             const val = (e.target as HTMLInputElement).value;
-            plate.deathTime = val ? parseFloat(val) : null;
+            if (val) {
+                const userInput = parseFloat(val);
+                if (!isNaN(userInput)) {
+                    // Transform user input (positive or negative) to internal time
+                    plate.deathTime = this.transformInputTime(userInput);
+                } else {
+                    plate.deathTime = null;
+                }
+            } else {
+                plate.deathTime = null;
+            }
             this.canvasManager?.render();
         });
 
@@ -2222,9 +2236,11 @@ class TectoLiteApp {
         });
 
         document.getElementById('feature-created-at')?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val)) {
-                this.updateFeature(singleFeatureId, { generatedAt: val });
+            const userInput = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(userInput)) {
+                // Transform user input (positive or negative) to internal time
+                const internalTime = this.transformInputTime(userInput);
+                this.updateFeature(singleFeatureId, { generatedAt: internalTime });
             }
         });
 
@@ -2233,9 +2249,11 @@ class TectoLiteApp {
             if (val === '' || val === null) {
                 this.updateFeature(singleFeatureId, { deathTime: undefined });
             } else {
-                const num = parseFloat(val);
-                if (!isNaN(num)) {
-                    this.updateFeature(singleFeatureId, { deathTime: num });
+                const userInput = parseFloat(val);
+                if (!isNaN(userInput)) {
+                    // Transform user input (positive or negative) to internal time
+                    const internalTime = this.transformInputTime(userInput);
+                    this.updateFeature(singleFeatureId, { deathTime: internalTime });
                 }
             }
         });
@@ -2316,6 +2334,22 @@ class TectoLiteApp {
         
         // Close modal
         modal.style.display = 'none';
+    }
+
+    /**
+     * Helper method to transform user-entered time values based on current time mode
+     * Used when users input times in property fields, during dragging, or other interactions
+     * @param userInputTime - Time value entered by user (positive or negative depending on mode)
+     * @returns Internal positive time value
+     */
+    private transformInputTime(userInputTime: number): number {
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+        
+        return toInternalTime(userInputTime, {
+            maxTime: maxTime,
+            mode: this.state.world.timeMode
+        });
     }
 
     private addMotionKeyframe(plateId: string, newEulerPole: { position: Coordinate; rate: number; visible?: boolean }): void {
