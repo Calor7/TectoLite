@@ -66,7 +66,8 @@ export class CanvasManager {
         private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void,
         private onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void,
         private onPolyFeatureComplete?: (points: Coordinate[], fillColor: string) => void,
-        private onMotionPreviewChange?: (active: boolean) => void
+        private onMotionPreviewChange?: (active: boolean) => void,
+        private onDrawUpdate?: (count: number) => void
     ) {
         this.canvas = canvas;
         const ctx = canvas.getContext('2d');
@@ -138,13 +139,65 @@ export class CanvasManager {
 
         this.canvas.addEventListener('wheel', this.handleWheel.bind(this));
         this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
-        this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+        this.canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.handleRightClick(e);
+        });
+
+        window.addEventListener('keydown', this.handleKeyDown.bind(this));
     }
 
     // Helper to get [lon, lat] from mouse
     private getGeoFromMouse(e: MouseEvent): Coordinate | null {
         const rect = this.canvas.getBoundingClientRect();
         return this.projectionManager.invert(e.clientX - rect.left, e.clientY - rect.top);
+    }
+
+    private handleRightClick(_e: MouseEvent): void {
+        const state = this.getState();
+        if ((state.activeTool === 'draw' || state.activeTool === 'poly_feature') && this.isDrawing) {
+            if (this.currentPolygon.length > 0) {
+                this.currentPolygon.pop();
+                if (this.currentPolygon.length === 0) this.isDrawing = false;
+                if (this.onDrawUpdate) this.onDrawUpdate(this.currentPolygon.length);
+                this.render();
+            }
+        } else if (state.activeTool === 'split' && this.splitPoints.length > 0) {
+            this.splitPoints.pop();
+            if (this.onDrawUpdate && state.activeTool === 'split') this.onDrawUpdate(this.splitPoints.length);
+            this.render();
+        }
+    }
+
+    private handleKeyDown(e: KeyboardEvent): void {
+        const state = this.getState();
+        if (e.key === 'Enter') {
+            if (state.activeTool === 'draw' && this.isDrawing && this.currentPolygon.length >= 3) {
+                this.onDrawComplete([...this.currentPolygon]);
+                this.currentPolygon = [];
+                this.isDrawing = false;
+                this.render();
+            } else if (state.activeTool === 'split' && this.splitPoints.length >= 2) {
+                this.onSplitApply([...this.splitPoints]);
+                this.splitPoints = [];
+                this.splitPreviewActive = false;
+                this.onSplitPreviewChange(false);
+                this.render();
+            }
+        } else if (e.key === 'Escape') {
+            // Cancel drawing/splitting
+            if (this.isDrawing) {
+                this.isDrawing = false;
+                this.currentPolygon = [];
+                this.render();
+            }
+            if (this.splitPoints.length > 0) {
+                this.splitPoints = [];
+                this.splitPreviewActive = false;
+                this.onSplitPreviewChange(false);
+                this.render();
+            }
+        }
     }
 
     private getMousePos(e: MouseEvent): Point {
@@ -239,6 +292,7 @@ export class CanvasManager {
                         } else {
                             this.currentPolygon.push(geoPos);
                         }
+                        if (this.onDrawUpdate) this.onDrawUpdate(this.currentPolygon.length);
                         this.render();
                     }
                     break;
@@ -296,6 +350,7 @@ export class CanvasManager {
                     if (geoPos) {
                         // Add point to split polyline
                         this.splitPoints.push(geoPos);
+                        if (this.onDrawUpdate) this.onDrawUpdate(this.splitPoints.length);
                         if (!this.splitPreviewActive && this.splitPoints.length >= 1) {
                             this.splitPreviewActive = true;
                             this.onSplitPreviewChange(true);
@@ -520,6 +575,12 @@ export class CanvasManager {
             }
             this.currentPolygon = [];
             this.isDrawing = false;
+            this.render();
+        } else if (state.activeTool === 'split' && this.splitPoints.length >= 2) {
+            this.onSplitApply([...this.splitPoints]);
+            this.splitPoints = [];
+            this.splitPreviewActive = false;
+            this.onSplitPreviewChange(false);
             this.render();
         } else if (state.activeTool === 'select') {
             // Handle Feature Multi-Select via Double-Click

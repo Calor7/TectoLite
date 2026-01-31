@@ -34,6 +34,7 @@ class TectoLiteApp {
     private canvasManager: CanvasManager | null = null;
     private simulation: SimulationEngine | null = null;
     private historyManager: HistoryManager = new HistoryManager();
+    private activeToolText: string = "INFO LOADING...";
     private fusionFirstPlateId: string | null = null; // Track first plate for fusion
     private activeLinkSourceId: string | null = null; // Track first plate for linking
     private momentumClipboard: { eulerPole: { position: Coordinate; rate: number } } | null = null; // Clipboard for momentum
@@ -67,7 +68,8 @@ class TectoLiteApp {
             (active) => {
                 const el = document.getElementById('motion-controls');
                 if (el) el.style.display = active ? 'block' : 'none';
-            }
+            },
+            (count) => this.handleDrawUpdate(count)
         );
 
         // Initialize simulation
@@ -223,7 +225,12 @@ class TectoLiteApp {
           <aside class="toolbar">
             <!-- 1. TOOLS GROUP -->
             <div class="tool-group">
-              <h3 class="tool-group-title">Interaction</h3>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <h3 class="tool-group-title" style="margin: 0;">Interaction</h3>
+                <label style="font-size: 10px; display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-secondary);" title="Toggle on-canvas tooltips">
+                  <input type="checkbox" id="check-show-hints" ${this.state.world.globalOptions.showHints !== false ? 'checked' : ''}> Hints
+                </label>
+              </div>
               <div style="display: flex; gap: 4px; flex-wrap: wrap;">
                   <button class="tool-btn active" data-tool="select" style="flex:1;">
                     <span class="tool-icon">👆</span>
@@ -293,14 +300,6 @@ class TectoLiteApp {
                       <button class="btn btn-secondary" id="btn-motion-cancel">✗ Cancel</button>
                  </div>
 
-                 <div id="fuse-controls" style="display: none;">
-                      <label class="view-option">
-                        <input type="checkbox" id="check-add-weakness"> Add Weakness Features
-                      </label>
-                      <label class="view-option">
-                        <input type="checkbox" id="check-add-mountains"> Auto Create Mountains
-                      </label>
-                 </div>
 
                  <!-- Motion Mode Specifics -->
                  <div style="margin-top: 8px;">
@@ -401,6 +400,31 @@ class TectoLiteApp {
     `;
     }
 
+    private updateRetroStatusBox(text: string | null): void {
+        const statusBox = document.getElementById('retro-status-text');
+        if (statusBox) statusBox.textContent = text || this.activeToolText || "INFO LOADING...";
+    }
+
+    private updateHint(text: string | null): void {
+        if (text !== null) this.activeToolText = text;
+
+        const showHints = this.state.world.globalOptions.showHints !== false;
+
+        // Update Retro Status Box
+        this.updateRetroStatusBox(text);
+
+        // Update Canvas Hint
+        const hint = document.getElementById('canvas-hint');
+        if (hint) {
+            if (showHints && text) {
+                hint.textContent = text;
+                hint.style.display = 'block';
+            } else {
+                hint.style.display = 'none';
+            }
+        }
+    }
+
     private setupEventListeners(): void {
         // Fullscreen Toggle
         document.getElementById('btn-fullscreen')?.addEventListener('click', () => {
@@ -496,14 +520,6 @@ class TectoLiteApp {
             }
         };
 
-        // Update active tool Info for Retro Status Box
-        let activeToolText = "INFO LOADING...";
-
-        const updateRetroStatusBox = (text: string | null) => {
-            const statusBox = document.getElementById('retro-status-text');
-            if (statusBox) statusBox.textContent = text || activeToolText || "INFO LOADING...";
-        };
-
         // Delegated Tooltip Logic
         const handleTooltipHover = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -568,7 +584,7 @@ class TectoLiteApp {
             if (text) {
                 if (isRetro) {
                     // Update Retro Status Box
-                    updateRetroStatusBox(text);
+                    this.updateRetroStatusBox(text);
                 } else if (tooltip) {
                     // Modern Tooltip
                     tooltip.textContent = text;
@@ -607,7 +623,7 @@ class TectoLiteApp {
 
             if (isRetro) {
                 // Restore active tool text
-                updateRetroStatusBox(activeToolText);
+                this.updateRetroStatusBox(this.activeToolText);
             } else if (tooltip) {
                 tooltip.style.display = 'none';
                 tooltip.style.opacity = '0';
@@ -638,6 +654,12 @@ class TectoLiteApp {
             }
         });
 
+        document.getElementById('check-show-hints')?.addEventListener('change', (e) => {
+            const checked = (e.target as HTMLInputElement).checked;
+            this.state.world.globalOptions.showHints = checked;
+            this.updateHint(this.activeToolText);
+        });
+
         // UI Mode Toggle
         document.getElementById('btn-ui-mode')?.addEventListener('click', () => {
             document.querySelector('.app-container')?.classList.toggle('oldschool-mode');
@@ -664,11 +686,11 @@ class TectoLiteApp {
                 }
 
                 if (text) {
-                    activeToolText = text;
+                    this.activeToolText = text;
                     // Always update logic, even if not in retro mode, so state is correct when switching
                     const appContainer = document.querySelector('.app-container');
                     if (appContainer && appContainer.classList.contains('oldschool-mode')) {
-                        updateRetroStatusBox(activeToolText);
+                        this.updateRetroStatusBox(this.activeToolText);
                     }
                 }
             });
@@ -682,8 +704,8 @@ class TectoLiteApp {
                 if (!text) text = btn.getAttribute('data-tooltip');
 
                 if (text) {
-                    activeToolText = text;
-                    updateRetroStatusBox(text);
+                    this.activeToolText = text;
+                    this.updateRetroStatusBox(text);
                 }
             }
         });
@@ -1151,8 +1173,13 @@ class TectoLiteApp {
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
     }
 
+
     private syncUIToState(): void {
         const w = this.state.world;
+        const globalOptions = this.state.world.globalOptions;
+
+        const checkShowHints = document.getElementById('check-show-hints') as HTMLInputElement;
+        if (checkShowHints) checkShowHints.checked = globalOptions.showHints !== false;
         const g = w.globalOptions;
 
         // View Option Checkboxes
@@ -1210,19 +1237,66 @@ class TectoLiteApp {
             featureSelector.style.display = tool === 'feature' ? 'block' : 'none';
         }
 
-
-
-        const fuseControls = document.getElementById('fuse-controls');
-        if (fuseControls) {
-            fuseControls.style.display = tool === 'fuse' ? 'block' : 'none';
+        // Set initial Stage 1 hint/tooltip
+        let hintText = "";
+        switch (tool) {
+            case 'select':
+                hintText = "Click a plate or feature to select it.";
+                break;
+            case 'pan':
+                hintText = "Drag to rotate the globe. Scroll to zoom.";
+                break;
+            case 'draw':
+                hintText = "Click anywhere to start drawing a new plate.";
+                break;
+            case 'feature':
+                hintText = "Pick a feature type from Tool Options.";
+                break;
+            case 'poly_feature':
+                hintText = "Click anywhere to start drawing a custom region feature.";
+                break;
+            case 'split':
+                hintText = "Click a plate to start splitting.";
+                break;
+            case 'fuse':
+                hintText = "Select first plate to fuse.";
+                break;
+            case 'link':
+                hintText = "Select first plate to link.";
+                break;
         }
+
+        this.updateHint(hintText);
     }
 
     private setActiveFeature(feature: FeatureType): void {
         this.state.activeFeatureType = feature;
+        this.updateToolbarState();
+
+        const typeLabel = feature.charAt(0).toUpperCase() + feature.slice(1);
+        this.updateHint(`Click on a plate to place a ${typeLabel}.`);
         document.querySelectorAll('.feature-btn').forEach(btn => {
             btn.classList.toggle('active', btn.getAttribute('data-feature') === feature);
         });
+    }
+
+    private handleDrawUpdate(count: number): void {
+        const tool = this.state.activeTool;
+        if (tool === 'draw') {
+            if (count > 0) {
+                this.updateHint("Click to add points. Double-click/Enter to finish. Right-click to undo last placement.");
+            } else {
+                this.updateHint("Click anywhere to start drawing a new plate.");
+            }
+        } else if (tool === 'split') {
+            if (count === 1) {
+                this.updateHint("Click a boundary point to start split line.");
+            } else if (count >= 2) {
+                this.updateHint("Click another boundary point. Use 'Apply' to split.");
+            } else {
+                this.updateHint("Click a plate to start splitting.");
+            }
+        }
     }
 
     private updateToolbarState(): void {
@@ -1341,8 +1415,16 @@ class TectoLiteApp {
             return;
         }
 
-        const hint = document.getElementById('canvas-hint');
-        if (hint && this.state.activeTool !== 'select') hint.textContent = '';
+        if (this.state.activeTool === 'select') {
+            if (plateId) {
+                const plate = this.state.world.plates.find(p => p.id === plateId);
+                this.updateHint(`Selected ${plate?.name || 'Plate'}. Choose movement mode and manipulate speed leveler and Euler pole to initiate movement.`);
+            } else {
+                this.updateHint("Click a plate or feature to select it.");
+            }
+        } else {
+            // Clear or update based on tool logic
+        }
 
         this.state.world.selectedPlateId = plateId;
         this.state.world.selectedFeatureId = featureId ?? null;
@@ -1363,29 +1445,38 @@ class TectoLiteApp {
 
 
     private handleFuseTool(plateId: string): void {
+        const plate = this.state.world.plates.find(p => p.id === plateId);
+        if (!plate) return;
+
         if (!this.fusionFirstPlateId) {
             this.fusionFirstPlateId = plateId;
-            const hint = document.getElementById('canvas-hint');
-            if (hint) hint.textContent = `Click another plate to fuse with "${this.state.world.plates.find(p => p.id === plateId)?.name || 'Plate'}"`;
+            this.updateHint(`Selected Plate ${plate.name} select another plate to fuse it with`);
         } else if (this.fusionFirstPlateId !== plateId) {
+            // Stage 3 - Confirmation
+            const firstPlate = this.state.world.plates.find(p => p.id === this.fusionFirstPlateId);
+            if (!firstPlate) {
+                this.fusionFirstPlateId = null;
+                return;
+            }
+
+            if (!confirm(`Do you want to Fuse plate ${firstPlate.name} and ${plate.name}?`)) {
+                // User cancelled - reset to Stage 1
+                this.fusionFirstPlateId = null;
+                this.updateHint("Select first plate to fuse");
+                return;
+            }
+
             // Second click - fuse plates
             this.pushState(); // Save state for undo
-            // Read options
-            const addWeakness = (document.getElementById('check-add-weakness') as HTMLInputElement)?.checked ?? false;
-            const addMountains = (document.getElementById('check-add-mountains') as HTMLInputElement)?.checked ?? false;
 
-            const result = fusePlates(this.state, this.fusionFirstPlateId, plateId, {
-                addWeaknessFeatures: addWeakness,
-                addMountains: addMountains
-            });
+            const result = fusePlates(this.state, this.fusionFirstPlateId, plateId);
 
             if (result.success && result.newState) {
                 this.state = result.newState;
                 this.updateUI();
                 this.canvasManager?.render();
                 // Clear hint and reset
-                const hint = document.getElementById('canvas-hint');
-                if (hint) hint.textContent = '';
+                this.updateHint(null);
             } else {
                 alert(result.error || 'Failed to fuse plates');
             }
@@ -1406,11 +1497,7 @@ class TectoLiteApp {
             // Visual feedback - select it temporarily
             this.state.world.selectedPlateId = plateId;
 
-            const hint = document.getElementById('canvas-hint');
-            if (hint) {
-                hint.textContent = `Selected ${plate.name}. Now click another plate to link.`;
-                hint.style.display = 'block';
-            }
+            this.updateHint(`Selected Plate ${plate.name} select another plate to link it with`);
 
             this.updateUI();
             this.canvasManager?.render();
@@ -1422,11 +1509,7 @@ class TectoLiteApp {
             // Deselect if clicking same plate
             this.activeLinkSourceId = null;
             this.state.world.selectedPlateId = null;
-            const hint = document.getElementById('canvas-hint');
-            if (hint) {
-                hint.textContent = '';
-                hint.style.display = 'none';
-            }
+            this.updateHint("Select first plate to link");
             this.updateUI();
             this.canvasManager?.render();
             return;
@@ -1437,25 +1520,41 @@ class TectoLiteApp {
         const targetId = plateId;
         const sourcePlate = this.state.world.plates.find(p => p.id === sourceId);
 
-        if (sourcePlate && sourcePlate.linkedPlateIds?.includes(targetId)) {
-            // Already linked - Ask to unlink
-            if (confirm(`Unlink ${sourcePlate.name} and ${plate.name}?`)) {
-                this.pushState();
-                this.state.world.plates = this.state.world.plates.map(p => {
-                    // Remove link ID from both plates
-                    if (p.id === sourceId) {
-                        return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== targetId) };
-                    }
-                    if (p.id === targetId) {
-                        return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== sourceId) };
-                    }
-                    return p;
-                });
-                const hint = document.getElementById('canvas-hint');
-                if (hint) {
-                    hint.textContent = `Unlinked ${sourcePlate.name} and ${plate.name}`;
-                    setTimeout(() => { if (hint) hint.style.display = 'none'; }, 2000);
+        if (!sourcePlate) {
+            this.activeLinkSourceId = null;
+            return;
+        }
+
+        const isLinked = sourcePlate.linkedPlateIds?.includes(targetId);
+        const actionText = isLinked ? "Unlink" : "Link";
+
+        // Stage 3 - Confirmation
+        if (!confirm(`Do you want to ${actionText} plate ${sourcePlate.name} and ${plate.name}?`)) {
+            // User cancelled - reset to Stage 1
+            this.activeLinkSourceId = null;
+            this.updateHint("Select first plate to link");
+            this.updateUI();
+            this.canvasManager?.render();
+            return;
+        }
+
+        if (isLinked) {
+            // Already linked - Unlink
+            this.pushState();
+            this.state.world.plates = this.state.world.plates.map(p => {
+                // Remove link ID from both plates
+                if (p.id === sourceId) {
+                    return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== targetId) };
                 }
+                if (p.id === targetId) {
+                    return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== sourceId) };
+                }
+                return p;
+            });
+            const hint = document.getElementById('canvas-hint');
+            if (hint) {
+                hint.textContent = `Unlinked ${sourcePlate.name} and ${plate.name}`;
+                setTimeout(() => { if (hint && this.state.activeTool !== 'link') hint.style.display = 'none'; }, 2000);
             }
         } else {
             // Create Link
@@ -1469,16 +1568,15 @@ class TectoLiteApp {
                 }
                 return p;
             });
-            const hint = document.getElementById('canvas-hint');
-            if (hint) {
-                hint.textContent = `Linked ${sourcePlate?.name} and ${plate.name}`;
-                setTimeout(() => { if (hint) hint.style.display = 'none'; }, 2000);
-            }
+            this.updateHint(`Linked ${sourcePlate.name} and ${plate.name}`);
+            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
         }
 
         // Reset
         this.activeLinkSourceId = null;
         this.state.world.selectedPlateId = plateId; // Select the target
+        this.activeToolText = "Select first plate to link"; // Reset for next use
+        this.updateRetroStatusBox(this.activeToolText);
         this.updateUI();
         this.canvasManager?.render();
     }

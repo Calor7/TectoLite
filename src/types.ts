@@ -129,6 +129,7 @@ export interface WorldState {
     ratePresets?: number[]; // User-defined rate presets (e.g. [0.5, 1.0, 2.0, 5.0])
     enableBoundaryVisualization?: boolean;
     enableDynamicFeatures?: boolean;
+    showHints?: boolean;
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
@@ -197,7 +198,8 @@ export function createDefaultWorldState(): WorldState {
       gridThickness: 1.0,
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,
-      enableDynamicFeatures: false
+      enableDynamicFeatures: false,
+      showHints: true
     }
   };
 }
