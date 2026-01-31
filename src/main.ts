@@ -166,8 +166,11 @@ class TectoLiteApp {
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-features" checked> Show Features <span class="info-icon" data-tooltip="Show mountains, volcanoes, etc.">(i)</span>
                         </label>
-                         <label class="view-dropdown-item">
+                        <label class="view-dropdown-item">
                             <input type="checkbox" id="check-boundary-vis"> Show Boundaries <span class="info-icon" data-tooltip="Visualize plate boundaries">(i)</span>
+                        </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-euler-poles"> Show Euler Poles <span class="info-icon" data-tooltip="Show all rotation axes (Euler poles)">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
                              <input type="checkbox" id="check-future-features"> Show Future/Past <span class="info-icon" data-tooltip="Show features not yet born">(i)</span>
@@ -724,6 +727,11 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
+        document.getElementById('check-euler-poles')?.addEventListener('change', (e) => {
+            this.state.world.showEulerPoles = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
         document.getElementById('check-future-features')?.addEventListener('change', (e) => {
             this.state.world.showFutureFeatures = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
@@ -1161,7 +1169,7 @@ class TectoLiteApp {
         const thickSelect = document.getElementById('grid-thickness-select') as HTMLSelectElement;
         if (thickSelect) thickSelect.value = w.globalOptions.gridThickness.toString();
 
-        (document.getElementById('check-euler') as HTMLInputElement).checked = w.showEulerPoles;
+        (document.getElementById('check-euler-poles') as HTMLInputElement).checked = w.showEulerPoles;
         (document.getElementById('check-features') as HTMLInputElement).checked = w.showFeatures;
         (document.getElementById('check-future-features') as HTMLInputElement).checked = w.showFutureFeatures;
 

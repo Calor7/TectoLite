@@ -744,7 +744,9 @@ export class CanvasManager {
             }
 
             // Euler Pole Visualization
-            if (plate.motion.eulerPole.visible) {
+            const showGlobalPoles = state.world.showEulerPoles;
+            const gizmoActive = isSelected && state.activeTool === 'select';
+            if (plate.motion.eulerPole.visible || (showGlobalPoles && !gizmoActive)) {
                 this.drawEulerPole(plate.motion.eulerPole);
             }
 
