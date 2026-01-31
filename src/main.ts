@@ -1471,7 +1471,7 @@ class TectoLiteApp {
                 name: 'Oceanic Mantle',
                 color: '#1a1a1a',
                 visible: true,
-                locked: true,
+                locked: false,  // Allow editing but prevent deletion
                 polygons: [],
                 features: [],
                 center: [0, 0],
@@ -1782,6 +1782,11 @@ class TectoLiteApp {
             this.state.world.selectedFeatureId = null;
             this.state.world.selectedFeatureIds = [];
         } else if (selectedPlateId) {
+            // Prevent deletion of the oceanic mantle plate
+            if (selectedPlateId === 'plate-seafloor') {
+                alert('The Oceanic Mantle plate cannot be deleted. You can hide it using the visibility toggle.');
+                return;
+            }
             this.deletePlates([selectedPlateId]);
         }
         this.updateUI();
@@ -2392,7 +2397,8 @@ class TectoLiteApp {
 
     // Helper for TimelineSystem to delete multiple plates
     public deletePlates(ids: string[]): void {
-        const idSet = new Set(ids);
+        // Filter out the oceanic mantle plate - it cannot be deleted
+        const idSet = new Set(ids.filter(id => id !== 'plate-seafloor'));
 
         // Find parents potentially affected by child deletion
         const parentIds = new Set<string>();

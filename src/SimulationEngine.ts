@@ -426,8 +426,16 @@ export class SimulationEngine {
                     if (isCovered) break;
                 }
                 if (!isCovered) {
+                    // Position is ocean - set age if not already set
                     if (newMap[idx] === -1) {
                         newMap[idx] = currentTime;
+                        changed = true;
+                    }
+                } else {
+                    // Position is covered by a plate - reset to "no ocean"
+                    // This allows ocean age to reset when plates move over previously oceanic positions
+                    if (newMap[idx] !== -1) {
+                        newMap[idx] = -1;
                         changed = true;
                     }
                 }
