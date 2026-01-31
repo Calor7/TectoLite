@@ -301,6 +301,15 @@ export class CanvasManager {
                     if (geoPos) this.onFeaturePlace(geoPos, state.activeFeatureType);
                     break;
 
+                case 'flowline':
+                    if (geoPos) {
+                        const hit = this.hitTest(mousePos);
+                        if (hit?.plateId) {
+                            this.onFeaturePlace(geoPos, 'flowline');
+                        }
+                    }
+                    break;
+
                 case 'select':
                     const hit = this.hitTest(mousePos);
 
@@ -724,106 +733,113 @@ export class CanvasManager {
             this.ctx.stroke();
         }
 
+        // Draw Ocean Age Map
+        if (state.world.globalOptions.showAgeMap && state.world.oceanAgeMap) {
+            this.drawOceanAgeMap(state);
+        }
+
         // Draw Plates
-        // Sort plates by zIndex (default to 0 if undefined)
-        const sortedPlates = [...state.world.plates].sort((a, b) => {
-            const zA = a.zIndex ?? 0;
-            const zB = b.zIndex ?? 0;
-            return zA - zB;
-        });
+        if (state.world.showPlates !== false) {
+            // Sort plates by zIndex (default to 0 if undefined)
+            const sortedPlates = [...state.world.plates].sort((a, b) => {
+                const zA = a.zIndex ?? 0;
+                const zB = b.zIndex ?? 0;
+                return zA - zB;
+            });
 
-        for (const plate of sortedPlates) {
-            if (!plate.visible) continue;
+            for (const plate of sortedPlates) {
+                if (!plate.visible) continue;
 
-            // Lifecycle check: Only render valid plates for current time
-            if (state.world.currentTime < plate.birthTime) continue;
-            if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
+                // Lifecycle check: Only render valid plates for current time
+                if (state.world.currentTime < plate.birthTime) continue;
+                if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
 
-            const isSelected = plate.id === state.world.selectedPlateId;
+                const isSelected = plate.id === state.world.selectedPlateId;
 
-            let polygonsToDraw = plate.polygons;
-            let transformedCenter = plate.center;
+                let polygonsToDraw = plate.polygons;
+                let transformedCenter = plate.center;
 
-            if (this.ghostRotation?.plateId === plate.id) {
-                const { axis, angle } = this.ghostRotation;
-                const spinRad = -this.ghostSpin * Math.PI / 180; // Negative for CW alignment
+                if (this.ghostRotation?.plateId === plate.id) {
+                    const { axis, angle } = this.ghostRotation;
+                    const spinRad = -this.ghostSpin * Math.PI / 180; // Negative for CW alignment
 
-                // Calculate transformed center for spin axis and widget
-                const vCenter = latLonToVector(plate.center);
-                const vRotCenter = rotateVector(vCenter, axis, angle);
-                transformedCenter = vectorToLatLon(vRotCenter);
+                    // Calculate transformed center for spin axis and widget
+                    const vCenter = latLonToVector(plate.center);
+                    const vRotCenter = rotateVector(vCenter, axis, angle);
+                    transformedCenter = vectorToLatLon(vRotCenter);
 
-                polygonsToDraw = plate.polygons.map(poly => {
-                    const newPoints = poly.points.map(pt => {
-                        const v = latLonToVector(pt);
-                        // 1. Drag Rotation
-                        const v1 = rotateVector(v, axis, angle);
-                        // 2. Spin Rotation (around transformed center)
-                        const v2 = rotateVector(v1, vRotCenter, spinRad);
-                        return vectorToLatLon(v2);
+                    polygonsToDraw = plate.polygons.map(poly => {
+                        const newPoints = poly.points.map(pt => {
+                            const v = latLonToVector(pt);
+                            // 1. Drag Rotation
+                            const v1 = rotateVector(v, axis, angle);
+                            // 2. Spin Rotation (around transformed center)
+                            const v2 = rotateVector(v1, vRotCenter, spinRad);
+                            return vectorToLatLon(v2);
+                        });
+                        return { ...poly, points: newPoints };
                     });
-                    return { ...poly, points: newPoints };
-                });
-            }
-
-            // Draw Polygons
-            for (const poly of polygonsToDraw) {
-                const geojson = toGeoJSON(poly);
-
-                // Fix Winding: If area > Hemisphere, invert winding
-                // This fixes pole-enclosure inversion issues.
-                if (geoArea(geojson) > 2 * Math.PI) {
-                    geojson.geometry.coordinates[0].reverse();
                 }
 
-                this.ctx.beginPath();
-                path(geojson);
-                this.ctx.fillStyle = plate.color;
-                this.ctx.fill();
+                // Draw Polygons
+                for (const poly of polygonsToDraw) {
+                    const geojson = toGeoJSON(poly);
 
-                this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
-                this.ctx.lineWidth = isSelected ? 2 : 1;
-                this.ctx.stroke();
-            }
+                    // Fix Winding: If area > Hemisphere, invert winding
+                    // This fixes pole-enclosure inversion issues.
+                    if (geoArea(geojson) > 2 * Math.PI) {
+                        geojson.geometry.coordinates[0].reverse();
+                    }
 
-            // Draw Features (if visible)
-            if (state.world.showFeatures) {
-                const currentTime = state.world.currentTime;
-                const showFuture = state.world.showFutureFeatures;
+                    this.ctx.beginPath();
+                    path(geojson);
+                    this.ctx.fillStyle = plate.color;
+                    this.ctx.fill();
 
-                for (const feature of plate.features) {
-                    // Check if feature is within timeline
-                    const isBorn = feature.generatedAt === undefined || feature.generatedAt <= currentTime;
-                    const isDead = feature.deathTime !== undefined && feature.deathTime <= currentTime;
-                    const isInTimeline = isBorn && !isDead;
-
-                    // Skip if not in timeline and not showing future/past features
-                    if (!isInTimeline && !showFuture) continue;
-
-                    const isFeatureSelected = feature.id === state.world.selectedFeatureId ||
-                        (state.world.selectedFeatureIds && state.world.selectedFeatureIds.includes(feature.id));
-
-                    // Draw with reduced opacity if outside timeline
-                    this.drawFeature(feature, isFeatureSelected, !isInTimeline);
+                    this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
+                    this.ctx.lineWidth = isSelected ? 2 : 1;
+                    this.ctx.stroke();
                 }
-            }
 
-            // Euler Pole Visualization
-            const showGlobalPoles = state.world.showEulerPoles;
-            const gizmoActive = isSelected && state.activeTool === 'select';
-            if (plate.motion.eulerPole.visible || (showGlobalPoles && !gizmoActive)) {
-                this.drawEulerPole(plate.motion.eulerPole);
-            }
+                // Draw Features (if visible)
+                if (state.world.showFeatures) {
+                    const currentTime = state.world.currentTime;
+                    const showFuture = state.world.showFutureFeatures;
 
-            // Update/render motion gizmo for selected plate
-            if (isSelected && state.activeTool === 'select') {
-                this.motionGizmo.setPlate(plate.id, plate.motion.eulerPole);
-                this.motionGizmo.render(this.ctx, this.projectionManager, plate.center);
-            }
+                    for (const feature of plate.features) {
+                        // Check if feature is within timeline
+                        const isBorn = feature.generatedAt === undefined || feature.generatedAt <= currentTime;
+                        const isDead = feature.deathTime !== undefined && feature.deathTime <= currentTime;
+                        const isInTimeline = isBorn && !isDead;
 
-            // Draw Fine-Tuning Rotation Widget
-            if (this.isFineTuning && this.ghostPlateId === plate.id) {
-                this.drawRotationWidget(transformedCenter);
+                        // Skip if not in timeline and not showing future/past features
+                        if (!isInTimeline && !showFuture) continue;
+
+                        const isFeatureSelected = feature.id === state.world.selectedFeatureId ||
+                            (state.world.selectedFeatureIds && state.world.selectedFeatureIds.includes(feature.id));
+
+                        // Draw with reduced opacity if outside timeline
+                        this.drawFeature(feature, isFeatureSelected, !isInTimeline);
+                    }
+                }
+
+                // Euler Pole Visualization
+                const showGlobalPoles = state.world.showEulerPoles;
+                const gizmoActive = isSelected && state.activeTool === 'select';
+                if (plate.motion.eulerPole.visible || (showGlobalPoles && !gizmoActive)) {
+                    this.drawEulerPole(plate.motion.eulerPole);
+                }
+
+                // Update/render motion gizmo for selected plate
+                if (isSelected && state.activeTool === 'select') {
+                    this.motionGizmo.setPlate(plate.id, plate.motion.eulerPole);
+                    this.motionGizmo.render(this.ctx, this.projectionManager, plate.center);
+                }
+
+                // Draw Fine-Tuning Rotation Widget
+                if (this.isFineTuning && this.ghostPlateId === plate.id) {
+                    this.drawRotationWidget(transformedCenter);
+                }
             }
         }
 
@@ -976,6 +992,64 @@ export class CanvasManager {
             if (isSelected) {
                 this.ctx.strokeStyle = '#ffffff';
                 this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+            }
+
+            if (isGhosted) this.ctx.globalAlpha = 1.0;
+            return;
+        }
+
+        // Handle flowline feature
+        if (feature.type === 'flowline' && feature.trail && feature.trail.length > 1) {
+            const path = this.projectionManager.getPathGenerator();
+            this.ctx.beginPath();
+            path({
+                type: 'LineString',
+                coordinates: feature.trail
+            } as any);
+            this.ctx.strokeStyle = isSelected ? '#ffffff' : '#aaaaaa';
+            this.ctx.lineWidth = isSelected ? 2 : 1;
+            this.ctx.setLineDash([4, 4]);
+            this.ctx.stroke();
+            this.ctx.setLineDash([]);
+
+            // Draw seed point
+            const proj = this.projectionManager.project(feature.position);
+            if (proj) {
+                this.ctx.beginPath();
+                this.ctx.arc(proj[0], proj[1], 3, 0, Math.PI * 2);
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fill();
+            }
+
+            if (isGhosted) this.ctx.globalAlpha = 1.0;
+            return;
+        }
+
+        // Handle seafloor feature
+        if (feature.type === 'seafloor' && feature.polygon && feature.polygon.length >= 3) {
+            const path = this.projectionManager.getPathGenerator();
+            const geojson = {
+                type: 'Polygon' as const,
+                coordinates: [[...feature.polygon, feature.polygon[0]]]
+            };
+
+            const age = feature.age || 0;
+            // Color scale: 0 Ma (Red) -> 200 Ma (Dark Blue)
+            // Using a simple HSL ramp: 0 (Red) to 240 (Blue)
+            const hue = Math.min(240, (age / 200) * 240);
+            const color = `hsl(${hue}, 70%, 50%)`;
+
+            this.ctx.beginPath();
+            path(geojson as any);
+            this.ctx.fillStyle = color;
+            this.ctx.globalAlpha = isGhosted ? 0.3 : 0.8;
+            this.ctx.fill();
+            this.ctx.globalAlpha = 1.0;
+
+            if (isSelected) {
+                this.ctx.strokeStyle = '#ffffff';
+                this.ctx.lineWidth = 1;
                 this.ctx.stroke();
             }
 
@@ -1255,5 +1329,50 @@ export class CanvasManager {
     public destroy(): void {
         this.stopRenderLoop();
         window.removeEventListener('resize', () => this.resizeCanvas());
+    }
+
+    private drawOceanAgeMap(state: AppState): void {
+        const map = state.world.oceanAgeMap;
+        const res = state.world.oceanAgeMapRes;
+        if (!map || !res) return;
+
+        const currentTime = state.world.currentTime;
+        const [width, height] = res;
+        const step = 8; // Downsample for performance
+
+        const pathGen = this.projectionManager.getPathGenerator();
+
+        for (let y = 0; y < height; y += step) {
+            const lat = 90 - (y / height) * 180;
+            for (let x = 0; x < width; x += step) {
+                const lon = (x / width) * 360 - 180;
+                const idx = y * width + x;
+                const birthTime = map[idx];
+
+                if (birthTime === -1) continue;
+
+                const age = Math.abs(currentTime - birthTime);
+                const hue = Math.min(240, (age / 200) * 240);
+                const lightness = Math.max(10, 50 - (age / 300) * 40);
+                this.ctx.fillStyle = `hsl(${hue}, 70%, ${lightness}%)`;
+
+                const dLon = (360 / width) * step;
+                const dLat = (180 / height) * step;
+
+                // Draw cell as polygon
+                this.ctx.beginPath();
+                pathGen({
+                    type: 'Polygon',
+                    coordinates: [[
+                        [lon, lat],
+                        [lon + dLon, lat],
+                        [lon + dLon, lat - dLat],
+                        [lon, lat - dLat],
+                        [lon, lat]
+                    ]]
+                } as any);
+                this.ctx.fill();
+            }
+        }
     }
 }

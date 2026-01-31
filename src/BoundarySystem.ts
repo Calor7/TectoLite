@@ -14,12 +14,10 @@ export class BoundarySystem {
                 const p1 = activePlates[i];
                 const p2 = activePlates[j];
 
-                // 1. Check for basic Overlap (Convergent)
+                // 1. Check for basic Overlap (Convergent/Overlap)
                 const overlap = this.checkOverlap(p1, p2);
                 if (overlap) {
-                    // Check relative velocity to decide if truly converging vs sliding vs purely overlapping static
                     const type = this.classifyBoundaryProps(p1, p2, overlap.center);
-
                     boundaries.push({
                         id: `${p1.id}-${p2.id}-col`,
                         type: type.type,
@@ -28,12 +26,6 @@ export class BoundarySystem {
                         velocity: type.velocity
                     });
                 }
-
-                // 2. Divergent Check (Simulated)
-                // Real divergence leaves a gap. We might need Voronoi or expanding bounding box check.
-                // For now, we skip divergence generation unless plates are "touching" but moving apart.
-                // This is hard with simple polygon geometry. 
-                // Worldbuilding Pasta suggests "Crust Generation" fills gaps.
             }
         }
         return boundaries;

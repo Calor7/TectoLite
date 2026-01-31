@@ -27,8 +27,39 @@ export class HeightmapGenerator {
         const path = geoPath().projection(projection).context(ctx);
 
         // 1. Fill Background (Ocean Deep)
-        ctx.fillStyle = '#0a0a0a'; // Very dark gray/black (Deep Ocean)
+        ctx.fillStyle = '#141414'; // Ocean Base Level (Deep)
         ctx.fillRect(0, 0, options.width, options.height);
+
+        // 1.5 Render Ocean Age Map (Bathymetry)
+        if (state.world.oceanAgeMap && state.world.oceanAgeMapRes) {
+            const map = state.world.oceanAgeMap;
+            const [w, h] = state.world.oceanAgeMapRes;
+            const currentTime = state.world.currentTime;
+
+            for (let y = 0; y < h; y++) {
+                const lat = 90 - (y / h) * 180;
+                for (let x = 0; x < w; x++) {
+                    const lon = (x / w) * 360 - 180;
+                    const idx = y * w + x;
+                    const bt = map[idx];
+                    if (bt === -1) continue;
+
+                    const age = Math.abs(currentTime - bt);
+                    // Map Age (0-200 Ma) to Elevation (80-20)
+                    const elevation = Math.max(20, 80 - (age / 200) * 60);
+                    ctx.fillStyle = `rgb(${elevation}, ${elevation}, ${elevation})`;
+
+                    // Project the pixel
+                    const pt = projection([lon, lat]);
+                    if (pt) {
+                        // Approximate pixel size
+                        const pw = options.width / w + 1;
+                        const ph = options.height / h + 1;
+                        ctx.fillRect(pt[0] - pw / 2, pt[1] - ph / 2, pw, ph);
+                    }
+                }
+            }
+        }
 
         // 2. Render Plates (Base Elevation)
         const activePlates = state.world.plates.filter(p => !p.deathTime && p.birthTime <= state.world.currentTime);

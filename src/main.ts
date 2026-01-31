@@ -152,7 +152,18 @@ class TectoLiteApp {
                         </div>
                     </div>
 
-                    <!-- 3. SHOW OBJECT SETTING -->
+                    <!-- 3. LAYERS SETTING -->
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
+                        <div class="dropdown-header">Layers</div>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-plates-visible" checked> Show Plates <span class="info-icon" data-tooltip="Toggle all plate landmasses">(i)</span>
+                        </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-show-age-map"> Ocean Age Map <span class="info-icon" data-tooltip="Show rasterized seafloor age layer">(i)</span>
+                        </label>
+                    </div>
+
+                    <!-- 4. EFFECTS SETTING -->
                     <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
                         <div class="dropdown-header">Effects</div>
                         <label class="view-dropdown-item">
@@ -261,7 +272,7 @@ class TectoLiteApp {
                     <span class="tool-label">Split</span>
                     <span class="info-icon" data-tooltip="Divide a plate in two (Hotkey: S)">(i)</span>
                   </button>
-                   <button class="tool-btn" data-tool="link" style="flex:1;">
+                  <button class="tool-btn" data-tool="link" style="flex:1;">
                     <span class="tool-icon">🔗</span>
                     <span class="tool-label">Link</span>
                     <span class="info-icon" data-tooltip="Group plates to move together (Hotkey: L)">(i)</span>
@@ -270,6 +281,11 @@ class TectoLiteApp {
                     <span class="tool-icon">🧬</span>
                     <span class="tool-label">Fuse</span>
                     <span class="info-icon" data-tooltip="Merge two plates (Hotkey: G)">(i)</span>
+                  </button>
+                  <button class="tool-btn" data-tool="flowline" style="flex:1;">
+                    <span class="tool-icon">🧵</span>
+                    <span class="tool-label">Flowline</span>
+                    <span class="info-icon" data-tooltip="Drop a flowline seed to trace motion (Hotkey: T)">(i)</span>
                   </button>
               </div>
             </div>
@@ -320,6 +336,9 @@ class TectoLiteApp {
                 <h3 class="tool-group-title">Simulation</h3>
                  <label class="view-option">
                     <input type="checkbox" id="check-speed-limit"> Enable Speed Limit <span class="info-icon" data-tooltip="Limit how fast plates can move">(i)</span>
+                </label>
+                <label class="view-option">
+                    <input type="checkbox" id="check-auto-ocean"> Enable Auto-Ocean <span class="info-icon" data-tooltip="Automatically generate seafloor crust at divergent boundaries">(i)</span>
                 </label>
                 <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
                     <label class="property-label">Max Speed</label>
@@ -784,6 +803,20 @@ class TectoLiteApp {
             this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
         });
 
+        document.getElementById('check-auto-ocean')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.enableAutoOcean = (e.target as HTMLInputElement).checked;
+        });
+
+        document.getElementById('check-plates-visible')?.addEventListener('change', (e) => {
+            this.state.world.showPlates = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('check-show-age-map')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.showAgeMap = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
         document.getElementById('global-max-speed')?.addEventListener('change', (e) => {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
@@ -858,6 +891,7 @@ class TectoLiteApp {
                 case 's': this.setActiveTool('split'); break;
                 case 'g': this.setActiveTool('fuse'); break;
                 case 'l': this.setActiveTool('link'); break;
+                case 't': this.setActiveTool('flowline'); break;
                 case 'escape':
                     this.canvasManager?.cancelDrawing();
                     break;
@@ -1761,6 +1795,11 @@ class TectoLiteApp {
         <input type="number" id="prop-z-index" class="property-input" value="${plate.zIndex || 0}" step="1" style="width: 60px;">
       </div>
 
+      <div class="property-group" style="justify-content: flex-start;">
+        <input type="checkbox" id="prop-seafloor" style="margin-right: 8px;" ${plate.generateSeafloor !== false ? 'checked' : ''}>
+        <label for="prop-seafloor" class="property-label" style="width: auto;">Generate Seafloor <span class="info-icon" data-tooltip="Enable to leave age trail (disable for islands)">(i)</span></label>
+      </div>
+
       <div class="property-group">
         <label class="property-label">Timeline (Ma)</label>
         <div style="display: flex; gap: 4px;">
@@ -1868,6 +1907,10 @@ class TectoLiteApp {
 
         document.getElementById('prop-inherit')?.addEventListener('change', (e) => {
             plate.inheritDescription = (e.target as HTMLInputElement).checked;
+        });
+
+        document.getElementById('prop-seafloor')?.addEventListener('change', (e) => {
+            plate.generateSeafloor = (e.target as HTMLInputElement).checked;
         });
 
         document.getElementById('prop-color')?.addEventListener('change', (e) => {
@@ -2063,7 +2106,9 @@ class TectoLiteApp {
             trench: 'Trench',
             island: 'Island',
             weakness: 'Weakness',
-            poly_region: 'Polygon Region'
+            poly_region: 'Polygon Region',
+            flowline: 'Flowline',
+            seafloor: 'Seafloor'
         };
         return names[type] || type;
     }

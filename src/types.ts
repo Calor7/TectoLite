@@ -19,7 +19,7 @@ export interface Polygon {
   closed: boolean;
 }
 
-export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region';
+export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'flowline' | 'seafloor';
 
 export interface Feature {
   id: string;
@@ -37,6 +37,10 @@ export interface Feature {
   // Polygon feature specific
   polygon?: Coordinate[];
   fillColor?: string;
+  // Flowline / Seafloor specific
+  trail?: Coordinate[];     // Cached trail for flowlines
+  seedPlateId?: string;     // Reference plate for flowline
+  age?: number;             // Creation time for seafloor segments
 }
 
 export interface EulerPole {
@@ -101,6 +105,7 @@ export interface TectonicPlate {
 
   visible: boolean;
   locked: boolean;
+  generateSeafloor?: boolean;
 }
 
 export interface WorldState {
@@ -115,6 +120,7 @@ export interface WorldState {
   showGrid: boolean;
   showEulerPoles: boolean;
   showFeatures: boolean;
+  showPlates: boolean;         // Global visibility of all plate landmasses
   showFutureFeatures: boolean;  // Show features outside current timeline (future/past)
   globalOptions: {
     // Simulation
@@ -129,10 +135,15 @@ export interface WorldState {
     ratePresets?: number[]; // User-defined rate presets (e.g. [0.5, 1.0, 2.0, 5.0])
     enableBoundaryVisualization?: boolean;
     enableDynamicFeatures?: boolean;
+    enableAutoOcean?: boolean; // Automatic seafloor creation
+    showAgeMap?: boolean;      // Show the rasterized age layer
     showHints?: boolean;
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
+  // Raster Ocean Age: Stores birth time (Ma) in a grid
+  oceanAgeMap?: Float32Array;
+  oceanAgeMapRes?: [number, number]; // [width, height]
 }
 
 export interface Boundary {
@@ -143,7 +154,7 @@ export interface Boundary {
   velocity?: number; // Relative velocity magnitude
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline';
 
 export interface AppState {
   world: WorldState;
@@ -190,6 +201,7 @@ export function createDefaultWorldState(): WorldState {
     showGrid: true,
     showEulerPoles: false,
     showFeatures: true,
+    showPlates: true,
     showFutureFeatures: false,  // Hide future/past features by default
     globalOptions: {
       maxDragSpeed: 1.0,  // ~10 cm/year (realistic plate speed)
@@ -199,6 +211,8 @@ export function createDefaultWorldState(): WorldState {
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,
       enableDynamicFeatures: false,
+      enableAutoOcean: false,
+      showAgeMap: false,
       showHints: true
     }
   };
