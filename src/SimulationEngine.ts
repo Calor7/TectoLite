@@ -395,7 +395,6 @@ export class SimulationEngine {
 
     private updateOceanAgeMap(): void {
         const state = this.getState();
-        if (!state.world.globalOptions.enableAutoOcean) return;
         let map = state.world.oceanAgeMap;
         const res = this.ageMapRes;
         if (!map || !state.world.oceanAgeMapRes) {
@@ -445,7 +444,6 @@ export class SimulationEngine {
 
     private updateTrailingSeafloor(deltaMa: number): void {
         const state = this.getState();
-        if (!state.world.globalOptions.enableAutoOcean) return;
 
         const currentTime = state.world.currentTime;
         const plates = state.world.plates;
@@ -477,7 +475,8 @@ export class SimulationEngine {
                     }],
                     motion: { eulerPole: { position: [0, 0], rate: 0, visible: false } },
                     events: [],
-                    generateSeafloor: false
+                    generateSeafloor: false,
+                    zIndex: -1000  // Very low zIndex to be below all other plates
                 };
                 nextPlates.push(targetPlate);
                 targetIdx = nextPlates.length - 1;

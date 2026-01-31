@@ -805,8 +805,26 @@ export class CanvasManager {
                 if (state.world.showFeatures) {
                     const currentTime = state.world.currentTime;
                     const showFuture = state.world.showFutureFeatures;
+                    const showOceanMap = state.world.globalOptions.showAgeMap;
 
-                    for (const feature of plate.features) {
+                    // Sort features: seafloor features by age (oldest first), then other features
+                    const sortedFeatures = [...plate.features].sort((a, b) => {
+                        // Both are seafloor: sort by age (oldest/lowest age value first)
+                        if (a.type === 'seafloor' && b.type === 'seafloor') {
+                            const ageA = a.age ?? a.generatedAt ?? 0;
+                            const ageB = b.age ?? b.generatedAt ?? 0;
+                            return ageA - ageB;  // Older (lower age) drawn first
+                        }
+                        // Seafloor features should be drawn before other features
+                        if (a.type === 'seafloor') return -1;
+                        if (b.type === 'seafloor') return 1;
+                        return 0;
+                    });
+
+                    for (const feature of sortedFeatures) {
+                        // Skip ocean features (seafloor) if ocean map is not active
+                        if (feature.type === 'seafloor' && !showOceanMap) continue;
+
                         // Check if feature is within timeline
                         const isBorn = feature.generatedAt === undefined || feature.generatedAt <= currentTime;
                         const isDead = feature.deathTime !== undefined && feature.deathTime <= currentTime;

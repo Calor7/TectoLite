@@ -159,7 +159,7 @@ class TectoLiteApp {
                             <input type="checkbox" id="check-plates-visible" checked> Show Plates <span class="info-icon" data-tooltip="Toggle all plate landmasses">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
-                            <input type="checkbox" id="check-show-age-map"> Ocean Age Map <span class="info-icon" data-tooltip="Show rasterized seafloor age layer">(i)</span>
+                            <input type="checkbox" id="check-show-age-map"> Ocean Map <span class="info-icon" data-tooltip="Show ocean features and seafloor age">(i)</span>
                         </label>
                     </div>
 
@@ -337,9 +337,7 @@ class TectoLiteApp {
                  <label class="view-option">
                     <input type="checkbox" id="check-speed-limit"> Enable Speed Limit <span class="info-icon" data-tooltip="Limit how fast plates can move">(i)</span>
                 </label>
-                <label class="view-option">
-                    <input type="checkbox" id="check-auto-ocean"> Enable Auto-Ocean <span class="info-icon" data-tooltip="Automatically generate seafloor crust at divergent boundaries">(i)</span>
-                </label>
+
                 <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
                     <label class="property-label">Max Speed</label>
                     <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 80px;">
@@ -803,9 +801,7 @@ class TectoLiteApp {
             this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
         });
 
-        document.getElementById('check-auto-ocean')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.enableAutoOcean = (e.target as HTMLInputElement).checked;
-        });
+
 
         document.getElementById('check-plates-visible')?.addEventListener('change', (e) => {
             this.state.world.showPlates = (e.target as HTMLInputElement).checked;
@@ -1379,12 +1375,44 @@ class TectoLiteApp {
             initialFeatures: []
         };
 
+        // Create oceanic mantle on first plate creation
+        const isFirstPlate = this.state.world.plates.filter(p => p.id !== 'plate-seafloor').length === 0;
+        let platesToAdd = [plate];
+        
+        if (isFirstPlate) {
+            const oceanicMantle: TectonicPlate = {
+                id: 'plate-seafloor',
+                name: 'Oceanic Mantle',
+                color: '#1a1a1a',
+                visible: true,
+                locked: true,
+                polygons: [],
+                features: [],
+                center: [0, 0],
+                birthTime: -1000,
+                deathTime: null,
+                initialPolygons: [],
+                initialFeatures: [],
+                motionKeyframes: [{
+                    time: -1000,
+                    eulerPole: { position: [0, 0], rate: 0, visible: false },
+                    snapshotPolygons: [],
+                    snapshotFeatures: []
+                }],
+                motion: { eulerPole: { position: [0, 0], rate: 0, visible: false } },
+                events: [],
+                generateSeafloor: false,
+                zIndex: -1000  // Very low zIndex to be below all other plates
+            };
+            platesToAdd = [oceanicMantle, plate];
+        }
+
         // Immutable state update
         this.state = {
             ...this.state,
             world: {
                 ...this.state.world,
-                plates: [...this.state.world.plates, plate],
+                plates: [...this.state.world.plates, ...platesToAdd],
                 selectedPlateId: plate.id
             }
         };
