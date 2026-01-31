@@ -148,14 +148,17 @@ export interface WorldState {
   imageOverlay?: ImageOverlay;
 }
 
+export type OverlayMode = 'fixed' | 'projection';
+
 export interface ImageOverlay {
   imageData: string; // Base64 encoded image or URL
   visible: boolean;
   opacity: number; // 0-1
   scale: number; // Scale factor
-  offsetX: number; // X offset in degrees
-  offsetY: number; // Y offset in degrees
+  offsetX: number; // X offset in degrees (projection mode) or pixels (fixed mode)
+  offsetY: number; // Y offset in degrees (projection mode) or pixels (fixed mode)
   rotation: number; // Rotation in degrees
+  mode: OverlayMode; // 'fixed' = screen overlay, 'projection' = map projection
 }
 
 export interface Boundary {

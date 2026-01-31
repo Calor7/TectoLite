@@ -1,4 +1,3 @@
-// Main Application - TectoLite Plate Tectonics Simulator
 import './style.css';
 import {
     AppState,
@@ -14,7 +13,8 @@ import {
     getNextPlateColor,
     Coordinate,
     ProjectionType,
-    MotionKeyframe
+    MotionKeyframe,
+    OverlayMode
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -168,6 +168,17 @@ class TectoLiteApp {
                             <button id="btn-upload-overlay" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">
                                 📤 Upload Map
                             </button>
+                            <div style="display: flex; flex-direction: column; gap: 2px; margin-top: 2px;">
+                                <label style="font-size: 10px; color: var(--text-secondary);">Mode:</label>
+                                <label style="font-size: 10px; display: flex; align-items: center; gap: 4px;">
+                                    <input type="radio" name="overlay-mode" id="overlay-mode-fixed" value="fixed" checked>
+                                    <span>Fixed Screen Overlay</span>
+                                </label>
+                                <label style="font-size: 10px; display: flex; align-items: center; gap: 4px;">
+                                    <input type="radio" name="overlay-mode" id="overlay-mode-projection" value="projection">
+                                    <span>Map Projection</span>
+                                </label>
+                            </div>
                             <div style="display: flex; align-items: center; gap: 4px;">
                                 <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Opacity:</label>
                                 <input type="range" id="overlay-opacity-slider" min="0" max="100" value="50" style="flex: 1; height: 4px;">
@@ -851,21 +862,77 @@ class TectoLiteApp {
             const input = e.target as HTMLInputElement;
             const file = input.files?.[0];
             if (file) {
+                // Check file size (max 5MB)
+                const maxSize = 5 * 1024 * 1024; // 5MB
+                if (file.size > maxSize) {
+                    alert('Image file is too large. Maximum size is 5MB.');
+                    input.value = '';
+                    return;
+                }
+
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     const imageData = event.target?.result as string;
-                    this.state.world.imageOverlay = {
-                        imageData,
-                        visible: true,
-                        opacity: 0.5,
-                        scale: 1.0,
-                        offsetX: 0,
-                        offsetY: 0,
-                        rotation: 0
+                    
+                    // Load image to check dimensions and potentially resize
+                    const img = new Image();
+                    img.onload = () => {
+                        const maxDimension = 2048; // Max width or height
+                        let finalImageData = imageData;
+                        
+                        // Scale down if image is too large
+                        if (img.width > maxDimension || img.height > maxDimension) {
+                            const canvas = document.createElement('canvas');
+                            const ctx = canvas.getContext('2d');
+                            
+                            const scale = Math.min(maxDimension / img.width, maxDimension / img.height);
+                            canvas.width = img.width * scale;
+                            canvas.height = img.height * scale;
+                            
+                            ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            finalImageData = canvas.toDataURL('image/jpeg', 0.9);
+                            
+                            console.log(`Image scaled down from ${img.width}x${img.height} to ${canvas.width}x${canvas.height}`);
+                        }
+                        
+                        // Get selected mode
+                        const modeFixed = document.getElementById('overlay-mode-fixed') as HTMLInputElement;
+                        const mode: OverlayMode = modeFixed?.checked ? 'fixed' : 'projection';
+                        
+                        // For projection mode, validate aspect ratio
+                        if (mode === 'projection') {
+                            const aspectRatio = img.width / img.height;
+                            const expectedRatio = 2.0; // Equirectangular is 2:1
+                            const tolerance = 0.1;
+                            
+                            if (Math.abs(aspectRatio - expectedRatio) > tolerance) {
+                                const proceed = confirm(
+                                    `Warning: For map projection mode, the image should have a 2:1 aspect ratio (equirectangular).\n` +
+                                    `Your image is ${img.width}x${img.height} (${aspectRatio.toFixed(2)}:1).\n\n` +
+                                    `Continue anyway? The image may appear distorted.`
+                                );
+                                if (!proceed) {
+                                    input.value = '';
+                                    return;
+                                }
+                            }
+                        }
+                        
+                        this.state.world.imageOverlay = {
+                            imageData: finalImageData,
+                            visible: true,
+                            opacity: 0.5,
+                            scale: 1.0,
+                            offsetX: 0,
+                            offsetY: 0,
+                            rotation: 0,
+                            mode
+                        };
+                        const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
+                        if (checkbox) checkbox.checked = true;
+                        this.canvasManager?.render();
                     };
-                    const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
-                    if (checkbox) checkbox.checked = true;
-                    this.canvasManager?.render();
+                    img.src = imageData;
                 };
                 reader.readAsDataURL(file);
             }
@@ -897,6 +964,21 @@ class TectoLiteApp {
             const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
             if (checkbox) checkbox.checked = false;
             this.canvasManager?.render();
+        });
+
+        // Overlay mode change listeners
+        document.getElementById('overlay-mode-fixed')?.addEventListener('change', (e) => {
+            if (this.state.world.imageOverlay && (e.target as HTMLInputElement).checked) {
+                this.state.world.imageOverlay.mode = 'fixed';
+                this.canvasManager?.render();
+            }
+        });
+
+        document.getElementById('overlay-mode-projection')?.addEventListener('change', (e) => {
+            if (this.state.world.imageOverlay && (e.target as HTMLInputElement).checked) {
+                this.state.world.imageOverlay.mode = 'projection';
+                this.canvasManager?.render();
+            }
         });
 
         document.getElementById('global-max-speed')?.addEventListener('change', (e) => {
