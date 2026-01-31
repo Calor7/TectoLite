@@ -1,0 +1,18 @@
+directories:
+  output: release
+  buildResources: assets
+appId: com.tectolite.app
+productName: TectoLite
+win:
+  target:
+    - portable
+portable:
+  artifactName: ${productName}-${version}.exe
+files:
+  - filter:
+      - electron-main.cjs
+      - preload.cjs
+      - dist/**/*
+      - package.json
+      - node_modules/**/*
+electronVersion: 40.1.0
