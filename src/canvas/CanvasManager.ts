@@ -732,6 +732,9 @@ export class CanvasManager {
             return zA - zB;
         });
 
+        // Collect poly_region features to render after all plates (image overlays should be on top)
+        const polyRegionFeatures: { feature: Feature; isSelected: boolean; isGhosted: boolean }[] = [];
+
         for (const plate of sortedPlates) {
             if (!plate.visible) continue;
 
@@ -803,8 +806,13 @@ export class CanvasManager {
                     const isFeatureSelected = feature.id === state.world.selectedFeatureId ||
                         (state.world.selectedFeatureIds && state.world.selectedFeatureIds.includes(feature.id));
 
-                    // Draw with reduced opacity if outside timeline
-                    this.drawFeature(feature, isFeatureSelected, !isInTimeline);
+                    // Collect poly_region features to render later (on top of all plates)
+                    if (feature.type === 'poly_region') {
+                        polyRegionFeatures.push({ feature, isSelected: isFeatureSelected, isGhosted: !isInTimeline });
+                    } else {
+                        // Draw other features immediately with their plate
+                        this.drawFeature(feature, isFeatureSelected, !isInTimeline);
+                    }
                 }
             }
 
@@ -836,6 +844,11 @@ export class CanvasManager {
         // Let's draw if Link tool is active OR if a linked plate is selected
         if (state.activeTool === 'link' || (state.world.selectedPlateId && state.world.plates.find(p => p.id === state.world.selectedPlateId)?.linkedPlateIds?.length)) {
             this.drawLinks(state, path);
+        }
+
+        // Draw poly_region features (image overlays) ABOVE all plates
+        for (const { feature, isSelected, isGhosted } of polyRegionFeatures) {
+            this.drawFeature(feature, isSelected, isGhosted);
         }
 
         // Clear gizmo if no plate selected
