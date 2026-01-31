@@ -100,8 +100,9 @@ class TectoLiteApp {
         <header class="app-header">
           <h1 class="app-title">
             TECTOLITE <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a></span>
-            <span style="margin-left: 20px; font-size: 0.7em;">
+            <span style="margin-left: 20px; font-size: 0.7em; display: inline-flex; gap: 15px; align-items: center;">
                 <a href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" style="color: var(--text-secondary); text-decoration: none;"><span class="coffee-icon">☕</span> Feed my coffee addiction</a>
+                <a href="https://refracturedgames.eo.page/zcyvj" target="_blank" rel="noopener noreferrer" id="link-subscribe" style="color: var(--accent-primary); text-decoration: none; font-weight: 600;">Subscribe to Updates</a>
             </span>
           </h1>
           <div class="header-actions">
@@ -795,13 +796,6 @@ class TectoLiteApp {
                     this.state.world.globalOptions.planetRadius = 6371;
                     radiusInput.value = "6371";
                     this.updateUI();
-                } else {
-                    // Apply current input value if re-enabling?
-                    const val = parseFloat(radiusInput.value);
-                    if (!isNaN(val) && val > 0) {
-                        this.state.world.globalOptions.planetRadius = val;
-                        this.updateUI();
-                    }
                 }
             }
         });
