@@ -738,6 +738,11 @@ export class CanvasManager {
             this.drawOceanAgeMap(state);
         }
 
+        // Draw Image Overlay (for tracing reference maps)
+        if (state.world.imageOverlay) {
+            this.drawImageOverlay(state);
+        }
+
         // Draw Plates
         if (state.world.showPlates !== false) {
             // Sort plates by zIndex (default to 0 if undefined)
@@ -1375,4 +1380,101 @@ export class CanvasManager {
             }
         }
     }
+
+    private cachedOverlayImage: HTMLImageElement | null = null;
+    private cachedOverlayImageData: string | null = null;
+
+    private drawImageOverlay(state: AppState): void {
+        const overlay = state.world.imageOverlay;
+        if (!overlay || !overlay.visible || !overlay.imageData) return;
+
+        // Load and cache the image
+        if (this.cachedOverlayImageData !== overlay.imageData) {
+            this.cachedOverlayImage = new Image();
+            this.cachedOverlayImage.src = overlay.imageData;
+            this.cachedOverlayImageData = overlay.imageData;
+        }
+
+        const img = this.cachedOverlayImage;
+        if (!img || !img.complete) return; // Image not loaded yet
+
+        this.ctx.save();
+        this.ctx.globalAlpha = overlay.opacity;
+
+        // For equirectangular projection, we can draw directly
+        if (state.world.projection === 'equirectangular') {
+            // Get viewport dimensions
+            const width = this.canvas.width / (window.devicePixelRatio || 1);
+            const height = this.canvas.height / (window.devicePixelRatio || 1);
+
+            // Apply transformations
+            const scale = overlay.scale || 1.0;
+            const offsetX = overlay.offsetX || 0;
+            const offsetY = overlay.offsetY || 0;
+
+            // Calculate scaled dimensions
+            const scaledWidth = width * scale;
+            const scaledHeight = height * scale;
+
+            // Calculate position with offset (in pixels)
+            const x = (width - scaledWidth) / 2 + offsetX;
+            const y = (height - scaledHeight) / 2 + offsetY;
+
+            // Draw the image
+            this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+        } else {
+            // For other projections, sample the equirectangular image
+            // This is more complex - for now, render a grid of points
+            const sampleSize = 5; // degrees
+            const pathGen = this.projectionManager.getPathGenerator();
+
+            for (let lat = -90; lat < 90; lat += sampleSize) {
+                for (let lon = -180; lon < 180; lon += sampleSize) {
+                    // Sample the image at this lat/lon
+                    const u = (lon + 180) / 360;
+                    const v = (90 - lat) / 180;
+
+                    // Get color from image
+                    const px = Math.floor(u * img.width);
+                    const py = Math.floor(v * img.height);
+
+                    // Create temporary canvas to read pixel data
+                    if (!this.tempCanvas) {
+                        this.tempCanvas = document.createElement('canvas');
+                        this.tempCanvas.width = img.width;
+                        this.tempCanvas.height = img.height;
+                        const tempCtx = this.tempCanvas.getContext('2d');
+                        if (tempCtx) {
+                            tempCtx.drawImage(img, 0, 0);
+                        }
+                    }
+
+                    const tempCtx = this.tempCanvas.getContext('2d');
+                    if (!tempCtx) continue;
+
+                    const imageData = tempCtx.getImageData(px, py, 1, 1).data;
+                    const color = `rgba(${imageData[0]}, ${imageData[1]}, ${imageData[2]}, ${imageData[3] / 255})`;
+
+                    // Draw a small polygon at this location
+                    this.ctx.fillStyle = color;
+                    this.ctx.beginPath();
+                    pathGen({
+                        type: 'Polygon',
+                        coordinates: [[
+                            [lon, lat],
+                            [lon + sampleSize, lat],
+                            [lon + sampleSize, lat + sampleSize],
+                            [lon, lat + sampleSize],
+                            [lon, lat]
+                        ]]
+                    } as any);
+                    this.ctx.fill();
+                }
+            }
+        }
+
+        this.ctx.restore();
+    }
+
+    private tempCanvas: HTMLCanvasElement | null = null;
 }

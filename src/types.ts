@@ -144,6 +144,18 @@ export interface WorldState {
   // Raster Ocean Age: Stores birth time (Ma) in a grid
   oceanAgeMap?: Float32Array;
   oceanAgeMapRes?: [number, number]; // [width, height]
+  // Image Overlay for tracing existing maps
+  imageOverlay?: ImageOverlay;
+}
+
+export interface ImageOverlay {
+  imageData: string; // Base64 encoded image or URL
+  visible: boolean;
+  opacity: number; // 0-1
+  scale: number; // Scale factor
+  offsetX: number; // X offset in degrees
+  offsetY: number; // Y offset in degrees
+  rotation: number; // Rotation in degrees
 }
 
 export interface Boundary {
