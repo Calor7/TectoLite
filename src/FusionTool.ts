@@ -1,6 +1,6 @@
 // Fusion Tool - Merges two plates into one
 import { AppState, TectonicPlate, Feature, Polygon, Coordinate, generateId, MotionKeyframe } from './types';
-import { calculateSphericalCentroid } from './utils/sphericalMath';
+import { calculateSphericalCentroid, latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize } from './utils/sphericalMath';
 import polygonClipping from 'polygon-clipping';
 
 interface FuseResult {
@@ -10,15 +10,52 @@ interface FuseResult {
 }
 
 /**
- * Merge polygons from two plates using proper polygon union
+ * Merge polygons from two plates using proper polygon union.
+ * Uses a temporary coordinate rotation to move the plates to the equator
+ * for robust planar clipping that avoids pole and antimeridian issues.
  */
 function mergePolygons(plate1: TectonicPlate, plate2: TectonicPlate): Polygon[] {
+    const allPoints = [...plate1.polygons.flatMap(p => p.points), ...plate2.polygons.flatMap(p => p.points)];
+    const collectiveCentroid = calculateSphericalCentroid(allPoints);
+
+    // Calculate rotation to Eq/Prime (lon=0, lat=0 -> vector [1, 0, 0])
+    const vCentroid = latLonToVector(collectiveCentroid);
+    const vTarget = { x: 1, y: 0, z: 0 };
+
+    // Axis = centroid cross target
+    let axis = cross(vCentroid, vTarget);
+    let angle = Math.acos(Math.min(1, Math.max(-1, dot(vCentroid, vTarget))));
+
+    const needsRotation = angle > 0.001;
+    if (needsRotation) {
+        axis = normalize(axis);
+        // If axis is zero (antipodal or same), use any perpendicular axis
+        if (axis.x === 0 && axis.y === 0 && axis.z === 0) {
+            axis = { x: 0, z: 1, y: 0 };
+        }
+    }
+
+    const rotateToSafe = (p: Coordinate): [number, number] => {
+        if (!needsRotation) return [p[0], p[1]];
+        const v = latLonToVector(p);
+        const rotated = rotateVector(v, axis, angle);
+        const lonLat = vectorToLatLon(rotated);
+        return [lonLat[0], lonLat[1]];
+    };
+
+    const rotateFromSafe = (p: [number, number]): Coordinate => {
+        if (!needsRotation) return [p[0], p[1]] as Coordinate;
+        const v = latLonToVector([p[0], p[1]]);
+        const derotated = rotateVector(v, axis, -angle);
+        return vectorToLatLon(derotated);
+    };
+
     const polys1: [number, number][][] = plate1.polygons.map(p =>
-        [...p.points.map(pt => [pt[0], pt[1]] as [number, number]), [p.points[0][0], p.points[0][1]] as [number, number]]
+        [...p.points.map(pt => rotateToSafe(pt)), rotateToSafe(p.points[0])]
     );
 
     const polys2: [number, number][][] = plate2.polygons.map(p =>
-        [...p.points.map(pt => [pt[0], pt[1]] as [number, number]), [p.points[0][0], p.points[0][1]] as [number, number]]
+        [...p.points.map(pt => rotateToSafe(pt)), rotateToSafe(p.points[0])]
     );
 
     try {
@@ -27,7 +64,7 @@ function mergePolygons(plate1: TectonicPlate, plate2: TectonicPlate): Polygon[] 
         const merged: Polygon[] = [];
         for (const multiPoly of result) {
             for (const ring of multiPoly) {
-                const points: Coordinate[] = ring.slice(0, -1).map(pt => [pt[0], pt[1]] as Coordinate);
+                const points: Coordinate[] = ring.slice(0, -1).map(pt => rotateFromSafe(pt));
                 if (points.length >= 3) {
                     merged.push({
                         id: generateId(),
