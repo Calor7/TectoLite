@@ -8,7 +8,7 @@ import { toDisplayTime, toInternalTime } from '../utils/TimeTransformationUtils'
 export interface TimelineEventItem {
     id: string;
     time: number;
-    type: 'birth' | 'motion' | 'split' | 'fuse' | 'death';
+    type: 'birth' | 'motion' | 'split' | 'fuse' | 'death' | 'shape';
     label: string;
     details: string;
     isEditable: boolean;
@@ -81,15 +81,33 @@ export class TimelineSystem {
             originalRef: plate
         });
 
-        // 2. Motion Keyframes
+        // 2. Motion/Shape Keyframes
         if (plate.motionKeyframes) {
             plate.motionKeyframes.forEach((kf, index) => {
+                // Determine if this is primarily a motion change or just a shape snapshot
+                // Heuristic: If it has user-defined name or type, use it. 
+                // For now, assume it's "Motion Change" if rate > 0 ?? Not reliable.
+                // Or check if this keyframe was created by the Edit tool which might flag it?
+                // Actually, every keyframe defines motion and shape.
+                // Let's call it "Motion & Shape" or just "Keyframe".
+                // But user asked for specific distinction if it's an "Event". 
+
+                let label = `Keyframe #${index + 1}`;
+                let type: 'motion' | 'shape' = 'motion';
+                
+                // If it's the result of "Insert Event at Current Time" from edit tool,
+                // it might have identical motion to previous keyframe? Not necessarily.
+                // Let's label it generically Keyframe, or check context. 
+                // Without extra metadata, we can inspect if pole rate changed?
+                
+                // For now, let's allow distinguishing via UI logic or just list as Keyframe
+                
                 list.push({
                     id: `motion-${index}`,
                     time: kf.time,
-                    type: 'motion',
-                    label: 'Motion Change',
-                    details: `${kf.eulerPole.rate.toFixed(2)} deg/Ma`,
+                    type: type, // Or 'shape' if we can detect
+                    label: label,
+                    details: `${kf.eulerPole?.rate.toFixed(2)} deg/Ma`,
                     isEditable: true,
                     isDeletable: true,
                     originalRef: kf

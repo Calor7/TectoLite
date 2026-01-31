@@ -21,7 +21,7 @@ import { SimulationEngine } from './SimulationEngine';
 import { exportToPNG, showPNGExportDialog } from './export';
 import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
-import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
+import { vectorToLatLon, latLonToVector, rotateVector, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
 import { exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog } from './export';
@@ -78,6 +78,10 @@ class TectoLiteApp {
                  const speedDegInput = document.getElementById('speed-input-deg') as HTMLInputElement;
                  if (speedDegInput) speedDegInput.value = rate.toFixed(2);
                  if (speedCmInput) speedCmInput.value = this.convertDegMaToCmYr(rate).toFixed(2);
+            },
+            (active) => {
+                const el = document.getElementById('edit-controls');
+                if (el) el.style.display = active ? 'block' : 'none';
             }
         );
 
@@ -358,6 +362,11 @@ class TectoLiteApp {
                     <span class="tool-label">Draw</span>
                     <span class="info-icon" data-tooltip="Draw new plate boundaries (Hotkey: D)">(i)</span>
                   </button>
+                  <button class="tool-btn" data-tool="edit" style="flex:1;">
+                    <span class="tool-icon">✎</span>
+                    <span class="tool-label">Edit</span>
+                    <span class="info-icon" data-tooltip="Modify plate geometry (Hotkey: E)">(i)</span>
+                  </button>
                   <button class="tool-btn" data-tool="feature" style="flex:1;">
                     <span class="tool-icon">🏔️</span>
                     <span class="tool-label">Feature</span>
@@ -412,6 +421,14 @@ class TectoLiteApp {
                       <div style="font-size: 11px; color: var(--text-secondary);">Confirm Motion?</div>
                       <button class="btn btn-success" id="btn-motion-apply">✓ Apply</button>
                       <button class="btn btn-secondary" id="btn-motion-cancel">✗ Cancel</button>
+                 </div>
+
+                 <div id="edit-controls" style="display: none; flex-direction:column; gap:4px; margin-top: 8px; border-top: 1px solid var(--border-default); padding-top: 8px;">
+                     <div style="align-self: center; font-size: 11px; color: var(--text-secondary); font-weight: bold;">Apply Changes?</div>
+                     <div style="display:flex; gap: 4px;">
+                         <button class="btn btn-success" id="btn-edit-apply" style="flex:1;">✓ Apply</button>
+                         <button class="btn btn-secondary" id="btn-edit-cancel" style="flex:1;">✗ Cancel</button>
+                     </div>
                  </div>
 
 
@@ -541,6 +558,27 @@ class TectoLiteApp {
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
               <button id="btn-time-input-cancel" class="btn btn-secondary" style="padding: 6px 12px;">Cancel</button>
               <button id="btn-time-input-confirm" class="btn btn-primary" style="padding: 6px 12px;">Confirm</button>
+            </div>
+          </div>
+        </div>
+        <!-- Apply Edit Modal -->
+        <div id="apply-edit-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
+          <div class="modal-content" style="background: var(--bg-secondary); border: 2px solid var(--border-default); border-radius: 4px; padding: 16px; min-width: 350px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); display: flex; flex-direction: column; gap: 12px;">
+            <h3 style="margin: 0; color: var(--text-primary); font-size: 16px;">Apply Plate Geometry</h3>
+            <div style="font-size: 12px; color: var(--text-secondary);">Choose how to apply these changes to the timeline:</div>
+            
+            <button id="btn-apply-generation" class="btn btn-primary" style="text-align: left; padding: 10px; display: flex; flex-direction: column;">
+                <span style="font-weight: 600;">Apply at Generation (Rewrite History)</span>
+                <span style="font-size: 10px; opacity: 0.8; font-weight: normal;">Modifies the plate's base shape. The change will propagate through all time.</span>
+            </button>
+            
+            <button id="btn-apply-event" class="btn btn-secondary" style="text-align: left; padding: 10px; display: flex; flex-direction: column;">
+                <span style="font-weight: 600;">Insert Event at Current Time</span>
+                <span style="font-size: 10px; opacity: 0.8; font-weight: normal;">Creates a new keyframe at <span id="lbl-current-time">0</span> Ma. The shape changes only from this point forward.</span>
+            </button>
+            
+            <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+              <button id="btn-apply-cancel" class="btn btn-secondary" style="padding: 6px 16px;">Cancel</button>
             </div>
           </div>
         </div>
@@ -957,6 +995,115 @@ class TectoLiteApp {
             }
         });
 
+        // Edit Tool Controls
+        document.getElementById('btn-edit-apply')?.addEventListener('click', () => {
+             // Show Modal
+             const modal = document.getElementById('apply-edit-modal');
+             const lblTime = document.getElementById('lbl-current-time');
+             if (modal && lblTime) {
+                 lblTime.textContent = this.state.world.currentTime.toFixed(1);
+                 modal.style.display = 'flex';
+             }
+        });
+
+        const executeApply = (mode: 'generation' | 'event') => {
+             if (!this.canvasManager) return;
+             const result = this.canvasManager.getEditResult();
+             if (result) {
+                 this.state.world.plates = this.state.world.plates.map(p => {
+                     if (p.id === result.plateId) {
+                         const copy = {...p};
+                         copy.polygons = result.polygons; // Update current visual state immediately
+                         
+                         if (mode === 'generation') {
+                             // --- REWRITE HISTORY STRATEGY ---
+                             const dt = this.state.world.currentTime - p.birthTime;
+                             const rate = p.motion.eulerPole.rate;
+                             const angleDeg = rate * dt;
+                             const angleRad = angleDeg * Math.PI / 180;
+                             
+                             const poleVec = latLonToVector(p.motion.eulerPole.position);
+                             const invAngleRad = -angleRad;
+                             
+                             const newInitialPolys = result.polygons.map((poly: any) => {
+                                 const newPoints = poly.points.map((pt: Coordinate) => {
+                                     const v = latLonToVector(pt);
+                                     const vRot = rotateVector(v, poleVec, invAngleRad);
+                                     return vectorToLatLon(vRot);
+                                 });
+                                 return { ...poly, points: newPoints };
+                             });
+                             
+                             copy.initialPolygons = newInitialPolys;
+
+                             // CRITICAL: Propagate this base shape change to ALL future keyframes
+                             // Keyframes store absolute snapshots. If we change the source truth, 
+                             // we must update the snapshots to reflect "it was always this shape".
+                             if (copy.motionKeyframes) {
+                                 copy.motionKeyframes = copy.motionKeyframes.map(kf => {
+                                     // Re-calculate snapshot for this keyframe time based on NEW initial polygons
+                                     // Rotate from birthTime to keyframe.time
+                                     const kfDt = kf.time - p.birthTime;
+                                     const kfAngle = (rate * kfDt) * Math.PI / 180;
+                                     // Rotate forward from new birth shape
+                                     const newSnapshot = newInitialPolys.map((poly: Polygon) => ({
+                                         ...poly,
+                                         points: poly.points.map(pt => {
+                                             const v = latLonToVector(pt);
+                                             const vRot = rotateVector(v, poleVec, kfAngle);
+                                             return vectorToLatLon(vRot);
+                                         })
+                                     }));
+                                     
+                                     return {
+                                         ...kf,
+                                         snapshotPolygons: newSnapshot
+                                         // Features might need update too but let's stick to geometry first
+                                     };
+                                 });
+                             }
+                         } else {
+                             // --- KEYFRAME EVENT STRATEGY ---
+                             // Create a new keyframe at current time with the CURRENT polygons as snapshot
+                             const newKeyframe: MotionKeyframe = {
+                                 time: this.state.world.currentTime,
+                                 eulerPole: p.motion.eulerPole, // Inherit current pole
+                                 snapshotPolygons: JSON.parse(JSON.stringify(result.polygons)), // Snapshot current shape
+                                 snapshotFeatures: [...p.features] // Snapshot current features
+                             };
+                             
+                             if (!copy.motionKeyframes) copy.motionKeyframes = [];
+                             copy.motionKeyframes.push(newKeyframe);
+                             // Sort keyframes to be safe
+                             copy.motionKeyframes.sort((a,b) => a.time - b.time);
+                         }
+                         return copy;
+                     }
+                     return p;
+                 });
+                 
+                 this.canvasManager.cancelEdit();
+                 document.getElementById('edit-controls')!.style.display = 'none';
+                 document.getElementById('apply-edit-modal')!.style.display = 'none';
+
+                 // FORCE SIMULATION UPDATE to reflect changes immediately
+                 this.simulation?.setTime(this.state.world.currentTime);
+                 
+                 this.canvasManager.render();
+             }
+        };
+
+        document.getElementById('btn-apply-generation')?.addEventListener('click', () => executeApply('generation'));
+        document.getElementById('btn-apply-event')?.addEventListener('click', () => executeApply('event'));
+        document.getElementById('btn-apply-cancel')?.addEventListener('click', () => {
+             document.getElementById('apply-edit-modal')!.style.display = 'none';
+        });
+
+        document.getElementById('btn-edit-cancel')?.addEventListener('click', () => {
+             if (this.canvasManager) this.canvasManager.cancelEdit();
+             document.getElementById('edit-controls')!.style.display = 'none';
+        });
+
         // 2. Event Delegation for Presets
         document.addEventListener('click', (e) => {
             const target = e.target as HTMLElement;
@@ -1176,6 +1323,7 @@ class TectoLiteApp {
                 case 'v': this.setActiveTool('select'); break;
                 case 'h': this.setActiveTool('pan'); break; // Now Rotate/Pan
                 case 'd': this.setActiveTool('draw'); break;
+                case 'e': this.setActiveTool('edit'); break;
                 case 'f': this.setActiveTool('feature'); break;
                 case 's': this.setActiveTool('split'); break;
                 case 'g': this.setActiveTool('fuse'); break;
@@ -1810,6 +1958,12 @@ class TectoLiteApp {
             featureSelector.style.display = tool === 'feature' ? 'block' : 'none';
         }
 
+        const editControls = document.getElementById('edit-controls');
+        if (editControls && tool !== 'edit') {
+            editControls.style.display = 'none';
+            if (this.canvasManager) this.canvasManager.cancelEdit();
+        }
+
         // Set initial Stage 1 hint/tooltip
         let hintText = "";
         switch (tool) {
@@ -1818,6 +1972,9 @@ class TectoLiteApp {
                 break;
             case 'pan':
                 hintText = "Drag to rotate the globe. Scroll to zoom.";
+                break;
+            case 'edit':
+                hintText = "Select a plate, then drag edges to add points or drag vertices to move.";
                 break;
             case 'draw':
                 hintText = "Click anywhere to start drawing a new plate.";
