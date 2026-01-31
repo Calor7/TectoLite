@@ -1361,9 +1361,8 @@ class TectoLiteApp {
     }
 
     private handleFeaturePlace(position: Coordinate, type: FeatureType): void {
-        // Find plate that contains this position or use selected plate
-        const plateId = this.state.world.selectedPlateId ??
-            (this.state.world.plates.length > 0 ? this.state.world.plates[0].id : null);
+        // Use the selected plate for feature placement
+        const plateId = this.state.world.selectedPlateId;
 
         if (!plateId) return;
         this.pushState(); // Save state for undo
