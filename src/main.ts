@@ -14,7 +14,8 @@ import {
     getNextPlateColor,
     Coordinate,
     ProjectionType,
-    MotionKeyframe
+    MotionKeyframe,
+    OverlayMode
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -152,7 +153,28 @@ class TectoLiteApp {
                         </div>
                     </div>
 
-                    <!-- 3. SHOW OBJECT SETTING -->
+                    <!-- 3. IMAGE OVERLAY -->
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
+                        <div class="dropdown-header">Reference Overlay</div>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-show-overlay"> Show Overlay <span class="info-icon" data-tooltip="Show uploaded reference map for tracing">(i)</span>
+                        </label>
+                        <div style="padding: 2px 8px 4px 28px; display: flex; flex-direction: column; gap: 4px;">
+                            <button id="btn-upload-overlay" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">
+                                &#x1F4BE; Upload Map
+                            </button>
+                            <div style="display: flex; align-items: center; gap: 4px;">
+                                <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Opacity:</label>
+                                <input type="range" id="overlay-opacity-slider" min="0" max="100" value="50" style="flex: 1; height: 4px;">
+                                <span id="overlay-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 30px;">50%</span>
+                            </div>
+                            <button id="btn-clear-overlay" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">
+                                &#x2717; Clear
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 4. EFFECTS SETTING -->
                     <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
                         <div class="dropdown-header">Effects</div>
                         <label class="view-dropdown-item">
@@ -218,6 +240,7 @@ class TectoLiteApp {
               <span class="icon">❓</span> Legend
             </button>
             <input type="file" id="file-import" accept=".json" style="display: none;">
+            <input type="file" id="file-overlay-upload" accept="image/*" style="display: none;">
           </div>
         </header>
         
@@ -270,6 +293,11 @@ class TectoLiteApp {
                     <span class="tool-icon">🧬</span>
                     <span class="tool-label">Fuse</span>
                     <span class="info-icon" data-tooltip="Merge two plates (Hotkey: G)">(i)</span>
+                  </button>
+                  <button class="tool-btn" data-tool="flowline" style="flex:1;">
+                    <span class="tool-icon">➤</span>
+                    <span class="tool-label">Flowline</span>
+                    <span class="info-icon" data-tooltip="Drop a flowline seed to trace motion (Hotkey: T)">(i)</span>
                   </button>
               </div>
             </div>
@@ -784,6 +812,95 @@ class TectoLiteApp {
             this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
         });
 
+        // Image Overlay Controls
+        document.getElementById('check-show-overlay')?.addEventListener('change', (e) => {
+            if (this.state.world.imageOverlay) {
+                this.state.world.imageOverlay.visible = (e.target as HTMLInputElement).checked;
+                this.canvasManager?.render();
+            }
+        });
+
+        document.getElementById('btn-upload-overlay')?.addEventListener('click', () => {
+            document.getElementById('file-overlay-upload')?.click();
+        });
+
+        document.getElementById('file-overlay-upload')?.addEventListener('change', (e) => {
+            const input = e.target as HTMLInputElement;
+            const file = input.files?.[0];
+            if (file) {
+                // Check file size (max 5MB)
+                const maxSize = 5 * 1024 * 1024; // 5MB
+                if (file.size > maxSize) {
+                    alert('Image file is too large. Maximum size is 5MB.');
+                    input.value = '';
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const imageData = event.target?.result as string;
+
+                    // Load image to check dimensions and potentially resize
+                    const img = new Image();
+                    img.onload = () => {
+                        // Max dimension to balance quality with performance
+                        const maxDimension = 2048;
+                        let finalImageData = imageData;
+
+                        // Scale down if image is too large
+                        if (img.width > maxDimension || img.height > maxDimension) {
+                            const canvas = document.createElement('canvas');
+                            const ctx = canvas.getContext('2d');
+
+                            const scale = Math.min(maxDimension / img.width, maxDimension / img.height);
+                            canvas.width = img.width * scale;
+                            canvas.height = img.height * scale;
+
+                            ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            finalImageData = canvas.toDataURL('image/jpeg', 0.9);
+
+                            console.log(`Image scaled down from ${img.width}x${img.height} to ${canvas.width}x${canvas.height}`);
+                        }
+
+                        // Create overlay with fixed screen mode (as requested)
+                        this.state.world.imageOverlay = {
+                            imageData: finalImageData,
+                            visible: true,
+                            opacity: 0.5,
+                            scale: 1.0,
+                            offsetX: 0,
+                            offsetY: 0,
+                            rotation: 0,
+                            mode: 'fixed'
+                        };
+                        const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
+                        if (checkbox) checkbox.checked = true;
+                        this.canvasManager?.render();
+                    };
+                    img.src = imageData;
+                };
+                reader.readAsDataURL(file);
+            }
+            input.value = ''; // Reset input to allow same file re-upload
+        });
+
+        document.getElementById('overlay-opacity-slider')?.addEventListener('input', (e) => {
+            const value = parseInt((e.target as HTMLInputElement).value);
+            const valueLabel = document.getElementById('overlay-opacity-value');
+            if (valueLabel) valueLabel.textContent = `${value}%`;
+            if (this.state.world.imageOverlay) {
+                this.state.world.imageOverlay.opacity = value / 100;
+                this.canvasManager?.render();
+            }
+        });
+
+        document.getElementById('btn-clear-overlay')?.addEventListener('click', () => {
+            this.state.world.imageOverlay = undefined;
+            const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
+            if (checkbox) checkbox.checked = false;
+            this.canvasManager?.render();
+        });
+
         document.getElementById('global-max-speed')?.addEventListener('change', (e) => {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
@@ -858,6 +975,7 @@ class TectoLiteApp {
                 case 's': this.setActiveTool('split'); break;
                 case 'g': this.setActiveTool('fuse'); break;
                 case 'l': this.setActiveTool('link'); break;
+                case 't': this.setActiveTool('flowline'); break;
                 case 'escape':
                     this.canvasManager?.cancelDrawing();
                     break;
@@ -2062,7 +2180,9 @@ class TectoLiteApp {
             trench: 'Trench',
             island: 'Island',
             weakness: 'Weakness',
-            poly_region: 'Polygon Region'
+            poly_region: 'Polygon Region',
+            flowline: 'Flowline',
+            seafloor: 'Seafloor'
         };
         return names[type] || type;
     }

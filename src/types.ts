@@ -19,7 +19,7 @@ export interface Polygon {
   closed: boolean;
 }
 
-export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region';
+export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'flowline' | 'seafloor';
 
 export interface Feature {
   id: string;
@@ -37,6 +37,10 @@ export interface Feature {
   // Polygon feature specific
   polygon?: Coordinate[];
   fillColor?: string;
+  // Flowline / Seafloor specific
+  trail?: Coordinate[];     // Cached trail for flowlines
+  seedPlateId?: string;     // Reference plate for flowline
+  age?: number;             // Creation time for seafloor segments
 }
 
 export interface EulerPole {
@@ -133,6 +137,8 @@ export interface WorldState {
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
+  // Image Overlay for tracing existing maps
+  imageOverlay?: ImageOverlay;
 }
 
 export interface Boundary {
@@ -143,7 +149,20 @@ export interface Boundary {
   velocity?: number; // Relative velocity magnitude
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline';
+
+export type OverlayMode = 'fixed' | 'projection';
+
+export interface ImageOverlay {
+  imageData: string; // Base64 encoded image or URL
+  visible: boolean;
+  opacity: number; // 0-1
+  scale: number; // Scale factor
+  offsetX: number; // X offset in degrees (projection mode) or pixels (fixed mode)
+  offsetY: number; // Y offset in degrees (projection mode) or pixels (fixed mode)
+  rotation: number; // Rotation in degrees
+  mode: OverlayMode; // 'fixed' = screen overlay, 'projection' = map projection
+}
 
 export interface AppState {
   world: WorldState;

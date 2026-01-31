@@ -51,6 +51,9 @@ export class CanvasManager {
     private isBoxSelecting = false;
     private boxSelectPlateId: string | null = null; // Plate context for box selection
 
+    // Image Overlay cache
+    private cachedOverlayImages: Map<string, HTMLImageElement> = new Map();
+
     // Motion gizmo
     private motionGizmo: MotionGizmo = new MotionGizmo();
 
@@ -299,6 +302,17 @@ export class CanvasManager {
 
                 case 'feature':
                     if (geoPos) this.onFeaturePlace(geoPos, state.activeFeatureType);
+                    break;
+
+                case 'flowline':
+                    if (geoPos) {
+                        const hit = this.hitTest(mousePos);
+                        if (hit?.plateId) {
+                            // First select the plate, then place the feature on it
+                            this.onSelect(hit.plateId, null);
+                            this.onFeaturePlace(geoPos, 'flowline');
+                        }
+                    }
                     break;
 
                 case 'select':
@@ -724,6 +738,11 @@ export class CanvasManager {
             this.ctx.stroke();
         }
 
+        // Draw Image Overlay (fixed screen mode only - simple overlay above all elements except UI)
+        if (state.world.imageOverlay && state.world.imageOverlay.visible && state.world.imageOverlay.mode === 'fixed') {
+            this.drawImageOverlay(state);
+        }
+
         // Draw Plates
         // Sort plates by zIndex (default to 0 if undefined)
         const sortedPlates = [...state.world.plates].sort((a, b) => {
@@ -964,6 +983,33 @@ export class CanvasManager {
         // Set reduced opacity for features outside timeline
         if (isGhosted) {
             this.ctx.globalAlpha = 0.3;
+        }
+
+        // Handle flowline feature
+        if (feature.type === 'flowline' && feature.trail && feature.trail.length > 1) {
+            const path = this.projectionManager.getPathGenerator();
+            this.ctx.beginPath();
+            path({
+                type: 'LineString',
+                coordinates: feature.trail
+            } as any);
+            this.ctx.strokeStyle = isSelected ? '#ffffff' : '#aaaaaa';
+            this.ctx.lineWidth = isSelected ? 2 : 1;
+            this.ctx.setLineDash([4, 4]);
+            this.ctx.stroke();
+            this.ctx.setLineDash([]);
+
+            // Draw seed point
+            const proj = this.projectionManager.project(feature.position);
+            if (proj) {
+                this.ctx.beginPath();
+                this.ctx.arc(proj[0], proj[1], 3, 0, Math.PI * 2);
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fill();
+            }
+
+            if (isGhosted) this.ctx.globalAlpha = 1.0;
+            return;
         }
 
         // Handle poly_region features specially - they have their own polygon
@@ -1263,6 +1309,53 @@ export class CanvasManager {
         // 2. Set Ghost Rotation
         this.ghostRotation = { plateId: p.id, axis: res.axis, angle: res.angle };
         this.render();
+    }
+
+    private drawImageOverlay(state: AppState): void {
+        const overlay = state.world.imageOverlay;
+        if (!overlay || !overlay.imageData) return;
+
+        // Check if image is already cached
+        let img = this.cachedOverlayImages.get(overlay.imageData);
+        
+        if (!img) {
+            // Create and cache the image
+            img = new Image();
+            img.onload = () => {
+                // Trigger a re-render when image loads
+                this.render();
+            };
+            img.src = overlay.imageData;
+            this.cachedOverlayImages.set(overlay.imageData, img);
+            // If image not loaded yet, skip rendering this frame
+            return;
+        }
+
+        // Only draw if image is loaded
+        if (!img.complete) return;
+
+        this.ctx.save();
+        this.ctx.globalAlpha = overlay.opacity;
+
+        // For fixed mode: draw as overlay on screen space
+        const canvasWidth = this.canvas.width;
+        const canvasHeight = this.canvas.height;
+
+        // Scale and position overlay
+        const scaledWidth = img.width * overlay.scale;
+        const scaledHeight = img.height * overlay.scale;
+        const x = (canvasWidth - scaledWidth) / 2 + overlay.offsetX;
+        const y = (canvasHeight - scaledHeight) / 2 + overlay.offsetY;
+
+        // Apply rotation if needed
+        if (overlay.rotation !== 0) {
+            this.ctx.translate(canvasWidth / 2, canvasHeight / 2);
+            this.ctx.rotate((overlay.rotation * Math.PI) / 180);
+            this.ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
+        }
+
+        this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+        this.ctx.restore();
     }
 
     public destroy(): void {

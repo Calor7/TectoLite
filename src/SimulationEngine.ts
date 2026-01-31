@@ -114,6 +114,7 @@ export class SimulationEngine {
                 }
             };
         });
+        this.updateFlowlines();
     }
 
     public setTimeScale(scale: number): void {
@@ -176,6 +177,7 @@ export class SimulationEngine {
                 }
             };
         });
+        this.updateFlowlines();
     }
 
     private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {
@@ -509,5 +511,62 @@ export class SimulationEngine {
         };
     }
 
+    private updateFlowlines(): void {
+        this.setState(state => {
+            const plates = state.world.plates;
+            const currentTime = state.world.currentTime;
+            const newPlates = plates.map(plate => {
+                const flowlines = plate.features.filter(f => f.type === 'flowline');
+                if (flowlines.length === 0) return plate;
+                const newFeatures = plate.features.map(f => {
+                    if (f.type !== 'flowline') return f;
+                    const startTime = f.generatedAt || plate.birthTime;
+                    const points: Coordinate[] = [];
+                    const step = 5;
+                    for (let t = startTime; t <= currentTime; t += step) {
+                        points.push(this.getPointPositionAtTime(f.originalPosition || f.position, plate.id, t, plates));
+                    }
+                    points.push(this.getPointPositionAtTime(f.originalPosition || f.position, plate.id, currentTime, plates));
+                    return { ...f, trail: points };
+                });
+                return { ...plate, features: newFeatures };
+            });
+            return { ...state, world: { ...state.world, plates: newPlates } };
+        });
+    }
+
+    private getPointPositionAtTime(point: Coordinate, plateId: string, time: number, allPlates: TectonicPlate[]): Coordinate {
+        const plate = allPlates.find(p => p.id === plateId);
+        if (!plate) return point;
+        let currentPos = point;
+        let currentTime = plate.birthTime;
+        if (time <= currentTime) return point;
+        const keyframes = [...(plate.motionKeyframes || [])].sort((a, b) => a.time - b.time);
+        for (let i = 0; i < keyframes.length; i++) {
+            const kf = keyframes[i];
+            const nextKfTime = (i + 1 < keyframes.length) ? keyframes[i + 1].time : Infinity;
+            if (kf.time > time) break;
+            const intervalStart = Math.max(currentTime, kf.time);
+            const intervalEnd = Math.min(time, nextKfTime);
+            if (intervalEnd > intervalStart) {
+                const pole = kf.eulerPole;
+                if (pole && pole.rate !== 0) {
+                    const elapsed = intervalEnd - kf.time;
+                    const axis = latLonToVector(pole.position);
+                    const angle = toRad(pole.rate * elapsed);
+                    currentPos = vectorToLatLon(rotateVector(latLonToVector(currentPos), axis, angle));
+                }
+                currentTime = intervalEnd;
+            }
+        }
+        if (keyframes.length === 0 || currentTime < time) {
+            const pole = plate.motion?.eulerPole;
+            if (pole && pole.rate !== 0) {
+                const elapsed = time - plate.birthTime;
+                currentPos = vectorToLatLon(rotateVector(latLonToVector(point), latLonToVector(pole.position), toRad(pole.rate * elapsed)));
+            }
+        }
+        return currentPos;
+    }
 
 }
