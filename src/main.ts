@@ -600,6 +600,42 @@ class TectoLiteApp {
             onClick: () => void 
         }[] 
     }): void {
+        const appContainer = document.querySelector('.app-container');
+        const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
+
+        // RETRO THEME POPUP
+        if (isRetro) {
+            // Strip HTML tags for clean alert text
+            let cleanText = options.content.replace(/<[^>]*>/g, '');
+            
+            // Check if this is a "Confirm" style (multiple choices) or "Alert" style (OK only)
+            const mainAction = options.buttons.find(b => !b.isSecondary);
+            const secondaryAction = options.buttons.find(b => b.isSecondary);
+
+            if (mainAction && secondaryAction) {
+                // Bi-modal choice (OK/Cancel)
+                // Append instruction to map buttons to OK/Cancel
+                cleanText += `\n\n[OK] -> ${mainAction.text}\n[Cancel] -> ${secondaryAction.text}`;
+
+                if (confirm(cleanText)) {
+                    // Logic for "OK" / Main Action
+                    mainAction.onClick();
+                } else {
+                    // Logic for "Cancel" / Secondary
+                    secondaryAction.onClick();
+                }
+            } else if (mainAction) {
+                // Only one main action - treat as alert
+                alert(cleanText);
+                mainAction.onClick();
+            } else {
+                // Just info
+                alert(cleanText);
+            }
+            return;
+        }
+
+        // MODERN THEME MODAL (Standard TectoLite UI)
         const overlay = document.createElement('div');
         overlay.style.cssText = `
           position: fixed; top: 0; left: 0; right: 0; bottom: 0;
