@@ -49,6 +49,7 @@ class TectoLiteApp {
 
     private init(): void {
         document.querySelector<HTMLDivElement>('#app')!.innerHTML = this.getHTML();
+        this.setupResizers();
 
         // Initialize canvas
         const canvas = document.getElementById('main-canvas') as HTMLCanvasElement;
@@ -96,6 +97,67 @@ class TectoLiteApp {
         this.setupEventListeners();
         this.canvasManager.startRenderLoop();
         this.updateUI();
+    }
+
+
+    private setupResizers(): void {
+        this.setupResizer('resizer-left', 'toolbar', 'width', false);
+        this.setupResizer('resizer-left-inner', 'plate-sidebar', 'width', false);
+        this.setupResizer('resizer-right', 'right-sidebar', 'width', true); // Inverse for right sidebar
+        this.setupResizer('resizer-bottom', 'timeline-bar', 'height', true); // Inverse for bottom
+    }
+
+    private setupResizer(resizerId: string, targetId: string, dimension: 'width' | 'height', inverse: boolean): void {
+        const resizer = document.getElementById(resizerId);
+        const target = document.getElementById(targetId);
+        if (!resizer || !target) return;
+
+        let startVal = 0;
+        let startDim = 0;
+
+        const onMouseMove = (e: MouseEvent) => {
+            let newVal;
+            if (dimension === 'width') {
+                const diff = inverse ? (startVal - e.clientX) : (e.clientX - startVal);
+                newVal = startDim + diff;
+            } else {
+                const diff = inverse ? (startVal - e.clientY) : (e.clientY - startVal);
+                newVal = startDim + diff;
+            }
+            
+            // Constrain minimums
+            const minSize = 50;
+            if (newVal < minSize) newVal = minSize; // Allow user to make it smaller than CSS min-width if they really want, or respect it
+            
+            target.style[dimension] = `${newVal}px`;
+            
+            // If resizing changes canvas container size, we must resize canvas
+            this.canvasManager?.resizeCanvas();
+        };
+
+        const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            document.body.style.cursor = '';
+            // Final resize to ensure sharpness
+            this.canvasManager?.resizeCanvas();
+        };
+
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault(); // Prevent text selection
+            if (dimension === 'width') {
+                startVal = e.clientX;
+                startDim = target.getBoundingClientRect().width;
+                document.body.style.cursor = 'col-resize';
+            } else {
+                startVal = e.clientY;
+                startDim = target.getBoundingClientRect().height;
+                document.body.style.cursor = 'row-resize';
+            }
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
     }
 
     private getHTML(): string {
@@ -205,6 +267,26 @@ class TectoLiteApp {
                 </div>
             </div>
 
+            <!-- Planet Dropdown -->
+            <div class="view-dropdown-container">
+                <button id="btn-planet" class="btn btn-secondary" title="Planet Options">
+                    <span class="icon">🪐</span> Planet
+                </button>
+                <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
+                    <div class="dropdown-section">
+                        <div class="dropdown-header">Planet</div>
+                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Custom Planet Radius</span>
+                            <input type="checkbox" id="check-custom-radius">
+                        </label>
+                        <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; gap: 6px;">
+                            <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Radius (km)</label>
+                            <input type="number" id="global-planet-radius" class="property-input" value="${this.state.world.globalOptions.customRadiusEnabled ? (this.state.world.globalOptions.customPlanetRadius || 6371) : 6371}" step="100" style="width: 90px;" disabled>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <button id="btn-reset-camera" class="btn btn-secondary" title="Reset Camera">
                 <span class="icon">⟲</span><span class="oldschool-text">RESET</span>
             </button>
@@ -243,7 +325,7 @@ class TectoLiteApp {
         </header>
         
         <div class="main-content">
-          <aside class="toolbar">
+          <aside class="toolbar" id="toolbar">
             <!-- 1. TOOLS GROUP -->
             <div class="tool-group">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -344,23 +426,6 @@ class TectoLiteApp {
             <!-- 4. GLOBAL / SIMULATION GROUP -->
             <div class="tool-group">
                 <h3 class="tool-group-title">Simulation</h3>
-                 <label class="view-option">
-                    <input type="checkbox" id="check-speed-limit"> Enable Speed Limit <span class="info-icon" data-tooltip="Limit how fast plates can move">(i)</span>
-                </label>
-                <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
-                    <label class="property-label">Max Speed</label>
-                    <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 80px;">
-                </div>
-                 <div class="property-group" style="display:flex; flex-direction: column; gap: 4px;">
-                    <label class="view-option">
-                        <input type="checkbox" id="check-custom-radius"> Custom Planet Radius
-                    </label>
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                         <label class="property-label" style="padding-left: 20px;">Radius (km)</label>
-                         <input type="number" id="global-planet-radius" class="property-input" value="${this.state.world.globalOptions.planetRadius || 6371}" step="100" style="width: 80px;" disabled>
-                    </div>
-                </div>
-                
                 <hr class="property-divider" style="margin: 8px 0;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                   <div style="font-size:11px; font-weight:600; color:var(--text-secondary);">
@@ -386,17 +451,23 @@ class TectoLiteApp {
 
           </aside>
           
+          <div class="resizer-x" id="resizer-left" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
+          
           <aside class="plate-sidebar" id="plate-sidebar">
              <h3 class="tool-group-title" style="padding: 16px 16px 0 16px;">Plates</h3>
              <div id="plate-list" class="plate-list" style="padding: 0 16px 16px 16px; overflow-y: auto; flex:1;"></div>
           </aside>
           
-          <main class="canvas-container">
-            <canvas id="main-canvas"></canvas>
+          <div class="resizer-x" id="resizer-left-inner" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
+
+          <main class="canvas-container" style="flex:1; display:flex;">
+            <canvas id="main-canvas" style="flex:1;"></canvas>
             <div class="canvas-hint" id="canvas-hint"></div>
           </main>
           
-          <div class="right-sidebar">
+          <div class="resizer-x" id="resizer-right" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
+
+          <div class="right-sidebar" id="right-sidebar">
             <aside class="properties-panel" id="properties-panel">
                 <h3 class="panel-title">Properties</h3>
                 <div id="properties-content">
@@ -410,7 +481,9 @@ class TectoLiteApp {
           </div>
         </div>
         
-        <footer class="timeline-bar">
+        <div class="resizer-y" id="resizer-bottom" style="position: relative; height: 4px; cursor: row-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
+
+        <footer class="timeline-bar" id="timeline-bar">
           <div class="time-controls">
             <button id="btn-play" class="btn btn-icon" title="Play/Pause">▶️</button>
             <select id="speed-select" class="speed-select">
@@ -433,7 +506,7 @@ class TectoLiteApp {
                 <span style="margin: 0 8px; color: var(--text-secondary);">|</span>
                 <label style="display: flex; align-items: center; gap: 4px; margin: 0;">
                   <span style="font-size: 10px; color: var(--text-secondary);">Max:</span>
-                  <input type="number" id="timeline-max-time" class="property-input" value="500" step="100" min="100" style="width: 50px; padding: 2px 4px;">
+                  <input type="number" id="timeline-max-time" class="property-input" value="${this.state.world.globalOptions.timelineMaxTime || 500}" step="100" min="100" style="width: 50px; padding: 2px 4px;">
                 </label>
               </div>
             </div>
@@ -500,16 +573,28 @@ class TectoLiteApp {
         const viewBtn = document.getElementById('btn-view-panels');
         const viewMenu = document.getElementById('view-dropdown-menu');
 
+        // Planet Dropdown
+        const planetBtn = document.getElementById('btn-planet');
+        const planetMenu = document.getElementById('planet-dropdown-menu');
+
         // Toggle Dropdown
         viewBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
             viewMenu?.classList.toggle('show');
         });
 
+        planetBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            planetMenu?.classList.toggle('show');
+        });
+
         // Close on outside click
         document.addEventListener('click', (e) => {
             if (viewMenu?.classList.contains('show') && !viewMenu.contains(e.target as Node) && e.target !== viewBtn) {
                 viewMenu.classList.remove('show');
+            }
+            if (planetMenu?.classList.contains('show') && !planetMenu.contains(e.target as Node) && e.target !== planetBtn) {
+                planetMenu.classList.remove('show');
             }
         });
 
@@ -818,10 +903,6 @@ class TectoLiteApp {
         });
 
         // Global Options
-        document.getElementById('check-speed-limit')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.speedLimitEnabled = (e.target as HTMLInputElement).checked;
-        });
-
         // Advanced Toggles
         // Speed Preset Logic
         
@@ -846,8 +927,8 @@ class TectoLiteApp {
                 const presets = this.getSpeedPresetData();
                 const preset = presets[idx];
                 if (preset) {
-                    const speedKmMa = preset.speed * 0.01; // cm/yr -> km/Ma
-                    this.applySpeedToSelected(speedKmMa);
+                    const rateDegMa = this.convertCmYrToDegMa(preset.speed);
+                    this.applySpeedToSelected(rateDegMa);
                 }
             }
             
@@ -856,35 +937,18 @@ class TectoLiteApp {
                 const idx = parseInt(target.getAttribute('data-idx') || '0');
                 const pList = this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0];
                 const speedCmYr = pList[idx] || 0;
-                const speedKmMa = speedCmYr * 0.01; // Scale factor assumption same as UI
-                // Note: original code treated input as direct factor or cm/yr depending on usage.
-                // In main.ts:2093: const maxSpeedCmYr = vKmMa * 0.1; // cm/yr  => vKmMa = cmYr * 10 ??
-                // Wait, previous code:
-                // updateRatePreset -> just stores val.
-                // When we used `global-rate-*` inputs before, what did they do?
-                // They were just presets. BUT when applied to eulerPole.rate?
-                // The MotionGizmo or properties panel calls setRate or similar.
-                // Here we are setting `plate.motion.eulerPole.rate` directly.
-                // A rate of 0.01 rad/Ma is huge.
-                // Let's check `types.ts`: maxDragSpeed: 1.0 // ~10 cm/yr
-                // So 1.0 internal unit ~= 10 cm/yr.
-                // So 1 cm/yr ~= 0.1 internal unit.
-                // 15 cm/yr => 1.5 internal unit.
-                // My previous calc `preset.speed * 0.01` was probably wrong if 1 unit ~ 10cm/yr.
-                
-                // Let's correct the scaling based on known values:
-                // 10 cm/yr ~ 1.0 unit.
-                // So cm/yr / 10 = unit.
-                // 15 cm/yr -> 1.5.
-                // 8.5 cm/yr -> 0.85.
-                
-                this.applySpeedToSelected(speedCmYr * 0.1); 
+                const rateDegMa = this.convertCmYrToDegMa(speedCmYr);
+                this.applySpeedToSelected(rateDegMa);
             }
             
             // Show info dialog
-            if (target.classList.contains('speed-preset-info')) {
-                const idx = parseInt(target.getAttribute('data-idx') || '0');
-                this.showPresetInfoDialog(idx);
+            // Handle clicking on the name itself which now has the class
+            if (target.closest('.speed-preset-info')) {
+                const el = target.closest('.speed-preset-info');
+                if (el) {
+                    const idx = parseInt(el.getAttribute('data-idx') || '0');
+                    this.showPresetInfoDialog(idx);
+                }
             }
         });
         
@@ -996,17 +1060,11 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
-        document.getElementById('global-max-speed')?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val) && val > 0) {
-                this.state.world.globalOptions.maxDragSpeed = val;
-            }
-        });
-
         // NEW: Timeline max-time control in footer
         document.getElementById('timeline-max-time')?.addEventListener('change', (e) => {
             const val = parseInt((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
+                this.state.world.globalOptions.timelineMaxTime = val;
                 const slider = document.getElementById('time-slider') as HTMLInputElement;
                 if (slider) {
                     slider.max = val.toString();
@@ -1027,9 +1085,17 @@ class TectoLiteApp {
             if (radiusInput) {
                 radiusInput.disabled = !checked;
                 if (!checked) {
-                    // Reset to Earth Default
+                    // Disable custom radius, show Earth default
+                    this.state.world.globalOptions.customRadiusEnabled = false;
                     this.state.world.globalOptions.planetRadius = 6371;
                     radiusInput.value = "6371";
+                    this.updateUI();
+                } else {
+                    // Enable custom radius, restore user value
+                    this.state.world.globalOptions.customRadiusEnabled = true;
+                    const customVal = this.state.world.globalOptions.customPlanetRadius || 6371;
+                    radiusInput.value = customVal.toString();
+                    this.state.world.globalOptions.planetRadius = customVal;
                     this.updateUI();
                 }
             }
@@ -1038,7 +1104,10 @@ class TectoLiteApp {
         radiusInput?.addEventListener('change', (e) => {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
-                this.state.world.globalOptions.planetRadius = val;
+                this.state.world.globalOptions.customPlanetRadius = val;
+                if (this.state.world.globalOptions.customRadiusEnabled) {
+                    this.state.world.globalOptions.planetRadius = val;
+                }
                 this.updateUI(); // Refresh UI to update calculated stats
             }
         });
@@ -1475,11 +1544,8 @@ class TectoLiteApp {
         const presets = this.getSpeedPresetData();
         return presets.map((preset, idx) => `
             <div style="display:grid; grid-template-columns: 1fr auto; gap:4px; align-items:center; background:#1e1e2e; border-radius:4px; padding:4px;">
-                <div style="display:flex; align-items:center; gap:4px; overflow:hidden;">
-                    <span style="font-size:11px; color:#cdd6f4; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${preset.name}">${preset.name}</span>
-                    <button class="speed-preset-info" data-idx="${idx}" style="
-                        background:none; border:none; color:#89b4fa; cursor:pointer; padding:0 3px; font-size:10px; opacity:0.7;
-                    " title="More info">(i)</button>
+                <div style="display:flex; align-items:center; gap:4px; overflow:hidden; cursor:pointer;" class="speed-preset-info" data-idx="${idx}" title="Click for details">
+                    <span style="font-size:11px; color:#89b4fa; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:underline; text-decoration-color: #45475a;">${preset.name}</span>
                 </div>
                 <button class="speed-preset-apply" data-idx="${idx}" style="
                     background:#313244; border:1px solid #45475a; border-radius:3px;
@@ -1519,6 +1585,13 @@ class TectoLiteApp {
         } else {
             alert('Please select a plate first to apply this speed preset.');
         }
+    }
+
+    private convertCmYrToDegMa(cmPerYr: number): number {
+        const radiusKm = this.state.world.globalOptions.planetRadius || 6371;
+        const kmPerMa = cmPerYr * 10; // 1 km/Ma = 0.1 cm/yr
+        const radPerMa = radiusKm > 0 ? (kmPerMa / radiusKm) : 0;
+        return radPerMa * (180 / Math.PI);
     }
 
     private showPresetInfoDialog(idx: number): void {
@@ -1566,13 +1639,12 @@ class TectoLiteApp {
         
         dialog.querySelector('#preset-info-close')?.addEventListener('click', cleanup);
         dialog.querySelector('#preset-info-apply')?.addEventListener('click', () => {
-            // Correct scaling: 10 cm/yr ~ 1.0 unit => cm/yr * 0.1
-            const speedScaled = preset.speed * 0.1;
+            const rateDegMa = this.convertCmYrToDegMa(preset.speed);
             const plate = this.state.world.selectedPlateId 
                 ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
                 : null;
             if (plate) {
-                plate.motion.eulerPole.rate = speedScaled;
+                plate.motion.eulerPole.rate = rateDegMa;
                 this.updatePropertiesPanel();
                 this.canvasManager?.render();
                 this.pushState();
@@ -1605,14 +1677,27 @@ class TectoLiteApp {
         (document.getElementById('check-future-features') as HTMLInputElement).checked = w.showFutureFeatures;
 
         // Global Options
-        (document.getElementById('check-speed-limit') as HTMLInputElement).checked = g.speedLimitEnabled;
-        (document.getElementById('global-max-speed') as HTMLInputElement).value = g.maxDragSpeed.toString();
-        //(document.getElementById('global-max-time') as HTMLInputElement).value = // Max time isn't stored in globalOptions currently? Or is it hardcoded?
-        // Actually maxTime isn't in GlobalOptions in types.ts? Let's check types.ts later. 
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        if (maxTimeInput && g.timelineMaxTime) {
+            maxTimeInput.value = g.timelineMaxTime.toString();
+            maxTimeInput.dispatchEvent(new Event('change'));
+        }
         // For now, assume it's not state-persisted or I need to add it.
 
-        if (g.planetRadius) {
-            (document.getElementById('global-planet-radius') as HTMLInputElement).value = g.planetRadius.toString();
+        const radiusInput = document.getElementById('global-planet-radius') as HTMLInputElement;
+        const radiusCheck = document.getElementById('check-custom-radius') as HTMLInputElement;
+        if (radiusInput && radiusCheck) {
+            const enabled = !!g.customRadiusEnabled;
+            radiusCheck.checked = enabled;
+            radiusInput.disabled = !enabled;
+            if (enabled) {
+                const customVal = g.customPlanetRadius || g.planetRadius || 6371;
+                radiusInput.value = customVal.toString();
+                g.planetRadius = customVal;
+            } else {
+                radiusInput.value = '6371';
+                g.planetRadius = 6371;
+            }
         }
 
         (document.getElementById('check-boundary-vis') as HTMLInputElement).checked = !!g.enableBoundaryVisualization;

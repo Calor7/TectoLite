@@ -55,7 +55,8 @@ export class MotionGizmo {
     public render(
         ctx: CanvasRenderingContext2D,
         projectionManager: ProjectionManager,
-        plateCenter: Coordinate
+        plateCenter: Coordinate,
+        planetRadiusKm: number
     ): void {
         if (!this.state) return;
 
@@ -70,7 +71,7 @@ export class MotionGizmo {
         this.drawPoleHandle(ctx, poleProj[0], poleProj[1]);
 
         // Draw rate arrow from plate center - now on globe surface
-        this.drawRateArrowOnGlobe(ctx, projectionManager, plateCenter, centerProj);
+        this.drawRateArrowOnGlobe(ctx, projectionManager, plateCenter, centerProj, planetRadiusKm);
 
         ctx.restore();
     }
@@ -107,7 +108,8 @@ export class MotionGizmo {
         ctx: CanvasRenderingContext2D,
         projectionManager: ProjectionManager,
         plateCenter: Coordinate,
-        centerProj: [number, number]
+        centerProj: [number, number],
+        planetRadiusKm: number
     ): void {
         if (!this.state) return;
 
@@ -174,10 +176,24 @@ export class MotionGizmo {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Rate label
-        ctx.fillStyle = '#fff';
+        // Rate labels around the arrow midpoint
+        const midIdx = Math.floor(projectedPoints.length / 2);
+        const midX = projectedPoints[midIdx][0];
+        const midY = projectedPoints[midIdx][1];
+
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
         ctx.font = 'bold 11px sans-serif';
-        ctx.fillText(`${rate.toFixed(1)}°/Ma`, centerProj[0] + 15, centerProj[1] - 10);
+
+        // Degrees above
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`${rate.toFixed(1)}°/Ma`, midX, midY - 10);
+
+        // cm/yr below
+        const radPerMa = rate * Math.PI / 180;
+        const cmPerYr = (radPerMa * planetRadiusKm) / 10;
+        ctx.fillStyle = '#a6e3a1';
+        ctx.fillText(`${cmPerYr.toFixed(2)} cm/yr`, midX, midY + 10);
     }
 
     // Calculate points along the rotation arc on the sphere

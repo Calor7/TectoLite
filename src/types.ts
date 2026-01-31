@@ -125,11 +125,14 @@ export interface WorldState {
   showFutureFeatures: boolean;  // Show features outside current timeline (future/past)
   globalOptions: {
     // Simulation
-    speedLimitEnabled: boolean;
-    maxDragSpeed: number; // Degrees per Ma
 
     // Planet Parameters
     planetRadius: number; // km, default 6371 (Earth)
+    customPlanetRadius?: number; // User-defined radius
+    customRadiusEnabled?: boolean; // Whether custom radius is active
+
+    // Timeline
+    timelineMaxTime?: number; // Max timeline duration (Ma)
 
     // Advanced
     gridThickness: number;       // Pixel width of grid lines
@@ -215,9 +218,10 @@ export function createDefaultWorldState(): WorldState {
     showFeatures: true,
     showFutureFeatures: false,  // Hide future/past features by default
     globalOptions: {
-      maxDragSpeed: 1.0,  // ~10 cm/year (realistic plate speed)
-      speedLimitEnabled: false,
       planetRadius: 6371, // Earth radius in km
+      customPlanetRadius: 6371,
+      customRadiusEnabled: false,
+      timelineMaxTime: 500,
       gridThickness: 1.0,
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,

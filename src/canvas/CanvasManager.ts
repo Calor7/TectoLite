@@ -845,7 +845,8 @@ export class CanvasManager {
             // Update/render motion gizmo for selected plate
             if (isSelected && state.activeTool === 'select') {
                 this.motionGizmo.setPlate(plate.id, plate.motion.eulerPole);
-                this.motionGizmo.render(this.ctx, this.projectionManager, plate.center);
+                const radiusKm = state.world.globalOptions.planetRadius || 6371;
+                this.motionGizmo.render(this.ctx, this.projectionManager, plate.center, radiusKm);
             }
 
             // Draw Fine-Tuning Rotation Widget
