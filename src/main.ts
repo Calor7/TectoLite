@@ -173,6 +173,11 @@ class TectoLiteApp {
                                 <input type="range" id="overlay-opacity-slider" min="0" max="100" value="50" style="flex: 1; height: 4px;">
                                 <span id="overlay-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 30px;">50%</span>
                             </div>
+                            <div style="display: flex; align-items: center; gap: 4px;">
+                                <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Scale:</label>
+                                <input type="range" id="overlay-scale-slider" min="50" max="200" value="100" style="flex: 1; height: 4px;">
+                                <span id="overlay-scale-value" style="font-size: 10px; color: var(--text-secondary); min-width: 30px;">100%</span>
+                            </div>
                             <button id="btn-clear-overlay" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">
                                 🗑️ Clear
                             </button>
@@ -877,6 +882,16 @@ class TectoLiteApp {
             if (valueLabel) valueLabel.textContent = `${value}%`;
             if (this.state.world.imageOverlay) {
                 this.state.world.imageOverlay.opacity = value / 100;
+                this.canvasManager?.render();
+            }
+        });
+
+        document.getElementById('overlay-scale-slider')?.addEventListener('input', (e) => {
+            const value = parseInt((e.target as HTMLInputElement).value);
+            const valueLabel = document.getElementById('overlay-scale-value');
+            if (valueLabel) valueLabel.textContent = `${value}%`;
+            if (this.state.world.imageOverlay) {
+                this.state.world.imageOverlay.scale = value / 100;
                 this.canvasManager?.render();
             }
         });
