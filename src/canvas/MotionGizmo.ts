@@ -55,14 +55,14 @@ export class MotionGizmo {
     public render(
         ctx: CanvasRenderingContext2D,
         projectionManager: ProjectionManager,
-        plateCenter: Coordinate
+        plateCenter: Coordinate,
+        planetRadiusKm: number
     ): void {
         if (!this.state) return;
 
         const poleProj = projectionManager.project(this.state.polePosition);
-        const centerProj = projectionManager.project(plateCenter);
 
-        if (!poleProj || !centerProj) return;
+        if (!poleProj) return;
 
         ctx.save();
 
@@ -70,7 +70,7 @@ export class MotionGizmo {
         this.drawPoleHandle(ctx, poleProj[0], poleProj[1]);
 
         // Draw rate arrow from plate center - now on globe surface
-        this.drawRateArrowOnGlobe(ctx, projectionManager, plateCenter, centerProj);
+        this.drawRateArrowOnGlobe(ctx, projectionManager, plateCenter, planetRadiusKm);
 
         ctx.restore();
     }
@@ -107,7 +107,7 @@ export class MotionGizmo {
         ctx: CanvasRenderingContext2D,
         projectionManager: ProjectionManager,
         plateCenter: Coordinate,
-        centerProj: [number, number]
+        planetRadiusKm: number
     ): void {
         if (!this.state) return;
 
@@ -130,6 +130,9 @@ export class MotionGizmo {
             // Fallback to screen-space arrow if projection fails
             return;
         }
+
+        const centerProj = projectionManager.project(plateCenter);
+        if (!centerProj) return;
 
         // Draw the arc on globe
         ctx.strokeStyle = isDragging ? '#3498db' : '#2980b9';
@@ -174,10 +177,23 @@ export class MotionGizmo {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Rate label
-        ctx.fillStyle = '#fff';
+        // Rate labels around the arrow midpoint
+        const midX = (centerProj[0] + endX) / 2;
+        const midY = (centerProj[1] + endY) / 2;
+
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
         ctx.font = 'bold 11px sans-serif';
-        ctx.fillText(`${rate.toFixed(1)}°/Ma`, centerProj[0] + 15, centerProj[1] - 10);
+
+        // Degrees above
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`${rate.toFixed(1)}°/Ma`, midX, midY - 10);
+
+        // cm/yr below
+        const radPerMa = rate * Math.PI / 180;
+        const cmPerYr = (radPerMa * planetRadiusKm) / 10;
+        ctx.fillStyle = '#a6e3a1';
+        ctx.fillText(`${cmPerYr.toFixed(2)} cm/yr`, midX, midY + 10);
     }
 
     // Calculate points along the rotation arc on the sphere
@@ -205,8 +221,10 @@ export class MotionGizmo {
         const ay = Math.cos(poleLat) * Math.sin(poleLon);
         const az = Math.sin(poleLat);
 
-        // Arc length proportional to rate (show ~5 degrees of movement per degree/Ma)
-        const totalAngle = rate * 5 * Math.PI / 180;
+        // Arc length proportional to rate (reduced strength)
+        // Scale 33 means visual arc angle = rate * 33
+        // e.g. 1 deg/Ma will show as a 33 degree arc on the globe
+        const totalAngle = rate * 33 * Math.PI / 180;
 
         for (let i = 0; i <= numPoints; i++) {
             const angle = (i / numPoints) * totalAngle;
@@ -316,10 +334,11 @@ export class MotionGizmo {
                         // Set new state
                         const newPole = vectorToLatLon(poleVec);
                         // Rate is always positive magnitude, direction determined by pole
-                        const newRate = angleDeg / 5;
+                        // Division by 33 to match visual scale (33 deg arc = 1 deg/Ma)
+                        const newRate = angleDeg / 33;
 
                         this.state.polePosition = newPole;
-                        this.state.rate = Math.round(newRate * 10) / 10;
+                        this.state.rate = Math.round(newRate * 20) / 20;
 
                         return { polePosition: newPole, rate: this.state.rate };
                     }
@@ -343,9 +362,10 @@ export class MotionGizmo {
                         const crossN = cross(N1, N2);
                         const sign = dot(crossN, P) >= 0 ? 1 : -1;
 
-                        const newRate = sign * angleDeg / 5;
+                        // Division by 33 to match visual scale
+                        const newRate = sign * angleDeg / 33;
 
-                        this.state.rate = Math.round(newRate * 10) / 10;
+                        this.state.rate = Math.round(newRate * 20) / 20;
                         return { rate: this.state.rate };
                     }
                 }

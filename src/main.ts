@@ -21,13 +21,15 @@ import { SimulationEngine } from './SimulationEngine';
 import { exportToPNG, showPNGExportDialog } from './export';
 import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
-import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
+import { vectorToLatLon, latLonToVector, rotateVector, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
-import { exportToJSON, parseImportFile, showImportDialog, showHeightmapExportDialog } from './export';
+import { exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog } from './export';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
+import { GeoPackageExporter } from './GeoPackageExporter';
 import { TimelineSystem } from './systems/TimelineSystem';
 import { geoArea } from 'd3-geo';
+import { toDisplayTime, toInternalTime, parseTimeInput } from './utils/TimeTransformationUtils';
 
 class TectoLiteApp {
     private state: AppState;
@@ -47,6 +49,7 @@ class TectoLiteApp {
 
     private init(): void {
         document.querySelector<HTMLDivElement>('#app')!.innerHTML = this.getHTML();
+        this.setupResizers();
 
         // Initialize canvas
         const canvas = document.getElementById('main-canvas') as HTMLCanvasElement;
@@ -69,7 +72,17 @@ class TectoLiteApp {
                 const el = document.getElementById('motion-controls');
                 if (el) el.style.display = active ? 'block' : 'none';
             },
-            (count) => this.handleDrawUpdate(count)
+            (count) => this.handleDrawUpdate(count),
+            (rate) => {
+                 const speedCmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
+                 const speedDegInput = document.getElementById('speed-input-deg') as HTMLInputElement;
+                 if (speedDegInput) speedDegInput.value = rate.toFixed(2);
+                 if (speedCmInput) speedCmInput.value = this.convertDegMaToCmYr(rate).toFixed(2);
+            },
+            (active) => {
+                const el = document.getElementById('edit-controls');
+                if (el) el.style.display = active ? 'block' : 'none';
+            }
         );
 
         // Initialize simulation
@@ -94,6 +107,67 @@ class TectoLiteApp {
         this.setupEventListeners();
         this.canvasManager.startRenderLoop();
         this.updateUI();
+    }
+
+
+    private setupResizers(): void {
+        this.setupResizer('resizer-left', 'toolbar', 'width', false);
+        this.setupResizer('resizer-left-inner', 'plate-sidebar', 'width', false);
+        this.setupResizer('resizer-right', 'right-sidebar', 'width', true); // Inverse for right sidebar
+        this.setupResizer('resizer-bottom', 'timeline-bar', 'height', true); // Inverse for bottom
+    }
+
+    private setupResizer(resizerId: string, targetId: string, dimension: 'width' | 'height', inverse: boolean): void {
+        const resizer = document.getElementById(resizerId);
+        const target = document.getElementById(targetId);
+        if (!resizer || !target) return;
+
+        let startVal = 0;
+        let startDim = 0;
+
+        const onMouseMove = (e: MouseEvent) => {
+            let newVal;
+            if (dimension === 'width') {
+                const diff = inverse ? (startVal - e.clientX) : (e.clientX - startVal);
+                newVal = startDim + diff;
+            } else {
+                const diff = inverse ? (startVal - e.clientY) : (e.clientY - startVal);
+                newVal = startDim + diff;
+            }
+            
+            // Constrain minimums
+            const minSize = 50;
+            if (newVal < minSize) newVal = minSize; // Allow user to make it smaller than CSS min-width if they really want, or respect it
+            
+            target.style[dimension] = `${newVal}px`;
+            
+            // If resizing changes canvas container size, we must resize canvas
+            this.canvasManager?.resizeCanvas();
+        };
+
+        const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            document.body.style.cursor = '';
+            // Final resize to ensure sharpness
+            this.canvasManager?.resizeCanvas();
+        };
+
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault(); // Prevent text selection
+            if (dimension === 'width') {
+                startVal = e.clientX;
+                startDim = target.getBoundingClientRect().width;
+                document.body.style.cursor = 'col-resize';
+            } else {
+                startVal = e.clientY;
+                startDim = target.getBoundingClientRect().height;
+                document.body.style.cursor = 'row-resize';
+            }
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
     }
 
     private getHTML(): string {
@@ -203,6 +277,26 @@ class TectoLiteApp {
                 </div>
             </div>
 
+            <!-- Planet Dropdown -->
+            <div class="view-dropdown-container">
+                <button id="btn-planet" class="btn btn-secondary" title="Planet Options">
+                    <span class="icon">🪐</span> Planet
+                </button>
+                <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
+                    <div class="dropdown-section">
+                        <div class="dropdown-header">Planet</div>
+                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Custom Planet Radius</span>
+                            <input type="checkbox" id="check-custom-radius">
+                        </label>
+                        <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; gap: 6px;">
+                            <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Radius (km)</label>
+                            <input type="number" id="global-planet-radius" class="property-input" value="${this.state.world.globalOptions.customRadiusEnabled ? (this.state.world.globalOptions.customPlanetRadius || 6371) : 6371}" step="100" style="width: 90px;" disabled>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <button id="btn-reset-camera" class="btn btn-secondary" title="Reset Camera">
                 <span class="icon">⟲</span><span class="oldschool-text">RESET</span>
             </button>
@@ -223,11 +317,8 @@ class TectoLiteApp {
             <button id="btn-redo" class="btn btn-secondary" title="Redo (Ctrl+Y)">
               <span class="icon">↷</span> Redo
             </button>
-            <button id="btn-export" class="btn btn-primary" title="Export PNG">
-              <span class="icon">📥</span> Export
-            </button>
-            <button id="btn-export-heightmap" class="btn btn-primary" title="Export Heightmap">
-              <span class="icon">🗺️</span> H-Map
+            <button id="btn-export" class="btn btn-primary" title="Export (PNG, Heightmap, QGIS)">
+              <span class="icon">📤</span> Export
             </button>
             <button id="btn-export-json" class="btn btn-secondary" title="Export JSON">
               <span class="icon">💾</span> Save
@@ -244,7 +335,7 @@ class TectoLiteApp {
         </header>
         
         <div class="main-content">
-          <aside class="toolbar">
+          <aside class="toolbar" id="toolbar">
             <!-- 1. TOOLS GROUP -->
             <div class="tool-group">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -270,6 +361,11 @@ class TectoLiteApp {
                     <span class="tool-icon">✏️</span>
                     <span class="tool-label">Draw</span>
                     <span class="info-icon" data-tooltip="Draw new plate boundaries (Hotkey: D)">(i)</span>
+                  </button>
+                  <button class="tool-btn" data-tool="edit" style="flex:1;">
+                    <span class="tool-icon">✎</span>
+                    <span class="tool-label">Edit</span>
+                    <span class="info-icon" data-tooltip="Modify plate geometry (Hotkey: E)">(i)</span>
                   </button>
                   <button class="tool-btn" data-tool="feature" style="flex:1;">
                     <span class="tool-icon">🏔️</span>
@@ -327,6 +423,14 @@ class TectoLiteApp {
                       <button class="btn btn-secondary" id="btn-motion-cancel">✗ Cancel</button>
                  </div>
 
+                 <div id="edit-controls" style="display: none; flex-direction:column; gap:4px; margin-top: 8px; border-top: 1px solid var(--border-default); padding-top: 8px;">
+                     <div style="align-self: center; font-size: 11px; color: var(--text-secondary); font-weight: bold;">Apply Changes?</div>
+                     <div style="display:flex; gap: 4px;">
+                         <button class="btn btn-success" id="btn-edit-apply" style="flex:1;">✓ Apply</button>
+                         <button class="btn btn-secondary" id="btn-edit-cancel" style="flex:1;">✗ Cancel</button>
+                     </div>
+                 </div>
+
 
                  <!-- Motion Mode Specifics -->
                  <div style="margin-top: 8px;">
@@ -345,34 +449,37 @@ class TectoLiteApp {
             <!-- 4. GLOBAL / SIMULATION GROUP -->
             <div class="tool-group">
                 <h3 class="tool-group-title">Simulation</h3>
-                 <label class="view-option">
-                    <input type="checkbox" id="check-speed-limit"> Enable Speed Limit <span class="info-icon" data-tooltip="Limit how fast plates can move">(i)</span>
-                </label>
-                <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
-                    <label class="property-label">Max Speed</label>
-                    <input type="number" id="global-max-speed" class="property-input" value="1.0" step="0.1" min="0.1" max="20" style="width: 80px;">
-                </div>
-                 <div class="property-group" style="display:flex; flex-direction: column; gap: 4px;">
-                    <label class="view-option">
-                        <input type="checkbox" id="check-custom-radius"> Custom Planet Radius
-                    </label>
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                         <label class="property-label" style="padding-left: 20px;">Radius (km)</label>
-                         <input type="number" id="global-planet-radius" class="property-input" value="${this.state.world.globalOptions.planetRadius || 6371}" step="100" style="width: 80px;" disabled>
+                <hr class="property-divider" style="margin: 8px 0;">
+                <div style="margin-bottom:6px;">
+                    <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Speed</div>
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <input type="number" id="speed-input-cm" class="property-input" step="0.05" style="width:70px;">
+                            <span style="font-size:10px; color:var(--text-secondary);">cm/yr</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <input type="number" id="speed-input-deg" class="property-input" step="0.05" style="width:70px;">
+                            <span style="font-size:10px; color:var(--text-secondary);">deg/Ma</span>
+                        </div>
                     </div>
                 </div>
-                 <div class="property-group" style="display:flex; justify-content:space-between; align-items:center;">
-                    <label class="property-label">Max Time</label>
-                    <input type="number" id="global-max-time" class="property-input" value="500" step="100" min="100" style="width: 60px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                  <div style="font-size:11px; font-weight:600; color:var(--text-secondary);">
+                    Speed Presets
+                  </div>
+                  <label style="display:flex; align-items:center; gap:4px; font-size:10px; cursor:pointer;" title="Switch between real-world examples and custom preset values">
+                      <input type="checkbox" id="check-use-custom-presets"> Costum 
+                  </label>
                 </div>
                 
-                <hr class="property-divider" style="margin: 8px 0;">
-                <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Rate Presets <span class="info-icon" data-tooltip="Examples: 0.5 (Slow), 1.0 (Normal), 2.0 (Fast), 5.0+ (India-Asia Collision Speed!)">(i)</span></div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px;">
-                    <input type="number" id="global-rate-1" class="property-input" step="0.1">
-                    <input type="number" id="global-rate-2" class="property-input" step="0.1">
-                    <input type="number" id="global-rate-3" class="property-input" step="0.1">
-                    <input type="number" id="global-rate-4" class="property-input" step="0.1">
+                <!-- Real World List -->
+                <div id="preset-container-realworld" style="display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; padding-right:4px;">
+                    ${this.generateRealWorldPresetList()}
+                </div>
+
+                <!-- Custom List -->
+                <div id="preset-container-custom" style="display:none; flex-direction:column; gap:6px;">
+                    ${this.generateCustomPresetList()}
                 </div>
             </div>
 
@@ -380,17 +487,23 @@ class TectoLiteApp {
 
           </aside>
           
+          <div class="resizer-x" id="resizer-left" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
+          
           <aside class="plate-sidebar" id="plate-sidebar">
              <h3 class="tool-group-title" style="padding: 16px 16px 0 16px;">Plates</h3>
              <div id="plate-list" class="plate-list" style="padding: 0 16px 16px 16px; overflow-y: auto; flex:1;"></div>
           </aside>
           
-          <main class="canvas-container">
-            <canvas id="main-canvas"></canvas>
+          <div class="resizer-x" id="resizer-left-inner" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
+
+          <main class="canvas-container" style="flex:1; display:flex;">
+            <canvas id="main-canvas" style="flex:1;"></canvas>
             <div class="canvas-hint" id="canvas-hint"></div>
           </main>
           
-          <div class="right-sidebar">
+          <div class="resizer-x" id="resizer-right" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
+
+          <div class="right-sidebar" id="right-sidebar">
             <aside class="properties-panel" id="properties-panel">
                 <h3 class="panel-title">Properties</h3>
                 <div id="properties-content">
@@ -404,7 +517,9 @@ class TectoLiteApp {
           </div>
         </div>
         
-        <footer class="timeline-bar">
+        <div class="resizer-y" id="resizer-bottom" style="position: relative; height: 4px; cursor: row-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
+
+        <footer class="timeline-bar" id="timeline-bar">
           <div class="time-controls">
             <button id="btn-play" class="btn btn-icon" title="Play/Pause">▶️</button>
             <select id="speed-select" class="speed-select">
@@ -417,14 +532,182 @@ class TectoLiteApp {
           <div class="timeline">
             <input type="range" id="time-slider" class="time-slider" min="0" max="500" value="0">
             <div class="time-display">
-              <span id="current-time">0</span> Ma
+              <div class="time-controls-row">
+                <span id="current-time" class="current-time-display" style="cursor: pointer; font-weight: 600;" title="Click to set current time">0</span>
+                <span id="time-mode-label">Ma</span>
+                <span style="margin: 0 8px; color: var(--text-secondary);">|</span>
+                <label style="display: flex; align-items: center; gap: 4px; margin: 0; font-size: 11px; cursor: pointer; color: var(--text-secondary);">
+                  <input type="checkbox" id="check-time-mode" style="cursor: pointer;"> Ago
+                </label>
+                <span style="margin: 0 8px; color: var(--text-secondary);">|</span>
+                <label style="display: flex; align-items: center; gap: 4px; margin: 0;">
+                  <span style="font-size: 10px; color: var(--text-secondary);">Max:</span>
+                  <input type="number" id="timeline-max-time" class="property-input" value="${this.state.world.globalOptions.timelineMaxTime || 500}" step="100" min="100" style="width: 50px; padding: 2px 4px;">
+                </label>
+              </div>
             </div>
           </div>
           <button id="btn-reset-time" class="btn btn-secondary">Reset</button>
         </footer>
         <div id="global-tooltip"></div>
+        <!-- Time Input Modal -->
+        <div id="time-input-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
+          <div class="modal-content" style="background: var(--bg-secondary); border: 2px solid var(--border-default); border-radius: 4px; padding: 16px; min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+            <h3 style="margin-top: 0; color: var(--text-primary);">Set Current Time</h3>
+            <input type="number" id="time-input-field" class="property-input" style="width: 100%; padding: 8px; margin-bottom: 12px; font-size: 14px;" placeholder="Enter time value">
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button id="btn-time-input-cancel" class="btn btn-secondary" style="padding: 6px 12px;">Cancel</button>
+              <button id="btn-time-input-confirm" class="btn btn-primary" style="padding: 6px 12px;">Confirm</button>
+            </div>
+          </div>
+        </div>
+        <!-- Apply Edit Modal -->
+        <div id="apply-edit-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
+          <div class="modal-content" style="background: #1e1e2e; border: 1px solid var(--border-default); border-radius: 8px; padding: 20px; min-width: 400px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;">
+            <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">Apply Plate Geometry</h3>
+            <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">Choose how to apply these changes to the timeline:</div>
+            
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <button id="btn-apply-generation" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
+                    <span style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--color-primary);">Apply at Generation (Rewrite History)</span>
+                    <span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Modifies the plate's base shape from birth. The change propagates through all time.</span>
+                </button>
+                
+                <button id="btn-apply-event" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
+                    <span style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--color-success);">Insert Event at Current Time</span>
+                    <span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Creates a new 'Edit' event at <span id="lbl-current-time" style="color:white; font-weight:bold;">0</span> Ma. The shape changes only from this point forward.</span>
+                </button>
+            </div>
+            
+            <div style="display: flex; justify-content: flex-end; margin-top: 8px; border-top: 1px solid var(--border-default); padding-top: 16px;">
+              <button id="btn-apply-cancel" class="btn btn-secondary" style="padding: 8px 16px;">Cancel</button>
+            </div>
+          </div>
+        </div>
       </div>
     `;
+    }
+
+
+    public showModal(options: { 
+        title: string; 
+        content: string; 
+        width?: string;
+        buttons: { 
+            text: string; 
+            subtext?: string; 
+            isSecondary?: boolean;
+            onClick: () => void 
+        }[] 
+    }): void {
+        const appContainer = document.querySelector('.app-container');
+        const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
+
+        // RETRO THEME POPUP
+        if (isRetro) {
+            // Strip HTML tags for clean alert text
+            let cleanText = options.content.replace(/<[^>]*>/g, '');
+            
+            // Check if this is a "Confirm" style (multiple choices) or "Alert" style (OK only)
+            const mainAction = options.buttons.find(b => !b.isSecondary);
+            const secondaryAction = options.buttons.find(b => b.isSecondary);
+
+            if (mainAction && secondaryAction) {
+                // Bi-modal choice (OK/Cancel)
+                // Append instruction to map buttons to OK/Cancel
+                cleanText += `\n\n[OK] -> ${mainAction.text}\n[Cancel] -> ${secondaryAction.text}`;
+
+                if (confirm(cleanText)) {
+                    // Logic for "OK" / Main Action
+                    mainAction.onClick();
+                } else {
+                    // Logic for "Cancel" / Secondary
+                    secondaryAction.onClick();
+                }
+            } else if (mainAction) {
+                // Only one main action - treat as alert
+                alert(cleanText);
+                mainAction.onClick();
+            } else {
+                // Just info
+                alert(cleanText);
+            }
+            return;
+        }
+
+        // MODERN THEME MODAL (Standard TectoLite UI)
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0,0,0,0.6); z-index: 10000;
+          display: flex; align-items: center; justify-content: center;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+          background: #1e1e2e; border: 1px solid var(--border-default); border-radius: 8px; padding: 20px;
+          min-width: ${options.width || '400px'}; color: var(--text-primary); font-family: system-ui, sans-serif;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;
+        `;
+
+        dialog.innerHTML = `
+          <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">${options.title}</h3>
+          <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">${options.content}</div>
+          <div id="modal-btn-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;"></div>
+        `;
+        
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const btnContainer = dialog.querySelector('#modal-btn-container');
+        if(btnContainer) {
+            // Check if we have a simple cancel button to group at bottom right
+            const mainButtons = options.buttons.filter(b => !b.isSecondary);
+            const secondaryButtons = options.buttons.filter(b => b.isSecondary);
+
+            mainButtons.forEach(btn => {
+                const b = document.createElement('button');
+                b.className = 'btn';
+                b.style.cssText = `
+                    text-align: left; padding: 12px; display: flex; flex-direction: column; 
+                    background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;
+                    cursor: pointer; color: var(--text-primary);
+                `;
+                
+                let inner = `<span style="font-weight: 600; font-size: 14px; color: var(--color-primary); margin-bottom: 2px;">${btn.text}</span>`;
+                if(btn.subtext) {
+                    inner += `<span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">${btn.subtext}</span>`;
+                }
+                b.innerHTML = inner;
+
+                b.addEventListener('mouseenter', () => b.style.borderColor = 'var(--color-primary)');
+                b.addEventListener('mouseleave', () => b.style.borderColor = 'var(--border-default)');
+                
+                b.addEventListener('click', () => {
+                    document.body.removeChild(overlay);
+                    btn.onClick();
+                });
+                btnContainer.appendChild(b);
+            });
+
+            if(secondaryButtons.length > 0) {
+                const row = document.createElement('div');
+                row.style.cssText = `display: flex; justify-content: flex-end; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);`;
+                
+                secondaryButtons.forEach(btn => {
+                    const b = document.createElement('button');
+                    b.className = 'btn btn-secondary';
+                    b.innerText = btn.text;
+                    b.style.cssText = `padding: 6px 16px; margin-left: 8px;`;
+                    b.addEventListener('click', () => {
+                        document.body.removeChild(overlay);
+                        btn.onClick();
+                    });
+                    row.appendChild(b);
+                });
+                btnContainer.appendChild(row);
+            }
+        }
     }
 
     private updateRetroStatusBox(text: string | null): void {
@@ -470,16 +753,28 @@ class TectoLiteApp {
         const viewBtn = document.getElementById('btn-view-panels');
         const viewMenu = document.getElementById('view-dropdown-menu');
 
+        // Planet Dropdown
+        const planetBtn = document.getElementById('btn-planet');
+        const planetMenu = document.getElementById('planet-dropdown-menu');
+
         // Toggle Dropdown
         viewBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
             viewMenu?.classList.toggle('show');
         });
 
+        planetBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            planetMenu?.classList.toggle('show');
+        });
+
         // Close on outside click
         document.addEventListener('click', (e) => {
             if (viewMenu?.classList.contains('show') && !viewMenu.contains(e.target as Node) && e.target !== viewBtn) {
                 viewMenu.classList.remove('show');
+            }
+            if (planetMenu?.classList.contains('show') && !planetMenu.contains(e.target as Node) && e.target !== planetBtn) {
+                planetMenu.classList.remove('show');
             }
         });
 
@@ -788,25 +1083,201 @@ class TectoLiteApp {
         });
 
         // Global Options
-        document.getElementById('check-speed-limit')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.speedLimitEnabled = (e.target as HTMLInputElement).checked;
+        // Advanced Toggles
+        // Speed Preset Logic
+        
+        // 1. Toggle between Real World and Custom
+        document.getElementById('check-use-custom-presets')?.addEventListener('change', (e) => {
+            const isCustom = (e.target as HTMLInputElement).checked;
+            const rwContainer = document.getElementById('preset-container-realworld');
+            const customContainer = document.getElementById('preset-container-custom');
+            if (rwContainer && customContainer) {
+                rwContainer.style.display = isCustom ? 'none' : 'flex';
+                customContainer.style.display = isCustom ? 'flex' : 'none';
+            }
         });
 
-        // Advanced Toggles
-        // Rate Preset Inputs
-        const updateRatePreset = (index: number, val: number) => {
-            if (!isNaN(val) && val > 0) {
-                const newPresets = [...(this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0])];
-                newPresets[index] = val;
-                this.state.world.globalOptions.ratePresets = newPresets;
-                this.updateUI(); // Refresh properties panel to show new values
+        const speedCmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
+        const speedDegInput = document.getElementById('speed-input-deg') as HTMLInputElement;
+
+        speedCmInput?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val)) {
+                const deg = this.convertCmYrToDegMa(val);
+                if (speedDegInput) speedDegInput.value = deg.toFixed(2);
+                this.applySpeedToSelected(deg);
             }
+        });
+
+        speedDegInput?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val)) {
+                const cm = this.convertDegMaToCmYr(val);
+                if (speedCmInput) speedCmInput.value = cm.toFixed(2);
+                this.applySpeedToSelected(val);
+            }
+        });
+
+        // Edit Tool Controls
+        document.getElementById('btn-edit-apply')?.addEventListener('click', () => {
+             // Show Modal
+             const modal = document.getElementById('apply-edit-modal');
+             const lblTime = document.getElementById('lbl-current-time');
+             if (modal && lblTime) {
+                 lblTime.textContent = this.state.world.currentTime.toFixed(1);
+                 modal.style.display = 'flex';
+             }
+        });
+
+        const executeApply = (mode: 'generation' | 'event') => {
+             if (!this.canvasManager) return;
+             const result = this.canvasManager.getEditResult();
+             if (result) {
+                 this.state.world.plates = this.state.world.plates.map(p => {
+                     if (p.id === result.plateId) {
+                         const copy = {...p};
+                         copy.polygons = result.polygons; // Update current visual state immediately
+                         
+                         if (mode === 'generation') {
+                             // --- REWRITE HISTORY STRATEGY ---
+                             const dt = this.state.world.currentTime - p.birthTime;
+                             const rate = p.motion.eulerPole.rate;
+                             const angleDeg = rate * dt;
+                             const angleRad = angleDeg * Math.PI / 180;
+                             
+                             const poleVec = latLonToVector(p.motion.eulerPole.position);
+                             const invAngleRad = -angleRad;
+                             
+                             const newInitialPolys = result.polygons.map((poly: any) => {
+                                 const newPoints = poly.points.map((pt: Coordinate) => {
+                                     const v = latLonToVector(pt);
+                                     const vRot = rotateVector(v, poleVec, invAngleRad);
+                                     return vectorToLatLon(vRot);
+                                 });
+                                 return { ...poly, points: newPoints };
+                             });
+                             
+                             copy.initialPolygons = newInitialPolys;
+
+                             // CRITICAL: Propagate this base shape change to ALL future keyframes
+                             // Keyframes store absolute snapshots. If we change the source truth, 
+                             // we must update the snapshots to reflect "it was always this shape".
+                             if (copy.motionKeyframes) {
+                                 copy.motionKeyframes = copy.motionKeyframes.map(kf => {
+                                     // Re-calculate snapshot for this keyframe time based on NEW initial polygons
+                                     // Rotate from birthTime to keyframe.time
+                                     const kfDt = kf.time - p.birthTime;
+                                     const kfAngle = (rate * kfDt) * Math.PI / 180;
+                                     // Rotate forward from new birth shape
+                                     const newSnapshot = newInitialPolys.map((poly: Polygon) => ({
+                                         ...poly,
+                                         points: poly.points.map(pt => {
+                                             const v = latLonToVector(pt);
+                                             const vRot = rotateVector(v, poleVec, kfAngle);
+                                             return vectorToLatLon(vRot);
+                                         })
+                                     }));
+                                     
+                                     return {
+                                         ...kf,
+                                         snapshotPolygons: newSnapshot
+                                         // Features might need update too but let's stick to geometry first
+                                     };
+                                 });
+                             }
+                         } else {
+                             // --- KEYFRAME EVENT STRATEGY ---
+                             // Create a new keyframe at current time with the CURRENT polygons as snapshot
+                             const newKeyframe: MotionKeyframe = {
+                                 time: this.state.world.currentTime,
+                                 label: 'Edit', // Explicit label for timeline
+                                 eulerPole: p.motion.eulerPole, // Inherit current pole
+                                 snapshotPolygons: JSON.parse(JSON.stringify(result.polygons)), // Snapshot current shape
+                                 snapshotFeatures: [...p.features] // Snapshot current features
+                             };
+                             
+                             if (!copy.motionKeyframes) copy.motionKeyframes = [];
+                             copy.motionKeyframes.push(newKeyframe);
+                             // Sort keyframes to be safe
+                             copy.motionKeyframes.sort((a,b) => a.time - b.time);
+                         }
+                         return copy;
+                     }
+                     return p;
+                 });
+                 
+                 this.canvasManager.cancelEdit();
+                 document.getElementById('edit-controls')!.style.display = 'none';
+                 document.getElementById('apply-edit-modal')!.style.display = 'none';
+
+                 // FORCE SIMULATION UPDATE to reflect changes immediately
+                 this.simulation?.setTime(this.state.world.currentTime);
+                 
+                 this.canvasManager.render();
+             }
         };
 
-        document.getElementById('global-rate-1')?.addEventListener('change', (e) => updateRatePreset(0, parseFloat((e.target as HTMLInputElement).value)));
-        document.getElementById('global-rate-2')?.addEventListener('change', (e) => updateRatePreset(1, parseFloat((e.target as HTMLInputElement).value)));
-        document.getElementById('global-rate-3')?.addEventListener('change', (e) => updateRatePreset(2, parseFloat((e.target as HTMLInputElement).value)));
-        document.getElementById('global-rate-4')?.addEventListener('change', (e) => updateRatePreset(3, parseFloat((e.target as HTMLInputElement).value)));
+        document.getElementById('btn-apply-generation')?.addEventListener('click', () => executeApply('generation'));
+        document.getElementById('btn-apply-event')?.addEventListener('click', () => executeApply('event'));
+        document.getElementById('btn-apply-cancel')?.addEventListener('click', () => {
+             document.getElementById('apply-edit-modal')!.style.display = 'none';
+        });
+
+        document.getElementById('btn-edit-cancel')?.addEventListener('click', () => {
+             if (this.canvasManager) this.canvasManager.cancelEdit();
+             document.getElementById('edit-controls')!.style.display = 'none';
+        });
+
+        // 2. Event Delegation for Presets
+        document.addEventListener('click', (e) => {
+            const target = e.target as HTMLElement;
+            
+            // Real World Apply
+            if (target.classList.contains('speed-preset-apply')) {
+                const idx = parseInt(target.getAttribute('data-idx') || '0');
+                const presets = this.getSpeedPresetData();
+                const preset = presets[idx];
+                if (preset) {
+                    const rateDegMa = this.convertCmYrToDegMa(preset.speed);
+                    this.applySpeedToSelected(rateDegMa);
+                }
+            }
+            
+            // Custom Preset Apply
+            if (target.classList.contains('custom-preset-apply')) {
+                const idx = parseInt(target.getAttribute('data-idx') || '0');
+                const pList = this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0];
+                const speedCmYr = pList[idx] || 0;
+                const rateDegMa = this.convertCmYrToDegMa(speedCmYr);
+                this.applySpeedToSelected(rateDegMa);
+            }
+            
+            // Show info dialog
+            // Handle clicking on the name itself which now has the class
+            if (target.closest('.speed-preset-info')) {
+                const el = target.closest('.speed-preset-info');
+                if (el) {
+                    const idx = parseInt(el.getAttribute('data-idx') || '0');
+                    this.showPresetInfoDialog(idx);
+                }
+            }
+        });
+        
+        // 3. Custom Preset Input Changes
+        document.addEventListener('change', (e) => {
+             const target = e.target as HTMLInputElement;
+             if (target.classList.contains('custom-preset-input')) {
+                 const idx = parseInt(target.getAttribute('data-idx') || '0');
+                 const val = parseFloat(target.value);
+                 if (!isNaN(val) && val >= 0) {
+                     const current = [...(this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0])];
+                     current[idx] = val;
+                     this.state.world.globalOptions.ratePresets = current;
+                     // We don't need to full updateUI here, just state update so it exports
+                 }
+             }
+        });
+
         document.getElementById('check-boundary-vis')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
         });
@@ -900,16 +1371,11 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
-        document.getElementById('global-max-speed')?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val) && val > 0) {
-                this.state.world.globalOptions.maxDragSpeed = val;
-            }
-        });
-
-        document.getElementById('global-max-time')?.addEventListener('change', (e) => {
+        // NEW: Timeline max-time control in footer
+        document.getElementById('timeline-max-time')?.addEventListener('change', (e) => {
             const val = parseInt((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
+                this.state.world.globalOptions.timelineMaxTime = val;
                 const slider = document.getElementById('time-slider') as HTMLInputElement;
                 if (slider) {
                     slider.max = val.toString();
@@ -930,9 +1396,17 @@ class TectoLiteApp {
             if (radiusInput) {
                 radiusInput.disabled = !checked;
                 if (!checked) {
-                    // Reset to Earth Default
+                    // Disable custom radius, show Earth default
+                    this.state.world.globalOptions.customRadiusEnabled = false;
                     this.state.world.globalOptions.planetRadius = 6371;
                     radiusInput.value = "6371";
+                    this.updateUI();
+                } else {
+                    // Enable custom radius, restore user value
+                    this.state.world.globalOptions.customRadiusEnabled = true;
+                    const customVal = this.state.world.globalOptions.customPlanetRadius || 6371;
+                    radiusInput.value = customVal.toString();
+                    this.state.world.globalOptions.planetRadius = customVal;
                     this.updateUI();
                 }
             }
@@ -941,7 +1415,10 @@ class TectoLiteApp {
         radiusInput?.addEventListener('change', (e) => {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
-                this.state.world.globalOptions.planetRadius = val;
+                this.state.world.globalOptions.customPlanetRadius = val;
+                if (this.state.world.globalOptions.customRadiusEnabled) {
+                    this.state.world.globalOptions.planetRadius = val;
+                }
                 this.updateUI(); // Refresh UI to update calculated stats
             }
         });
@@ -970,6 +1447,7 @@ class TectoLiteApp {
                 case 'v': this.setActiveTool('select'); break;
                 case 'h': this.setActiveTool('pan'); break; // Now Rotate/Pan
                 case 'd': this.setActiveTool('draw'); break;
+                case 'e': this.setActiveTool('edit'); break;
                 case 'f': this.setActiveTool('feature'); break;
                 case 's': this.setActiveTool('split'); break;
                 case 'g': this.setActiveTool('fuse'); break;
@@ -1012,6 +1490,58 @@ class TectoLiteApp {
             this.updateTimeDisplay();
         });
 
+        // NEW: Time mode toggle (Positive/Negative/Ago)
+        document.getElementById('check-time-mode')?.addEventListener('change', (e) => {
+            const isChecked = (e.target as HTMLInputElement).checked;
+            this.state.world.timeMode = isChecked ? 'negative' : 'positive';
+            this.updateTimeDisplay();
+            // Refresh property panels to show transformed time values
+            this.updatePropertiesPanel();
+            this.bindFeatureEvents();
+            this.canvasManager?.render();
+        });
+
+        // NEW: Clickable current time to set value
+        document.getElementById('current-time')?.addEventListener('click', () => {
+            const modal = document.getElementById('time-input-modal');
+            const input = document.getElementById('time-input-field') as HTMLInputElement;
+            if (modal && input) {
+                modal.style.display = 'flex';
+                
+                // Pre-populate with current display time
+                const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+                const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+                const displayTime = toDisplayTime(this.state.world.currentTime, {
+                    maxTime: maxTime,
+                    mode: this.state.world.timeMode
+                });
+                input.value = displayTime.toString();
+                input.focus();
+                input.select();
+            }
+        });
+
+        // Modal confirm button
+        document.getElementById('btn-time-input-confirm')?.addEventListener('click', () => {
+            this.confirmTimeInput();
+        });
+
+        // Modal cancel button
+        document.getElementById('btn-time-input-cancel')?.addEventListener('click', () => {
+            const modal = document.getElementById('time-input-modal');
+            if (modal) modal.style.display = 'none';
+        });
+
+        // Allow Enter key to confirm
+        document.getElementById('time-input-field')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                this.confirmTimeInput();
+            } else if (e.key === 'Escape') {
+                const modal = document.getElementById('time-input-modal');
+                if (modal) modal.style.display = 'none';
+            }
+        });
+
         document.getElementById('btn-export')?.addEventListener('click', async () => {
             const options = await showPNGExportDialog(this.state.world.projection);
             if (options) {
@@ -1019,26 +1549,46 @@ class TectoLiteApp {
             }
         });
 
-        document.getElementById('btn-export-heightmap')?.addEventListener('click', async () => {
-            // Heightmap Export
+        // Unified Export Handler
+        document.getElementById('btn-export')?.addEventListener('click', async () => {
             try {
-                const options = await showHeightmapExportDialog();
+                const options = await showUnifiedExportDialog();
                 if (!options) return;
 
-                const dataUrl = await HeightmapGenerator.generate(this.state, {
-                    width: options.width,
-                    height: options.height,
-                    projection: 'equirectangular',
-                    smooth: true
-                });
-
-                const link = document.createElement('a');
-                link.download = `tectolite-heightmap-${Date.now()}.png`;
-                link.href = dataUrl;
-                link.click();
+                if (options.format === 'png') {
+                    // PNG Export
+                    const pngOptions = {
+                        projection: options.projection || 'orthographic',
+                        waterMode: 'color' as const,
+                        plateColorMode: 'native' as const,
+                        showGrid: false
+                    };
+                    exportToPNG(this.state, pngOptions, options.width || 1920, options.height || 1080);
+                } else if (options.format === 'heightmap') {
+                    // Heightmap Export
+                    const dataUrl = await HeightmapGenerator.generate(this.state, {
+                        width: options.width || 4096,
+                        height: options.height || 2048,
+                        projection: options.projection || 'equirectangular',
+                        smooth: true
+                    });
+                    const link = document.createElement('a');
+                    link.download = `tectolite-heightmap-${Date.now()}.png`;
+                    link.href = dataUrl;
+                    link.click();
+                } else if (options.format === 'qgis') {
+                    // GeoPackage (QGIS) Export
+                    const exporter = new GeoPackageExporter(this.state, {
+                        width: options.width || 2048,
+                        height: options.height || 1024,
+                        projection: options.projection || 'equirectangular',
+                        includeHeightmap: options.includeHeightmap ?? true
+                    });
+                    await exporter.export();
+                }
             } catch (e) {
-                console.error('Heightmap generation failed', e);
-                alert('Heightmap generation failed');
+                console.error('Export failed', e);
+                alert(`Export failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
             }
         });
 
@@ -1234,51 +1784,51 @@ class TectoLiteApp {
         const overlay = document.createElement('div');
         overlay.style.cssText = `
           position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0,0,0,0.7); z-index: 10000;
+          background: rgba(0,0,0,0.6); z-index: 10000;
           display: flex; align-items: center; justify-content: center;
       `;
 
         const dialog = document.createElement('div');
         dialog.style.cssText = `
-          background: #1e1e2e; border-radius: 12px; padding: 24px;
-          min-width: 400px; color: #cdd6f4; font-family: system-ui, sans-serif;
-          box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+          background: #1e1e2e; border: 1px solid var(--border-default); border-radius: 8px; padding: 20px;
+          min-width: 400px; color: var(--text-primary); font-family: system-ui, sans-serif;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;
       `;
 
         dialog.innerHTML = `
-          <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🗺️ Map Legend</h3>
+          <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">🗺️ Map Legend</h3>
           
-          <div style="margin-bottom: 20px;">
-              <h4 style="margin: 0 0 8px 0; color: #fab387;">Boundaries</h4>
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                  <span style="width: 20px; height: 3px; background: #ff3333; display: inline-block;"></span>
+          <div style="margin-bottom: 10px;">
+              <h4 style="margin: 0 0 8px 0; color: #fab387; font-size: 14px;">Boundaries</h4>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px;">
+                  <span style="width: 20px; height: 3px; background: #ff3333; display: inline-block; border-radius: 2px;"></span>
                   <span><strong>Convergent</strong> (Collision)</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                  <span style="width: 20px; height: 3px; background: #3333ff; display: inline-block;"></span>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px;">
+                  <span style="width: 20px; height: 3px; background: #3333ff; display: inline-block; border-radius: 2px;"></span>
                   <span><strong>Divergent</strong> (Rifting)</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="width: 20px; height: 3px; background: #33ff33; display: inline-block;"></span>
+              <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+                  <span style="width: 20px; height: 3px; background: #33ff33; display: inline-block; border-radius: 2px;"></span>
                   <span><strong>Transform</strong> (Sliding)</span>
               </div>
-              <p style="font-size: 12px; color: #a6adc8; margin-top: 4px;">
+              <div style="font-size: 11px; color: var(--text-secondary); margin-top: 8px; font-style: italic;">
                   *Boundaries only appear when plates overlap/touch AND have velocity.
-              </p>
-          </div>
-
-          <div style="margin-bottom: 20px;">
-              <h4 style="margin: 0 0 8px 0; color: #a6e3a1;">Features</h4>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                  <div>🏔️ Mountain (Cont-Cont)</div>
-                  <div>🌋 Volcano (Subduction)</div>
-                  <div>⚡ Rift (Div-Cont)</div>
-                  <div>🏝️ Island (Hotspot/Ocean)</div>
               </div>
           </div>
 
-          <div style="display: flex; justify-content: flex-end;">
-              <button id="legend-close" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer;">Close</button>
+          <div style="margin-bottom: 10px;">
+              <h4 style="margin: 0 0 8px 0; color: #a6e3a1; font-size: 14px;">Features</h4>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px;">
+                  <div style="display:flex; align-items:center; gap:6px;"><span>🏔️</span> Mountain</div>
+                  <div style="display:flex; align-items:center; gap:6px;"><span>🌋</span> Volcano</div>
+                  <div style="display:flex; align-items:center; gap:6px;"><span>⚡</span> Rift</div>
+                  <div style="display:flex; align-items:center; gap:6px;"><span>🏝️</span> Island</div>
+              </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 16px;">
+              <button id="legend-close" class="btn btn-secondary" style="padding: 8px 16px;">Close</button>
           </div>
       `;
 
@@ -1290,6 +1840,166 @@ class TectoLiteApp {
         overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
     }
 
+    private getSpeedPresetData() {
+        return [
+            { name: 'East Pacific Rise', speed: 15, unit: 'cm/yr', type: 'Spreading Center', details: '<strong>Location:</strong> South Pacific Ocean (between the Pacific and Nazca plates).<br><br><strong>Context:</strong> This is the fastest spreading center on Earth. The plates here rip apart so quickly that the "gap" is filled by smooth volcanic domes rather than a deep valley.' },
+            { name: 'Cocos Plate', speed: 8.5, unit: 'cm/yr', type: 'Absolute Motion', details: '<strong>Location:</strong> Off the west coast of Central America.<br><br><strong>Context:</strong> It is crashing into the Caribbean plate, creating the string of volcanoes in Costa Rica and Guatemala.' },
+            { name: 'Australia', speed: 7.0, unit: 'cm/yr', type: 'Continental Drift', details: '<strong>Location:</strong> The entire continent of Australia.<br><br><strong>Context:</strong> Australia is the fastest-moving continent, racing north toward Asia. (GPS systems in Australia actually have to be adjusted periodically to account for this rapid drift).' },
+            { name: 'India (Himalayas)', speed: 5.5, unit: 'cm/yr', type: 'Collision', details: '<strong>Location:</strong> India.<br><br><strong>Context:</strong> India is still ramming into Asia. This speed is fast for a continental collision, which is why the Himalayas are still rising today.' },
+            { name: 'San Andreas Fault', speed: 3.0, unit: 'cm/yr', type: 'Transform Boundary', details: '<strong>Location:</strong> California, USA.<br><br><strong>Context:</strong> The Pacific plate sliding past the North American plate.' },
+            { name: 'Mid-Atlantic Ridge', speed: 2.5, unit: 'cm/yr', type: 'Spreading (Slow)', details: '<strong>Location:</strong> Down the center of the Atlantic Ocean.' },
+            { name: 'Eurasia', speed: 0.95, unit: 'cm/yr', type: 'Absolute Motion', details: '<strong>Location:</strong> Europe and Asia.<br><br><strong>Context:</strong> One of the slowest plates on Earth.' }
+        ];
+    }
+
+    private generateRealWorldPresetList(): string {
+        const presets = this.getSpeedPresetData();
+        return presets.map((preset, idx) => `
+            <div style="display:grid; grid-template-columns: 1fr auto; gap:4px; align-items:center; background:#1e1e2e; border-radius:4px; padding:4px;">
+                <div style="display:flex; align-items:center; gap:4px; overflow:hidden; cursor:pointer;" class="speed-preset-info" data-idx="${idx}" title="Click for details">
+                    <span style="font-size:11px; color:#89b4fa; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:underline; text-decoration-color: #45475a;">${preset.name}</span>
+                </div>
+                <button class="speed-preset-apply" data-idx="${idx}" style="
+                    background:#313244; border:1px solid #45475a; border-radius:3px;
+                    padding:2px 8px; cursor:pointer; color:#89b4fa; font-size:11px;
+                    transition:all 0.2s; min-width:60px;
+                " title="Apply speed">${preset.speed}</button>
+            </div>
+        `).join('');
+    }
+
+    private generateCustomPresetList(): string {
+        const presets = this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0];
+        // Ensure always 4 slots
+        const slots = Array(4).fill(0).map((_, i) => presets[i] ?? (i + 1));
+        
+        return slots.map((val, idx) => `
+            <div style="display:flex; align-items:center; gap:6px;">
+                 <label style="font-size:10px; color:#a6adc8; width:15px;">#${idx + 1}</label>
+                 <input type="number" class="custom-preset-input property-input" data-idx="${idx}" value="${val}" step="0.1" style="flex:1;">
+                 <button class="custom-preset-apply" data-idx="${idx}" style="
+                    background:#313244; border:1px solid #45475a; border-radius:4px;
+                    padding:4px 8px; cursor:pointer; color:#89b4fa; font-size:10px;
+                 ">Apply</button>
+            </div>
+        `).join('');
+    }
+
+    private applySpeedToSelected(rate: number): void {
+        const plate = this.state.world.selectedPlateId 
+            ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
+            : null;
+        if (plate) {
+            plate.motion.eulerPole.rate = rate;
+            this.updatePropertiesPanel();
+            this.updateSpeedInputsFromSelected();
+            this.canvasManager?.render();
+            this.pushState();
+        } else {
+            alert('Please select a plate first to apply this speed preset.');
+        }
+    }
+
+    private convertCmYrToDegMa(cmPerYr: number): number {
+        const radiusKm = this.state.world.globalOptions.planetRadius || 6371;
+        const kmPerMa = cmPerYr * 10; // 1 km/Ma = 0.1 cm/yr
+        const radPerMa = radiusKm > 0 ? (kmPerMa / radiusKm) : 0;
+        return radPerMa * (180 / Math.PI);
+    }
+
+    private convertDegMaToCmYr(degPerMa: number): number {
+        const radiusKm = this.state.world.globalOptions.planetRadius || 6371;
+        const radPerMa = degPerMa * Math.PI / 180;
+        const kmPerMa = radPerMa * radiusKm;
+        return kmPerMa / 10; // cm/yr
+    }
+
+    private updateSpeedInputsFromSelected(): void {
+        const cmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
+        const degInput = document.getElementById('speed-input-deg') as HTMLInputElement;
+        if (!cmInput || !degInput) return;
+
+        const plate = this.state.world.selectedPlateId 
+            ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
+            : null;
+
+        if (!plate) {
+            cmInput.value = '';
+            degInput.value = '';
+            cmInput.disabled = true;
+            degInput.disabled = true;
+            return;
+        }
+
+        cmInput.disabled = false;
+        degInput.disabled = false;
+        const deg = plate.motion.eulerPole.rate || 0;
+        const cm = this.convertDegMaToCmYr(deg);
+        degInput.value = deg.toFixed(2);
+        cmInput.value = cm.toFixed(2);
+    }
+
+    private showPresetInfoDialog(idx: number): void {
+        const presets = this.getSpeedPresetData();
+        const preset = presets[idx];
+        if (!preset) return;
+
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+            padding: 20px;
+        `;
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #1e1e2e; border-radius: 12px; padding: 24px;
+            max-width: 500px; width: 100%; color: #cdd6f4; font-family: system-ui, sans-serif;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        `;
+
+        dialog.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+                <h3 style="margin:0; color:#89b4fa; font-size:18px;">${preset.name}</h3>
+                <div style="font-size:16px; color:#f38ba8; font-weight:600;">${preset.speed} ${preset.unit}</div>
+            </div>
+            <div style="margin-bottom:12px; padding:8px 12px; background:#313244; border-radius:6px; border-left:3px solid #89b4fa;">
+                <div style="font-size:11px; color:#a6adc8; text-transform:uppercase; font-weight:600; margin-bottom:4px;">Type</div>
+                <div style="font-size:14px; color:#cdd6f4;">${preset.type}</div>
+            </div>
+            <div style="font-size:13px; color:#bac2de; line-height:1.6;">
+                ${preset.details}
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button id="preset-info-apply" style="padding:8px 16px; border:1px solid #89b4fa; border-radius:6px; background:#313244; color:#89b4fa; cursor:pointer; font-weight:500;">Apply Speed</button>
+                <button id="preset-info-close" style="padding:8px 16px; border:1px solid #45475a; border-radius:6px; background:#313244; color:#cdd6f4; cursor:pointer;">Close</button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const cleanup = () => document.body.removeChild(overlay);
+        
+        dialog.querySelector('#preset-info-close')?.addEventListener('click', cleanup);
+        dialog.querySelector('#preset-info-apply')?.addEventListener('click', () => {
+            const rateDegMa = this.convertCmYrToDegMa(preset.speed);
+            const plate = this.state.world.selectedPlateId 
+                ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
+                : null;
+            if (plate) {
+                plate.motion.eulerPole.rate = rateDegMa;
+                this.updatePropertiesPanel();
+                this.canvasManager?.render();
+                this.pushState();
+                cleanup();
+            } else {
+                alert('Please select a plate first to apply this speed preset.');
+            }
+        });
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+    }
 
     private syncUIToState(): void {
         const w = this.state.world;
@@ -1312,25 +2022,42 @@ class TectoLiteApp {
         (document.getElementById('check-future-features') as HTMLInputElement).checked = w.showFutureFeatures;
 
         // Global Options
-        (document.getElementById('check-speed-limit') as HTMLInputElement).checked = g.speedLimitEnabled;
-        (document.getElementById('global-max-speed') as HTMLInputElement).value = g.maxDragSpeed.toString();
-        //(document.getElementById('global-max-time') as HTMLInputElement).value = // Max time isn't stored in globalOptions currently? Or is it hardcoded?
-        // Actually maxTime isn't in GlobalOptions in types.ts? Let's check types.ts later. 
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        if (maxTimeInput && g.timelineMaxTime) {
+            maxTimeInput.value = g.timelineMaxTime.toString();
+            maxTimeInput.dispatchEvent(new Event('change'));
+        }
         // For now, assume it's not state-persisted or I need to add it.
 
-        if (g.planetRadius) {
-            (document.getElementById('global-planet-radius') as HTMLInputElement).value = g.planetRadius.toString();
+        const radiusInput = document.getElementById('global-planet-radius') as HTMLInputElement;
+        const radiusCheck = document.getElementById('check-custom-radius') as HTMLInputElement;
+        if (radiusInput && radiusCheck) {
+            const enabled = !!g.customRadiusEnabled;
+            radiusCheck.checked = enabled;
+            radiusInput.disabled = !enabled;
+            if (enabled) {
+                const customVal = g.customPlanetRadius || g.planetRadius || 6371;
+                radiusInput.value = customVal.toString();
+                g.planetRadius = customVal;
+            } else {
+                radiusInput.value = '6371';
+                g.planetRadius = 6371;
+            }
         }
 
         (document.getElementById('check-boundary-vis') as HTMLInputElement).checked = !!g.enableBoundaryVisualization;
 
-        // Rate Presets
+        // Rate Presets (Custom)
         if (g.ratePresets && g.ratePresets.length === 4) {
-            (document.getElementById('global-rate-1') as HTMLInputElement).value = g.ratePresets[0].toString();
-            (document.getElementById('global-rate-2') as HTMLInputElement).value = g.ratePresets[1].toString();
-            (document.getElementById('global-rate-3') as HTMLInputElement).value = g.ratePresets[2].toString();
-            (document.getElementById('global-rate-4') as HTMLInputElement).value = g.ratePresets[3].toString();
+            const inputs = document.querySelectorAll('.custom-preset-input');
+            inputs.forEach((input) => {
+                const idx = parseInt(input.getAttribute('data-idx') || '0');
+                if (g.ratePresets && g.ratePresets[idx] !== undefined) {
+                    (input as HTMLInputElement).value = g.ratePresets[idx].toString();
+                }
+            });
         }
+
 
         // Projection Select
         const projSelect = document.getElementById('projection-select') as HTMLSelectElement;
@@ -1341,6 +2068,7 @@ class TectoLiteApp {
         this.updateToolbarState();
         this.updatePlateList();
         this.updatePropertiesPanel();
+        this.updateSpeedInputsFromSelected();
         this.updatePlayButton();
         this.updateTimeDisplay();
     }
@@ -1354,6 +2082,12 @@ class TectoLiteApp {
             featureSelector.style.display = tool === 'feature' ? 'block' : 'none';
         }
 
+        const editControls = document.getElementById('edit-controls');
+        if (editControls && tool !== 'edit') {
+            editControls.style.display = 'none';
+            if (this.canvasManager) this.canvasManager.cancelEdit();
+        }
+
         // Set initial Stage 1 hint/tooltip
         let hintText = "";
         switch (tool) {
@@ -1362,6 +2096,9 @@ class TectoLiteApp {
                 break;
             case 'pan':
                 hintText = "Drag to rotate the globe. Scroll to zoom.";
+                break;
+            case 'edit':
+                hintText = "Select a plate, then drag edges to add points or drag vertices to move.";
                 break;
             case 'draw':
                 hintText = "Click anywhere to start drawing a new plate.";
@@ -1575,31 +2312,42 @@ class TectoLiteApp {
                 return;
             }
 
-            if (!confirm(`Do you want to Fuse plate ${firstPlate.name} and ${plate.name}?`)) {
-                // User cancelled - reset to Stage 1
-                this.fusionFirstPlateId = null;
-                this.updateHint("Select first plate to fuse");
-                return;
-            }
-
-            // Second click - fuse plates
-            this.pushState(); // Save state for undo
-
-            const result = fusePlates(this.state, this.fusionFirstPlateId, plateId);
-
-            if (result.success && result.newState) {
-                this.state = result.newState;
-                this.updateUI();
-                this.canvasManager?.render();
-                // Clear hint and reset
-                this.updateHint(null);
-            } else {
-                alert(result.error || 'Failed to fuse plates');
-            }
-
-            // Reset fusion state
-            this.fusionFirstPlateId = null;
-            this.setActiveTool('select');
+            this.showModal({
+                title: 'Confirm Fusion',
+                content: `Do you want to fuse plate <strong>${firstPlate.name}</strong> and <strong>${plate.name}</strong> into a single plate?`,
+                buttons: [
+                    {
+                        text: 'Fuse Plates',
+                        subtext: 'Combine geometries and features. The new plate will inherit motion from the larger parent.',
+                        onClick: () => {
+                            this.pushState();
+                            const result = fusePlates(this.state, this.fusionFirstPlateId!, plateId);
+                            
+                            if (result.success && result.newState) {
+                                this.state = result.newState;
+                                this.fusionFirstPlateId = null;
+                                this.updatePropertiesPanel();
+                                this.updateUI();
+                                this.canvasManager?.render();
+                                this.updateHint(`Fused plates into new plate.`);
+                            } else {
+                                this.updateHint(`Fusion failed: ${result.error || 'Unknown error'}`);
+                                setTimeout(() => this.updateHint(null), 3000);
+                            }
+                        }
+                    },
+                    {
+                        text: 'Cancel',
+                        isSecondary: true,
+                        onClick: () => {
+                           this.fusionFirstPlateId = null;
+                           this.updateHint("Select first plate to fuse");
+                        }
+                    }
+                ]
+            });
+            // We exit here because modal is async
+            return;
         }
     }
 
@@ -1644,57 +2392,57 @@ class TectoLiteApp {
         const isLinked = sourcePlate.linkedPlateIds?.includes(targetId);
         const actionText = isLinked ? "Unlink" : "Link";
 
-        // Stage 3 - Confirmation
-        if (!confirm(`Do you want to ${actionText} plate ${sourcePlate.name} and ${plate.name}?`)) {
-            // User cancelled - reset to Stage 1
-            this.activeLinkSourceId = null;
-            this.updateHint("Select first plate to link");
-            this.updateUI();
-            this.canvasManager?.render();
-            return;
-        }
+        this.showModal({
+            title: `${actionText} Plates`,
+            content: `Do you want to <strong>${actionText.toLowerCase()}</strong> plate <strong>${sourcePlate.name}</strong> and <strong>${plate.name}</strong>?`,
+            buttons: [
+                 {
+                    text: actionText,
+                    subtext: isLinked ? 'Plates will move independently.' : 'Plates will move together.',
+                    onClick: () => {
+                        // Logic
+                         this.pushState();
+                        this.state.world.plates = this.state.world.plates.map(p => {
+                            if (p.id === sourceId) {
+                                let links = p.linkedPlateIds || [];
+                                if (isLinked) links = links.filter(id => id !== targetId);
+                                else links = [...links, targetId];
+                                return { ...p, linkedPlateIds: links };
+                            }
+                            if (p.id === targetId) {
+                                let links = p.linkedPlateIds || [];
+                                if (isLinked) links = links.filter(id => id !== sourceId);
+                                else links = [...links, sourceId];
+                                return { ...p, linkedPlateIds: links };
+                            }
+                            return p;
+                        });
 
-        if (isLinked) {
-            // Already linked - Unlink
-            this.pushState();
-            this.state.world.plates = this.state.world.plates.map(p => {
-                // Remove link ID from both plates
-                if (p.id === sourceId) {
-                    return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== targetId) };
-                }
-                if (p.id === targetId) {
-                    return { ...p, linkedPlateIds: (p.linkedPlateIds || []).filter(id => id !== sourceId) };
-                }
-                return p;
-            });
-            const hint = document.getElementById('canvas-hint');
-            if (hint) {
-                hint.textContent = `Unlinked ${sourcePlate.name} and ${plate.name}`;
-                setTimeout(() => { if (hint && this.state.activeTool !== 'link') hint.style.display = 'none'; }, 2000);
-            }
-        } else {
-            // Create Link
-            this.pushState();
-            this.state.world.plates = this.state.world.plates.map(p => {
-                if (p.id === sourceId) {
-                    return { ...p, linkedPlateIds: [...(p.linkedPlateIds || []), targetId] };
-                }
-                if (p.id === targetId) {
-                    return { ...p, linkedPlateIds: [...(p.linkedPlateIds || []), sourceId] };
-                }
-                return p;
-            });
-            this.updateHint(`Linked ${sourcePlate.name} and ${plate.name}`);
-            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-        }
+                        this.updateHint(`${isLinked ? 'Unlinked' : 'Linked'} ${sourcePlate.name} and ${plate.name}`);
+                        setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
 
-        // Reset
-        this.activeLinkSourceId = null;
-        this.state.world.selectedPlateId = plateId; // Select the target
-        this.activeToolText = "Select first plate to link"; // Reset for next use
-        this.updateRetroStatusBox(this.activeToolText);
-        this.updateUI();
-        this.canvasManager?.render();
+                        // Reset
+                        this.activeLinkSourceId = null;
+                        this.state.world.selectedPlateId = plateId; // Select the target
+                        this.activeToolText = "Select first plate to link"; // Reset for next use
+                        this.updateRetroStatusBox(this.activeToolText);
+                        this.updateUI();
+                        this.canvasManager?.render();
+                    }
+                 },
+                 {
+                    text: 'Cancel',
+                    isSecondary: true,
+                    onClick: () => {
+                        // User cancelled - reset to Stage 1
+                        this.activeLinkSourceId = null;
+                        this.updateHint("Select first plate to link");
+                        this.updateUI();
+                        this.canvasManager?.render();
+                    }
+                 }
+            ]
+        });
     }
 
     private handleSplitApply(points: Coordinate[]): void {
@@ -1702,18 +2450,40 @@ class TectoLiteApp {
 
         let plateToSplit = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
 
-        // Pass the full polyline for zig-zag splits
         if (plateToSplit) {
-            if (confirm('Inherit momentum from parent plate?')) {
-                this.pushState(); // Save state for undo
-                this.state = splitPlate(this.state, plateToSplit.id, { points }, true);
-            } else {
-                this.pushState(); // Save state for undo
-                this.state = splitPlate(this.state, plateToSplit.id, { points }, false);
-            }
-            this.updateUI();
-            this.simulation?.setTime(this.state.world.currentTime);
-            this.canvasManager?.render();
+            this.showModal({
+                title: 'Split Plate Configuration',
+                content: `You are about to split <strong>${plateToSplit.name}</strong> along the drawn boundary. How should the new plates behave?`,
+                buttons: [
+                    {
+                        text: 'Inherit Momentum',
+                        subtext: 'New plates will keep the parent\'s current velocity and rotation.',
+                        onClick: () => {
+                            this.pushState();
+                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, true);
+                            this.updateUI();
+                            this.simulation?.setTime(this.state.world.currentTime);
+                            this.canvasManager?.render();
+                        }
+                    },
+                    {
+                        text: 'Reset Momentum',
+                        subtext: 'New plates will start stationary (0 velocity).',
+                        onClick: () => {
+                            this.pushState();
+                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, false);
+                            this.updateUI();
+                            this.simulation?.setTime(this.state.world.currentTime);
+                            this.canvasManager?.render();
+                        }
+                    },
+                    {
+                        text: 'Cancel',
+                        isSecondary: true,
+                        onClick: () => { /* Do nothing */ }
+                    }
+                ]
+            });
         }
     }
 
@@ -1880,9 +2650,9 @@ class TectoLiteApp {
       <div class="property-group">
         <label class="property-label">Timeline (Ma)</label>
         <div style="display: flex; gap: 4px;">
-             <input type="number" id="prop-birth-time" class="property-input" title="Start Time" value="${plate.birthTime}" step="5" style="flex:1">
+             <input type="number" id="prop-birth-time" class="property-input" title="Start Time" value="${this.getDisplayTimeValue(plate.birthTime)}" step="5" style="flex:1">
              <span style="align-self: center;">-</span>
-             <input type="number" id="prop-death-time" class="property-input" title="End Time" value="${plate.deathTime ?? ''}" placeholder="Active" step="5" style="flex:1">
+             <input type="number" id="prop-death-time" class="property-input" title="End Time" value="${this.getDisplayTimeValue(plate.deathTime) ?? ''}" placeholder="Active" step="5" style="flex:1">
         </div>
       </div>
 
@@ -1949,16 +2719,6 @@ class TectoLiteApp {
         <input type="number" id="prop-pole-lat" class="property-input" value="${pole.position[1]}" step="1">
       </div>
       <div class="property-group">
-        <label class="property-label">Rate (deg/Ma)</label>
-        <input type="number" id="prop-pole-rate" class="property-input" value="${pole.rate}" step="0.1" style="width: 70px;">
-        <select id="rate-presets" class="tool-select" style="margin-left: 8px; width: auto;">
-          <option value="">Presets...</option>
-          ${(this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0]).map(r => `
-             <option value="${r}">${r.toFixed(1)}</option>
-          `).join('')}
-        </select>
-      </div>
-      <div class="property-group">
         <label class="property-label">
            <input type="checkbox" id="prop-pole-vis" ${pole.visible ? 'checked' : ''}> Show Pole
         </label>
@@ -2001,13 +2761,27 @@ class TectoLiteApp {
         });
 
         document.getElementById('prop-birth-time')?.addEventListener('change', (e) => {
-            plate.birthTime = parseFloat((e.target as HTMLInputElement).value);
-            this.canvasManager?.render();
+            const userInput = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(userInput)) {
+                // Transform user input (positive or negative) to internal time
+                plate.birthTime = this.transformInputTime(userInput);
+                this.canvasManager?.render();
+            }
         });
 
         document.getElementById('prop-death-time')?.addEventListener('change', (e) => {
             const val = (e.target as HTMLInputElement).value;
-            plate.deathTime = val ? parseFloat(val) : null;
+            if (val) {
+                const userInput = parseFloat(val);
+                if (!isNaN(userInput)) {
+                    // Transform user input (positive or negative) to internal time
+                    plate.deathTime = this.transformInputTime(userInput);
+                } else {
+                    plate.deathTime = null;
+                }
+            } else {
+                plate.deathTime = null;
+            }
             this.canvasManager?.render();
         });
 
@@ -2019,23 +2793,9 @@ class TectoLiteApp {
             const newLat = parseFloat((e.target as HTMLInputElement).value);
             this.addMotionKeyframe(plate.id, { ...pole, position: [pole.position[0], newLat] });
         });
-        document.getElementById('prop-pole-rate')?.addEventListener('change', (e) => {
-            const newRate = parseFloat((e.target as HTMLInputElement).value);
-            this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
-        });
         document.getElementById('prop-pole-vis')?.addEventListener('change', (e) => {
             pole.visible = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
-        });
-
-        document.getElementById('rate-presets')?.addEventListener('change', (e) => {
-            const val = (e.target as HTMLSelectElement).value;
-            if (val) {
-                const newRate = parseFloat(val);
-                (document.getElementById('prop-pole-rate') as HTMLInputElement).value = val;
-                this.addMotionKeyframe(plate.id, { ...pole, rate: newRate });
-                (e.target as HTMLSelectElement).value = ''; // Reset dropdown
-            }
         });
 
         document.getElementById('btn-copy-momentum')?.addEventListener('click', () => {
@@ -2116,12 +2876,12 @@ class TectoLiteApp {
       </div>
       <div class="property-group">
         <label class="property-label">Created At(Ma)</label>
-        <input type="number" id="feature-created-at" class="property-input" value="${createdAt.toFixed(1)}" step="0.1" style="width: 80px;">
+        <input type="number" id="feature-created-at" class="property-input" value="${this.getDisplayTimeValue(feature.generatedAt)?.toFixed(1) ?? ''}" step="0.1" style="width: 80px;">
         <span class="property-hint" style="margin-left: 8px; color: #888;">Age: ${age} Ma</span>
       </div>
       <div class="property-group">
         <label class="property-label">Ends At(Ma)</label>
-        <input type="number" id="feature-death-time" class="property-input" value="${feature.deathTime?.toFixed(1) ?? ''}" step="0.1" style="width: 80px;" placeholder="Never">
+        <input type="number" id="feature-death-time" class="property-input" value="${this.getDisplayTimeValue(feature.deathTime) !== null ? this.getDisplayTimeValue(feature.deathTime)?.toFixed(1) : ''}" step="0.1" style="width: 80px;" placeholder="Never">
       </div>
       <div class="property-group">
         <label class="property-label">Name</label>
@@ -2151,9 +2911,11 @@ class TectoLiteApp {
         });
 
         document.getElementById('feature-created-at')?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val)) {
-                this.updateFeature(singleFeatureId, { generatedAt: val });
+            const userInput = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(userInput)) {
+                // Transform user input (positive or negative) to internal time
+                const internalTime = this.transformInputTime(userInput);
+                this.updateFeature(singleFeatureId, { generatedAt: internalTime });
             }
         });
 
@@ -2162,9 +2924,11 @@ class TectoLiteApp {
             if (val === '' || val === null) {
                 this.updateFeature(singleFeatureId, { deathTime: undefined });
             } else {
-                const num = parseFloat(val);
-                if (!isNaN(num)) {
-                    this.updateFeature(singleFeatureId, { deathTime: num });
+                const userInput = parseFloat(val);
+                if (!isNaN(userInput)) {
+                    // Transform user input (positive or negative) to internal time
+                    const internalTime = this.transformInputTime(userInput);
+                    this.updateFeature(singleFeatureId, { deathTime: internalTime });
                 }
             }
         });
@@ -2194,8 +2958,90 @@ class TectoLiteApp {
     private updateTimeDisplay(): void {
         const display = document.getElementById('current-time');
         const slider = document.getElementById('time-slider') as HTMLInputElement;
-        if (display) display.textContent = this.state.world.currentTime.toFixed(1);
+        const modeLabel = document.getElementById('time-mode-label');
+        
+        // Get current max time from timeline input
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+        
+        // Transform internal time to display time
+        const displayTime = toDisplayTime(this.state.world.currentTime, {
+            maxTime: maxTime,
+            mode: this.state.world.timeMode
+        });
+        
+        // Update display
+        if (display) display.textContent = Math.abs(displayTime).toFixed(1);
         if (slider) slider.value = String(this.state.world.currentTime);
+        
+        // Update label
+        const label = this.state.world.timeMode === 'negative' ? 'years ago' : 'Ma';
+        if (modeLabel) modeLabel.textContent = label;
+    }
+
+    private confirmTimeInput(): void {
+        const input = document.getElementById('time-input-field') as HTMLInputElement;
+        const modal = document.getElementById('time-input-modal');
+        
+        if (!input || !modal) return;
+        
+        const displayTimeStr = input.value.trim();
+        const parsedDisplayTime = parseTimeInput(displayTimeStr);
+        
+        if (parsedDisplayTime === null) {
+            alert('Please enter a valid time value');
+            return;
+        }
+        
+        // Get max time for transformation
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+        
+        // Transform display time to internal time
+        const internalTime = toInternalTime(parsedDisplayTime, {
+            maxTime: maxTime,
+            mode: this.state.world.timeMode
+        });
+        
+        // Set the time
+        this.simulation?.setTime(internalTime);
+        this.updateTimeDisplay();
+        
+        // Close modal
+        modal.style.display = 'none';
+    }
+
+    /**
+     * Get display value for a time based on current time mode
+     * Used for showing time in property fields and attributes
+     * @param internalTime - Internal positive time value
+     * @returns Display value (positive or negative based on mode)
+     */
+    private getDisplayTimeValue(internalTime: number | null | undefined): number | null {
+        if (internalTime === null || internalTime === undefined) return null;
+        
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+        
+        return toDisplayTime(internalTime, {
+            maxTime: maxTime,
+            mode: this.state.world.timeMode
+        });
+    }
+
+    private transformInputTime(userInputTime: number): number {
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
+        
+        return toInternalTime(userInputTime, {
+            maxTime: maxTime,
+            mode: this.state.world.timeMode
+        });
+    }
+
+    private getMaxTime(): number {
+        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
+        return maxTimeInput ? parseInt(maxTimeInput.value) : 500;
     }
 
     private addMotionKeyframe(plateId: string, newEulerPole: { position: Coordinate; rate: number; visible?: boolean }): void {
@@ -2253,12 +3099,19 @@ class TectoLiteApp {
 
     private handleDragTargetRequest(plateId: string, axis: Vector3, angleRad: number): void {
         const current = this.state.world.currentTime;
-        const promptText = `Target Time(Ma) ? (Current: ${current})`;
+        const displayCurrent = toDisplayTime(current, {
+            maxTime: this.getMaxTime(),
+            mode: this.state.world.timeMode
+        });
+        const promptText = `Target Time(Ma) ? (Current: ${displayCurrent})`;
         const input = window.prompt(promptText);
         if (!input) return;
 
-        const targetTime = parseFloat(input);
-        if (isNaN(targetTime)) return;
+        const userInputTime = parseFloat(input);
+        if (isNaN(userInputTime)) return;
+
+        // Transform user input based on time mode
+        const targetTime = this.transformInputTime(userInputTime);
 
         const dt = targetTime - current;
         if (Math.abs(dt) < 0.001) {
@@ -2285,6 +3138,11 @@ class TectoLiteApp {
         const uniqueIds = Array.from(new Set(allIds));
 
         uniqueIds.forEach(id => this.addMotionKeyframe(id, newEulerPole));
+        
+        // Refresh property panel to show updated Euler pole position
+        this.updatePropertiesPanel();
+        // Force a canvas render to update Euler pole visualization
+        this.canvasManager?.render();
     }
 
     /** Push current state to history (call before meaningful changes) */

@@ -1,10 +1,11 @@
-import { AppState } from '../types';
-import { geoPath, geoOrthographic, geoEquirectangular } from 'd3-geo';
+import { AppState, ProjectionType } from '../types';
+import { geoPath, geoOrthographic, geoEquirectangular, geoMercator } from 'd3-geo';
+import * as geoProjection from 'd3-geo-projection';
 
 export interface HeightmapOptions {
     width: number;
     height: number;
-    projection: 'equirectangular' | 'orthographic'; // Standard for export
+    projection: ProjectionType;
     smooth: boolean;
 }
 
@@ -19,10 +20,27 @@ export class HeightmapGenerator {
         if (!ctx) throw new Error('Could not get 2d context');
 
         // Setup Projection
-        // We typically use Equirectangular for World Map export (2:1 aspect ratio valid)
-        const projection = options.projection === 'equirectangular'
-            ? geoEquirectangular().fitSize([options.width, options.height], { type: "Sphere" } as any)
-            : geoOrthographic().fitSize([options.width, options.height], { type: "Sphere" } as any);
+        let projection: any;
+        const projectionOptions = { type: "Sphere" } as any;
+        
+        switch (options.projection) {
+            case 'equirectangular':
+                projection = geoEquirectangular().fitSize([options.width, options.height], projectionOptions);
+                break;
+            case 'mercator':
+                projection = geoMercator().fitSize([options.width, options.height], projectionOptions);
+                break;
+            case 'mollweide':
+                projection = (geoProjection as any).geoMollweide().fitSize([options.width, options.height], projectionOptions);
+                break;
+            case 'robinson':
+                projection = (geoProjection as any).geoRobinson().fitSize([options.width, options.height], projectionOptions);
+                break;
+            case 'orthographic':
+            default:
+                projection = geoOrthographic().fitSize([options.width, options.height], projectionOptions);
+                break;
+        }
 
         const path = geoPath().projection(projection).context(ctx);
 

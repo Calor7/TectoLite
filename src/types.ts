@@ -11,6 +11,8 @@ export interface Point {
 
 export type ProjectionType = 'equirectangular' | 'mollweide' | 'mercator' | 'robinson' | 'orthographic';
 
+export type TimeMode = 'positive' | 'negative';
+
 export type InteractionMode = 'classic' | 'dynamic_pole' | 'drag_target';
 
 export interface Polygon {
@@ -52,6 +54,7 @@ export interface EulerPole {
 // A keyframe captures motion parameters and plate geometry at a specific time
 export interface MotionKeyframe {
   time: number;                    // When this motion segment starts
+  label?: string;                  // Optional label for the timeline (e.g. "Edit", "Motion Change")
   eulerPole: EulerPole;            // Motion parameters for this segment
   snapshotPolygons: Polygon[];     // Plate geometry at keyframe time
   snapshotFeatures: Feature[];     // Features at keyframe time
@@ -116,17 +119,21 @@ export interface WorldState {
   selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
   selectedFeatureIds: string[];     // Support multiple selection
   projection: ProjectionType;
+  timeMode: TimeMode;               // NEW: Display mode for time (positive or negative/ago)
   showGrid: boolean;
   showEulerPoles: boolean;
   showFeatures: boolean;
   showFutureFeatures: boolean;  // Show features outside current timeline (future/past)
   globalOptions: {
     // Simulation
-    speedLimitEnabled: boolean;
-    maxDragSpeed: number; // Degrees per Ma
 
     // Planet Parameters
     planetRadius: number; // km, default 6371 (Earth)
+    customPlanetRadius?: number; // User-defined radius
+    customRadiusEnabled?: boolean; // Whether custom radius is active
+
+    // Timeline
+    timelineMaxTime?: number; // Max timeline duration (Ma)
 
     // Advanced
     gridThickness: number;       // Pixel width of grid lines
@@ -149,7 +156,7 @@ export interface Boundary {
   velocity?: number; // Relative velocity magnitude
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit';
 
 export type OverlayMode = 'fixed' | 'projection';
 
@@ -206,14 +213,16 @@ export function createDefaultWorldState(): WorldState {
     selectedFeatureId: null,
     selectedFeatureIds: [],
     projection: 'orthographic', // Default to globe as requested
+    timeMode: 'positive',       // NEW: Default to positive time mode
     showGrid: true,
     showEulerPoles: false,
     showFeatures: true,
     showFutureFeatures: false,  // Hide future/past features by default
     globalOptions: {
-      maxDragSpeed: 1.0,  // ~10 cm/year (realistic plate speed)
-      speedLimitEnabled: false,
       planetRadius: 6371, // Earth radius in km
+      customPlanetRadius: 6371,
+      customRadiusEnabled: false,
+      timelineMaxTime: 500,
       gridThickness: 1.0,
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,
@@ -259,3 +268,10 @@ export function getNextPlateColor(existingPlates: TectonicPlate[]): string {
   return PLATE_COLORS[existingPlates.length % PLATE_COLORS.length];
 }
 
+// GeoPackage Export Options
+export interface GeoPackageExportOptions {
+  width: number;
+  height: number;
+  projection: ProjectionType;
+  includeHeightmap: boolean;
+}
