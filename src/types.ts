@@ -48,6 +48,8 @@ export interface PaintStroke {
   points: Coordinate[]; // Array of [lon, lat] positions
   timestamp: number;    // For undo/redo ordering
   isFilled?: boolean;   // True for polygon fill, false/undefined for brush strokes
+  source?: 'user' | 'orogeny';  // Origin: user-drawn or auto-generated
+  birthTime?: number;   // Geological time (Ma) when created - for time-based visibility
 }
 
 export interface Feature {
@@ -150,6 +152,7 @@ export interface WorldState {
   selectedPlateId: string | null;
   selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
   selectedFeatureIds: string[];     // Support multiple selection
+  selectedPaintStrokeId: string | null;  // Selected paint stroke for properties panel
   projection: ProjectionType;
   timeMode: TimeMode;               // NEW: Display mode for time (positive or negative/ago)
   showGrid: boolean;
@@ -177,6 +180,9 @@ export interface WorldState {
     enableHotspots?: boolean;
     hotspotSpawnRate?: number; // Ma per feature (default 1.0)
     enableOrogeny?: boolean;
+    orogenyMode?: 'features' | 'paint';  // Spawn features or paint boundaries
+    orogenyPaintConvergent?: string;     // Color for convergent boundaries (default brown)
+    orogenyPaintDivergent?: string;      // Color for divergent boundaries (default red)
     showHints?: boolean;
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
@@ -252,6 +258,7 @@ export function createDefaultWorldState(): WorldState {
     selectedPlateId: null,
     selectedFeatureId: null,
     selectedFeatureIds: [],
+    selectedPaintStrokeId: null,
     projection: 'orthographic', // Default to globe as requested
     timeMode: 'positive',       // NEW: Default to positive time mode
     showGrid: true,

@@ -92,7 +92,7 @@ export class CanvasManager {
         private setState: (updater: (state: AppState) => AppState) => void,
         private onDrawComplete: (points: Coordinate[]) => void,
         private onFeaturePlace: (position: Coordinate, type: FeatureType) => void,
-        private onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[], plumeId?: string | null) => void,
+        private onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[], plumeId?: string | null, paintStrokeId?: string | null) => void,
         private onSplitApply: (points: Coordinate[]) => void,
         private onSplitPreviewChange: (active: boolean) => void,
         private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void,
@@ -655,6 +655,9 @@ export class CanvasManager {
                         // Single click selection (clears previous selection)
                         if (hit && 'plumeId' in hit && hit.plumeId) {
                             this.onSelect(null, null, [], hit.plumeId);
+                        } else if (hit && 'paintStrokeId' in hit && hit.paintStrokeId) {
+                            // Paint stroke selected
+                            this.onSelect(hit.plateId ?? null, null, [], null, hit.paintStrokeId);
                         } else {
                             this.onSelect(hit?.plateId ?? null, hit?.featureId ?? null);
                         }
@@ -1029,7 +1032,7 @@ export class CanvasManager {
         this.render();
     }
 
-    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string } | null {
+    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string; paintStrokeId?: string } | null {
         const state = this.getState();
         // Naive hit test using Project -> Distance for features
 
@@ -1056,6 +1059,35 @@ export class CanvasManager {
                 if (proj) {
                     const dist = Math.hypot(proj[0] - mousePos.x, proj[1] - mousePos.y);
                     if (dist < 20) return { plateId: plate.id, featureId: feature.id };
+                }
+            }
+        }
+
+        // Check paint strokes (before plates, after features)
+        if (state.world.showPaint) {
+            for (const plate of state.world.plates) {
+                if (!plate.visible || !plate.paintStrokes) continue;
+                if (state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
+
+                for (const stroke of plate.paintStrokes) {
+                    // Skip strokes not yet created (future)
+                    if (stroke.birthTime !== undefined && stroke.birthTime > state.world.currentTime && !state.world.showFutureFeatures) continue;
+
+                    // Check proximity to stroke path
+                    const hitDist = stroke.width + 8; // Hit margin
+                    for (let i = 0; i < stroke.points.length - 1; i++) {
+                        const worldP1 = this.plateLocalToWorld(stroke.points[i], plate.center);
+                        const worldP2 = this.plateLocalToWorld(stroke.points[i + 1], plate.center);
+                        const proj1 = this.projectionManager.project(worldP1);
+                        const proj2 = this.projectionManager.project(worldP2);
+                        if (!proj1 || !proj2) continue;
+
+                        // Point-to-line-segment distance
+                        const dist = this.pointToSegmentDistance(mousePos, { x: proj1[0], y: proj1[1] }, { x: proj2[0], y: proj2[1] });
+                        if (dist < hitDist) {
+                            return { plateId: plate.id, paintStrokeId: stroke.id };
+                        }
+                    }
                 }
             }
         }
@@ -1798,6 +1830,29 @@ export class CanvasManager {
         ];
     }
 
+    /**
+     * Calculate distance from point P to line segment AB
+     */
+    private pointToSegmentDistance(p: Point, a: Point, b: Point): number {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const lenSq = dx * dx + dy * dy;
+        
+        if (lenSq === 0) {
+            // Segment is a point
+            return Math.hypot(p.x - a.x, p.y - a.y);
+        }
+        
+        // Project p onto line AB, clamped to segment
+        let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+        t = Math.max(0, Math.min(1, t));
+        
+        const projX = a.x + t * dx;
+        const projY = a.y + t * dy;
+        
+        return Math.hypot(p.x - projX, p.y - projY);
+    }
+
     private commitPaintStroke(): void {
         const state = this.getState();
         if (!state.world.selectedPlateId || this.currentPaintStroke.length < 2) {
@@ -1829,6 +1884,11 @@ export class CanvasManager {
     }
 
     private renderPaintStrokes(strokes: PaintStroke[], plate: any): void {
+        const state = this.getState();
+        const currentTime = state.world.currentTime;
+        const showFuture = state.world.showFutureFeatures;
+        const selectedStrokeId = state.world.selectedPaintStrokeId;
+
         // Enable clipping to plate boundaries so paint only appears within the plate
         // Use d3-geo path generator for accurate clipping of curved plate boundaries
         this.ctx.save();
@@ -1854,7 +1914,20 @@ export class CanvasManager {
         for (const stroke of strokes) {
             if (stroke.points.length < 2) continue;
 
-            this.ctx.globalAlpha = stroke.opacity;
+            // Time-based visibility: Only show strokes created at or before current time
+            // (unless showFutureFeatures is enabled)
+            if (stroke.birthTime !== undefined && stroke.birthTime > currentTime && !showFuture) {
+                continue; // Skip strokes from the "future"
+            }
+
+            // Check if this stroke is selected
+            const isSelected = stroke.id === selectedStrokeId;
+
+            // Ghost strokes from the future (similar to features)
+            const isFromFuture = stroke.birthTime !== undefined && stroke.birthTime > currentTime;
+            const baseOpacity = isFromFuture ? stroke.opacity * 0.3 : stroke.opacity;
+
+            this.ctx.globalAlpha = baseOpacity;
 
             if (stroke.isFilled) {
                 // Render filled polygon
@@ -1878,6 +1951,13 @@ export class CanvasManager {
 
                 this.ctx.closePath();
                 this.ctx.fill();
+
+                // Selection highlight for filled strokes
+                if (isSelected) {
+                    this.ctx.strokeStyle = '#00ffff';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.stroke();
+                }
             } else {
                 // Render line stroke
                 this.ctx.strokeStyle = stroke.color;
@@ -1903,6 +1983,14 @@ export class CanvasManager {
                 }
 
                 this.ctx.stroke();
+
+                // Selection highlight for line strokes - draw a wider outline
+                if (isSelected) {
+                    this.ctx.strokeStyle = '#00ffff';
+                    this.ctx.lineWidth = stroke.width + 4;
+                    this.ctx.globalAlpha = 0.5;
+                    this.ctx.stroke();
+                }
             }
         }
         this.ctx.globalAlpha = 1.0;

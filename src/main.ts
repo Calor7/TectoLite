@@ -63,7 +63,7 @@ class TectoLiteApp {
             },
             (points) => this.handleDrawComplete(points),
             (pos, type) => this.handleFeaturePlace(pos, type),
-            (plateId, featureId, featureIds, plumeId) => this.handleSelect(plateId, featureId, featureIds, plumeId),
+            (plateId, featureId, featureIds, plumeId, paintStrokeId) => this.handleSelect(plateId, featureId, featureIds, plumeId, paintStrokeId),
             (points) => this.handleSplitApply(points),
             (active) => this.handleSplitPreviewChange(active),
             (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
@@ -293,6 +293,24 @@ class TectoLiteApp {
                             <label class="view-dropdown-item">
                                  <input type="checkbox" id="check-enable-orogeny" ${this.state.world.globalOptions.enableOrogeny ? 'checked' : ''}> Orogeny Detection <span class="info-icon" data-tooltip="Spawns mountains and trenches at plate collisions based on crust type">(i)</span>
                             </label>
+
+                            <!-- Orogeny Mode Sub-options -->
+                            <div id="orogeny-options" style="margin-left: 20px; display: ${this.state.world.globalOptions.enableOrogeny ? 'block' : 'none'};">
+                                <div style="display: flex; gap: 4px; margin: 4px 0;">
+                                    <button id="orogeny-mode-features" class="btn" style="flex:1; font-size: 10px; padding: 2px 6px; ${this.state.world.globalOptions.orogenyMode !== 'paint' ? 'background: #3b82f6; color: white;' : ''}">Features</button>
+                                    <button id="orogeny-mode-paint" class="btn" style="flex:1; font-size: 10px; padding: 2px 6px; ${this.state.world.globalOptions.orogenyMode === 'paint' ? 'background: #3b82f6; color: white;' : ''}">Paint</button>
+                                </div>
+                                <div id="orogeny-paint-colors" style="display: ${this.state.world.globalOptions.orogenyMode === 'paint' ? 'flex' : 'none'}; gap: 8px; margin-top: 4px;">
+                                    <div style="flex: 1;">
+                                        <label style="font-size: 9px; color: var(--text-secondary);">Convergent</label>
+                                        <input type="color" id="orogeny-color-convergent" value="${this.state.world.globalOptions.orogenyPaintConvergent || '#8B4513'}" style="width: 100%; height: 20px; cursor: pointer;">
+                                    </div>
+                                    <div style="flex: 1;">
+                                        <label style="font-size: 9px; color: var(--text-secondary);">Divergent</label>
+                                        <input type="color" id="orogeny-color-divergent" value="${this.state.world.globalOptions.orogenyPaintDivergent || '#DC143C'}" style="width: 100%; height: 20px; cursor: pointer;">
+                                    </div>
+                                </div>
+                            </div>
 
                             <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dotted var(--border-default);">
                                 <label class="view-dropdown-item">
@@ -1243,8 +1261,41 @@ class TectoLiteApp {
 
         document.getElementById('check-enable-orogeny')?.addEventListener('change', (e) => {
              this.state.world.globalOptions.enableOrogeny = (e.target as HTMLInputElement).checked;
+             // Show/hide sub-options
+             const optionsDiv = document.getElementById('orogeny-options');
+             if (optionsDiv) optionsDiv.style.display = (e.target as HTMLInputElement).checked ? 'block' : 'none';
              updateAutomationBtn();
              this.updateTimeDisplay();
+        });
+
+        // Orogeny mode toggle (Features vs Paint)
+        document.getElementById('orogeny-mode-features')?.addEventListener('click', () => {
+            this.state.world.globalOptions.orogenyMode = 'features';
+            const featBtn = document.getElementById('orogeny-mode-features');
+            const paintBtn = document.getElementById('orogeny-mode-paint');
+            const colorsDiv = document.getElementById('orogeny-paint-colors');
+            if (featBtn) { featBtn.style.background = '#3b82f6'; featBtn.style.color = 'white'; }
+            if (paintBtn) { paintBtn.style.background = ''; paintBtn.style.color = ''; }
+            if (colorsDiv) colorsDiv.style.display = 'none';
+        });
+
+        document.getElementById('orogeny-mode-paint')?.addEventListener('click', () => {
+            this.state.world.globalOptions.orogenyMode = 'paint';
+            const featBtn = document.getElementById('orogeny-mode-features');
+            const paintBtn = document.getElementById('orogeny-mode-paint');
+            const colorsDiv = document.getElementById('orogeny-paint-colors');
+            if (featBtn) { featBtn.style.background = ''; featBtn.style.color = ''; }
+            if (paintBtn) { paintBtn.style.background = '#3b82f6'; paintBtn.style.color = 'white'; }
+            if (colorsDiv) colorsDiv.style.display = 'flex';
+        });
+
+        // Orogeny paint colors
+        document.getElementById('orogeny-color-convergent')?.addEventListener('input', (e) => {
+            this.state.world.globalOptions.orogenyPaintConvergent = (e.target as HTMLInputElement).value;
+        });
+
+        document.getElementById('orogeny-color-divergent')?.addEventListener('input', (e) => {
+            this.state.world.globalOptions.orogenyPaintDivergent = (e.target as HTMLInputElement).value;
         });
 
         // Debug: Add Test Plume
@@ -2591,7 +2642,7 @@ class TectoLiteApp {
         this.canvasManager?.render();
     }
 
-    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null): void {
+    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null, paintStrokeId: string | null = null): void {
         // Reset fusion/link state if switching away
         if (this.state.activeTool !== 'fuse') this.fusionFirstPlateId = null;
         if (this.state.activeTool !== 'link') this.activeLinkSourceId = null;
@@ -2609,7 +2660,9 @@ class TectoLiteApp {
 
         // Selection Logic
         if (this.state.activeTool === 'select') {
-             if (plateId) {
+             if (paintStrokeId) {
+                 this.updateHint("Selected Paint Stroke.");
+             } else if (plateId) {
                  const plate = this.state.world.plates.find(p => p.id === plateId);
                  this.updateHint(`Selected ${plate?.name || 'Plate'}.`);
              } else if (plumeId) {
@@ -2619,14 +2672,22 @@ class TectoLiteApp {
              }
         }
         
-        if (plumeId) {
+        // Handle paint stroke selection
+        if (paintStrokeId) {
+            this.state.world.selectedPaintStrokeId = paintStrokeId;
+            this.state.world.selectedPlateId = plateId; // Keep plate context
+            this.state.world.selectedFeatureId = null;
+            this.state.world.selectedFeatureIds = [];
+        } else if (plumeId) {
              // If plume selected, deselect others and set ID to selectedFeatureId for UI binding
              this.state.world.selectedPlateId = null;
              this.state.world.selectedFeatureId = plumeId;
              this.state.world.selectedFeatureIds = [plumeId];
+             this.state.world.selectedPaintStrokeId = null;
         } else {
              this.state.world.selectedPlateId = plateId;
              this.state.world.selectedFeatureId = featureId ?? null;
+             this.state.world.selectedPaintStrokeId = null;
     
              // Handle multi-selection
              if (featureIds.length > 0) {
@@ -2961,6 +3022,115 @@ class TectoLiteApp {
     private updatePropertiesPanel(): void {
         const content = document.getElementById('properties-content');
         if (!content) return;
+
+        // Check for Paint Stroke Selection
+        if (this.state.world.selectedPaintStrokeId) {
+            const strokeId = this.state.world.selectedPaintStrokeId;
+            let foundStroke: any = null;
+            let strokePlate: any = null;
+
+            // Find the stroke across all plates
+            for (const plate of this.state.world.plates) {
+                if (plate.paintStrokes) {
+                    const stroke = plate.paintStrokes.find((s: any) => s.id === strokeId);
+                    if (stroke) {
+                        foundStroke = stroke;
+                        strokePlate = plate;
+                        break;
+                    }
+                }
+            }
+
+            if (foundStroke && strokePlate) {
+                const birthTimeDisplay = foundStroke.birthTime !== undefined 
+                    ? `${foundStroke.birthTime.toFixed(2)} Ma` 
+                    : 'N/A (User)';
+                const ageDisplay = foundStroke.birthTime !== undefined 
+                    ? `${(this.state.world.currentTime - foundStroke.birthTime).toFixed(2)} Ma`
+                    : 'N/A';
+                const sourceDisplay = foundStroke.source || 'user';
+
+                content.innerHTML = `
+                    <h3 class="panel-section-title">Paint Stroke</h3>
+                    
+                    <div class="property-group">
+                        <label class="property-label">ID</label>
+                        <span class="property-value">${foundStroke.id.substring(0,8)}</span>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Source</label>
+                        <span class="property-value">${sourceDisplay === 'orogeny' ? '⚙️ Orogeny' : '🖌️ User'}</span>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Birth Time</label>
+                        <span class="property-value">${birthTimeDisplay}</span>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Age</label>
+                        <span class="property-value">${ageDisplay}</span>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Color</label>
+                        <input type="color" id="prop-stroke-color" value="${foundStroke.color}" style="width: 100%; height: 28px; cursor: pointer;">
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Width (px)</label>
+                        <input type="number" id="prop-stroke-width" class="property-input" value="${foundStroke.width}" min="1" max="20">
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Opacity</label>
+                        <input type="range" id="prop-stroke-opacity" min="0" max="100" value="${Math.round(foundStroke.opacity * 100)}" style="width: 100%;">
+                        <span id="prop-stroke-opacity-value" style="font-size: 10px; color: var(--text-secondary);">${Math.round(foundStroke.opacity * 100)}%</span>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">On Plate</label>
+                        <span class="property-value">${strokePlate.name}</span>
+                    </div>
+
+                    <div class="property-group" style="margin-top:20px;">
+                        <button id="btn-delete-stroke" class="btn btn-danger" style="width:100%">Delete Stroke</button>
+                    </div>
+                `;
+
+                // Bind events
+                document.getElementById('prop-stroke-color')?.addEventListener('input', (e) => {
+                    foundStroke.color = (e.target as HTMLInputElement).value;
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('prop-stroke-width')?.addEventListener('change', (e) => {
+                    const val = parseInt((e.target as HTMLInputElement).value);
+                    if (!isNaN(val) && val >= 1) {
+                        foundStroke.width = val;
+                        this.canvasManager?.render();
+                    }
+                });
+
+                document.getElementById('prop-stroke-opacity')?.addEventListener('input', (e) => {
+                    const val = parseInt((e.target as HTMLInputElement).value) / 100;
+                    foundStroke.opacity = val;
+                    const display = document.getElementById('prop-stroke-opacity-value');
+                    if (display) display.textContent = `${Math.round(val * 100)}%`;
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('btn-delete-stroke')?.addEventListener('click', () => {
+                    strokePlate.paintStrokes = strokePlate.paintStrokes.filter((s: any) => s.id !== strokeId);
+                    this.state.world.selectedPaintStrokeId = null;
+                    this.updateUI();
+                    this.canvasManager?.render();
+                });
+
+                return;
+            }
+        }
 
         // Check for Mantle Plume Selection (No Plate, but Feature ID set)
         if (!this.state.world.selectedPlateId && this.state.world.selectedFeatureId && this.state.world.mantlePlumes) {

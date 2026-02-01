@@ -33,7 +33,7 @@ export class BoundarySystem {
                 // PRE-CHECK VELOCITY BEFORE EXPENSIVE GEOMETRY
                 // Previously skipped diverging entirely, but visualization is fine
                 // The freeze is in GeologicalAutomation, not here
-                const preVelocity = this.quickVelocityCheck(p1, p2);
+                // Note: preVelocity check removed as it was not being used
 
                 // 1. Check for basic Overlap (Convergent)
                 const overlap = this.checkOverlap(p1, p2);
@@ -180,29 +180,6 @@ export class BoundarySystem {
         if (closingSpeed < -THRESHOLD) return { type: 'divergent', velocity: Math.abs(closingSpeed) };
 
         return { type: 'transform', velocity: speed };
-    }
-
-    // Quick velocity check WITHOUT requiring intersection geometry
-    // Used to pre-filter diverging plates before expensive polygon clipping
-    private static quickVelocityCheck(p1: TectonicPlate, p2: TectonicPlate): 'converging' | 'diverging' | 'neutral' {
-        // Use plate centers as proxy for boundary point
-        const midLon = (p1.center[0] + p2.center[0]) / 2;
-        const midLat = (p1.center[1] + p2.center[1]) / 2;
-        const midPt: Coordinate = [midLon, midLat];
-
-        const v1 = this.calculatePlateVelocityAt(p1, midPt);
-        const v2 = this.calculatePlateVelocityAt(p2, midPt);
-        const vRel = subtractVectors(v1, v2);
-
-        const pos1 = latLonToVector(p1.center);
-        const pos2 = latLonToVector(p2.center);
-        const p1p2 = normalize(subtractVectors(pos2, pos1));
-
-        const closingSpeed = dot(vRel, p1p2);
-
-        if (closingSpeed > 0.0005) return 'converging';
-        if (closingSpeed < -0.0005) return 'diverging';
-        return 'neutral';
     }
 
     private static calculatePlateVelocityAt(plate: TectonicPlate, pt: Coordinate): { x: number, y: number, z: number } {

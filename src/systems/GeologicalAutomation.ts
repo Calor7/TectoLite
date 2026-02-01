@@ -1,12 +1,13 @@
 // Geological Automation System
 // Handles dynamic feature tracking, orogeny detection, and crust aging
 
-import { AppState, Feature, generateId, TectonicPlate, FeatureType, Coordinate } from '../types';
+import { AppState, Feature, generateId, TectonicPlate, FeatureType, Coordinate, PaintStroke } from '../types';
 import { isPointInPolygon } from '../SplitTool';
 import { distance } from '../utils/sphericalMath';
 
 export class GeologicalAutomationSystem {
     private boundaryCooldowns: Map<string, number> = new Map();
+    private paintCooldowns: Map<string, number> = new Map(); // Cooldown for paint strokes per boundary
 
     constructor() {}
 
@@ -189,6 +190,12 @@ export class GeologicalAutomationSystem {
             const collisions = boundaries.filter(b => b.type === 'convergent' || b.type === 'divergent');
             
             if (collisions.length === 0) return state;
+
+            // Check mode: paint or features
+            const mode = state.world.globalOptions.orogenyMode || 'features';
+            if (mode === 'paint') {
+                return this.processOrogeniesPaint(state, collisions);
+            }
 
             let modified = false;
             let plates = [...state.world.plates];
@@ -459,6 +466,134 @@ export class GeologicalAutomationSystem {
              ...plate,
              features: [...plate.features, newF]
          };
+    }
+
+    /**
+     * Paint mode: Draw strokes along boundary outlines
+     * Color = boundary type, Density = based on velocity (faster = more strokes)
+     */
+    private processOrogeniesPaint(state: AppState, boundaries: typeof state.world.boundaries): AppState {
+        if (!boundaries || boundaries.length === 0) return state;
+
+        const currentTime = state.world.currentTime;
+        let modified = false;
+        let plates = [...state.world.plates];
+
+        // Get colors from settings
+        const convergentColor = state.world.globalOptions.orogenyPaintConvergent || '#8B4513'; // Brown
+        const divergentColor = state.world.globalOptions.orogenyPaintDivergent || '#DC143C';   // Crimson
+
+        for (const boundary of boundaries) {
+            if (!boundary.points || boundary.points.length === 0) continue;
+
+            // Velocity-based paint rate:
+            // Higher velocity = more frequent painting (denser strokes)
+            // Velocity in rad/Ma: 0.001 ~= 0.6 cm/yr
+            const velocity = boundary.velocity || 0.001;
+            
+            // Paint cooldown based on velocity:
+            // Fast (>0.005): paint every 0.02 Ma
+            // Medium (0.002-0.005): paint every 0.05 Ma
+            // Slow (<0.002): paint every 0.1 Ma
+            let paintInterval = 0.1;
+            if (velocity > 0.005) paintInterval = 0.02;
+            else if (velocity > 0.002) paintInterval = 0.05;
+
+            // Check cooldown
+            const cooldownKey = boundary.id;
+            const lastPaint = this.paintCooldowns.get(cooldownKey) || -9999;
+            if (currentTime - lastPaint < paintInterval) continue;
+
+            // Stroke width based on velocity (1-4 pixels)
+            const strokeWidth = Math.min(4, Math.max(1, Math.floor(velocity * 500)));
+            
+            // Color based on boundary type
+            const color = boundary.type === 'convergent' ? convergentColor : divergentColor;
+
+            // Get the two plates involved
+            const [id1, id2] = boundary.plateIds;
+            const p1Index = plates.findIndex(p => p.id === id1);
+            const p2Index = plates.findIndex(p => p.id === id2);
+            if (p1Index === -1 && p2Index === -1) continue;
+
+            // Convert boundary points to plate-local coordinates and add as strokes
+            // Paint on BOTH plates so the boundary line shows on each
+            for (const ring of boundary.points) {
+                if (ring.length < 2) continue;
+
+                // Create paint stroke for plate 1
+                if (p1Index !== -1) {
+                    const p1 = plates[p1Index];
+                    const localPoints1 = ring.map(pt => this.worldToPlateLocal(pt, p1.center));
+                    
+                    const stroke1: PaintStroke = {
+                        id: generateId(),
+                        color: color,
+                        width: strokeWidth,
+                        opacity: 0.7,
+                        points: localPoints1,
+                        timestamp: Date.now(),
+                        source: 'orogeny',
+                        birthTime: currentTime  // Track when this stroke was created
+                    };
+
+                    if (!plates[p1Index].paintStrokes) plates[p1Index] = { ...plates[p1Index], paintStrokes: [] };
+                    plates[p1Index] = {
+                        ...plates[p1Index],
+                        paintStrokes: [...(plates[p1Index].paintStrokes || []), stroke1]
+                    };
+                    modified = true;
+                }
+
+                // Create paint stroke for plate 2
+                if (p2Index !== -1) {
+                    const p2 = plates[p2Index];
+                    const localPoints2 = ring.map(pt => this.worldToPlateLocal(pt, p2.center));
+                    
+                    const stroke2: PaintStroke = {
+                        id: generateId(),
+                        color: color,
+                        width: strokeWidth,
+                        opacity: 0.7,
+                        points: localPoints2,
+                        timestamp: Date.now(),
+                        source: 'orogeny',
+                        birthTime: currentTime  // Track when this stroke was created
+                    };
+
+                    if (!plates[p2Index].paintStrokes) plates[p2Index] = { ...plates[p2Index], paintStrokes: [] };
+                    plates[p2Index] = {
+                        ...plates[p2Index],
+                        paintStrokes: [...(plates[p2Index].paintStrokes || []), stroke2]
+                    };
+                    modified = true;
+                }
+            }
+
+            // Update cooldown
+            this.paintCooldowns.set(cooldownKey, currentTime);
+        }
+
+        if (!modified) return state;
+
+        return {
+            ...state,
+            world: {
+                ...state.world,
+                plates
+            }
+        };
+    }
+
+    /**
+     * Convert world coordinates to plate-local coordinates
+     * (Relative to plate center for transform invariance)
+     */
+    private worldToPlateLocal(worldCoord: Coordinate, plateCenter: Coordinate): Coordinate {
+        return [
+            worldCoord[0] - plateCenter[0],
+            worldCoord[1] - plateCenter[1]
+        ];
     }
 }
 
