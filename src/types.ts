@@ -207,12 +207,9 @@ export interface WorldState {
     // Granular Automation Options
     enableHotspots?: boolean;
     hotspotSpawnRate?: number; // Ma per feature (default 1.0)
-    enableOrogeny?: boolean;
-    orogenyMode?: 'features' | 'paint';  // Spawn features or paint boundaries
-    orogenyPaintConvergent?: string;     // Color for convergent boundaries (default brown)
-    orogenyPaintDivergent?: string;      // Color for divergent boundaries (default red)
+    enableOrogeny?: boolean; // DEPRECATED: Use elevation system instead
     
-    // Orogeny Transparency Settings
+    // Orogeny Transparency Settings (DEPRECATED)
     orogenyVelocityTransparency?: boolean; // Enable velocity-based transparency
     orogenySpeedThresholdHigh?: number;    // Velocity (rad/Ma) for max opacity (Default ~15cm/yr)
     orogenySpeedThresholdLow?: number;     // Velocity (rad/Ma) for min opacity
@@ -328,8 +325,7 @@ export function createDefaultWorldState(): WorldState {
       enableDynamicFeatures: false,
       enableHotspots: false,
       hotspotSpawnRate: 1.0,
-      enableOrogeny: false,
-      orogenyMode: 'paint', // Default to paint mode
+      enableOrogeny: false, // DEPRECATED: Use elevation system
       
       // Default Orogeny Transparency
       orogenyVelocityTransparency: false,

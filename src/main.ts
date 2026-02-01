@@ -293,11 +293,10 @@ class TectoLiteApp {
                              </div>
                         </div>
                     </div>
-                    </div>
                 </div>
 
                 <div class="view-dropdown-container">
-                    <button id="btn-automation-menu" class="btn btn-secondary" title="Geological Automation" style="${(this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableOrogeny || this.state.world.globalOptions.enableElevationSimulation) ? 'background-color: var(--color-success); color: white;' : ''}">
+                    <button id="btn-automation-menu" class="btn btn-secondary" title="Geological Automation" style="${(this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableElevationSimulation) ? 'background-color: var(--color-success); color: white;' : ''}">
                         <span class="icon">⚙️</span> Automation
                     </button>
                     <div id="automation-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
@@ -308,89 +307,13 @@ class TectoLiteApp {
                                  <input type="checkbox" id="check-enable-hotspots" ${this.state.world.globalOptions.enableHotspots ? 'checked' : ''}> Hotspot Tracking <span class="info-icon" data-tooltip="Stationary plumes create volcanic trails on moving plates">(i)</span>
                             </label>
                             
-                            <label class="view-dropdown-item">
-                                 <input type="checkbox" id="check-enable-orogeny" ${this.state.world.globalOptions.enableOrogeny ? 'checked' : ''}> Orogeny Detection <span class="info-icon" data-tooltip="Spawns mountains and trenches at plate collisions based on crust type">(i)</span>
+                            <label class="view-dropdown-item" style="opacity: 0.5;" title="DEPRECATED: Use Elevation System instead">
+                                 <input type="checkbox" id="check-enable-orogeny" ${this.state.world.globalOptions.enableOrogeny ? 'checked' : ''} disabled> Orogeny Detection (DEPRECATED) <span class="info-icon" data-tooltip="This legacy feature is replaced by the Elevation System. Use 'Enable Elevation Simulation' instead.">(i)</span>
                             </label>
-
-                            <!-- Orogeny Mode Sub-options -->
-                            <div id="orogeny-options" style="margin-left: 20px; display: ${this.state.world.globalOptions.enableOrogeny ? 'block' : 'none'};">
-                                <div style="display: flex; gap: 4px; margin: 4px 0;">
-                                    <button id="orogeny-mode-features" class="btn" style="flex:1; font-size: 10px; padding: 2px 6px; ${this.state.world.globalOptions.orogenyMode !== 'paint' ? 'background: #3b82f6; color: white;' : ''}">Features</button>
-                                    <button id="orogeny-mode-paint" class="btn" style="flex:1; font-size: 10px; padding: 2px 6px; ${this.state.world.globalOptions.orogenyMode === 'paint' ? 'background: #3b82f6; color: white;' : ''}">Paint</button>
-                                </div>
-                                <div id="orogeny-paint-colors" style="display: ${this.state.world.globalOptions.orogenyMode === 'paint' ? 'flex' : 'none'}; gap: 8px; margin-top: 4px;">
-                                    <div style="flex: 1;">
-                                        <label style="font-size: 9px; color: var(--text-secondary);">Convergent</label>
-                                        <input type="color" id="orogeny-color-convergent" value="${this.state.world.globalOptions.orogenyPaintConvergent || '#8B4513'}" style="width: 100%; height: 20px; cursor: pointer;">
-                                    </div>
-                                    <div style="flex: 1;">
-                                        <label style="font-size: 9px; color: var(--text-secondary);">Divergent</label>
-                                        <input type="color" id="orogeny-color-divergent" value="${this.state.world.globalOptions.orogenyPaintDivergent || '#DC143C'}" style="width: 100%; height: 20px; cursor: pointer;">
-                                    </div>
-                                </div>
-                                <div id="orogeny-ageing-options" style="display: ${this.state.world.globalOptions.orogenyMode === 'paint' ? 'block' : 'none'}; margin-top: 8px; font-size: 11px;">
-                                     <!-- Ageing Block -->
-                                     <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">Ageing Fade Effect</div>
-                                     <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;">
-                                         <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                                             <input type="checkbox" id="orogeny-ageing-enabled" ${this.state.world.globalOptions.paintAgeingEnabled !== false ? 'checked' : ''}> Enable Fade
-                                         </label>
-                                         
-                                         <div id="orogeny-ageing-controls" style="display: flex; flex-direction: column; gap: 4px; margin-left: 18px; opacity: ${this.state.world.globalOptions.paintAgeingEnabled !== false ? '1' : '0.5'}; pointer-events: ${this.state.world.globalOptions.paintAgeingEnabled !== false ? 'auto' : 'none'};">
-                                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                                <span>Duration (Ma):</span>
-                                                <input type="number" id="orogeny-ageing-duration" class="property-input" value="${this.state.world.globalOptions.paintAgeingDuration || 100}" min="1" step="10" style="flex: 1; margin-left: 8px;">
-                                             </div>
-                                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                                <span>Max Trans (%):</span>
-                                                <input type="number" id="orogeny-ageing-max-trans" class="property-input" value="${Math.round((1.0 - (this.state.world.globalOptions.paintMaxWaitOpacity ?? 0.05)) * 100)}" min="0" max="100" step="5" style="flex: 1; margin-left: 8px;">
-                                             </div>
-                                             
-                                             <!-- Auto Delete Options -->
-                                             <div style="margin-top: 4px; padding-top: 4px; border-top: 1px dotted var(--border-default);">
-                                                 <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                                                     <input type="checkbox" id="orogeny-auto-delete" ${this.state.world.globalOptions.paintAutoDelete ? 'checked' : ''}> Auto Delete
-                                                 </label>
-                                                 <div id="orogeny-delete-delay-container" style="display: ${this.state.world.globalOptions.paintAutoDelete ? 'flex' : 'none'}; justify-content: space-between; align-items: center; margin-top: 2px; margin-left: 18px;">
-                                                     <span>Delay (Ma):</span>
-                                                     <input type="number" id="orogeny-delete-delay" class="property-input" value="${this.state.world.globalOptions.paintDeleteDelay || 50}" min="0" step="10" style="flex: 1; margin-left: 8px;">
-                                                 </div>
-                                             </div>
-
-                                             <button id="orogeny-ageing-reset" class="btn btn-secondary" style="width: 100%; margin-top: 4px; font-size: 10px;">Revert Ageing</button>
-                                         </div>
-                                     </div>
-
-                                     <!-- Velocity Transparency Block -->
-                                     <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; padding-top: 4px; border-top: 1px solid var(--border-default);">Velocity Visualization</div>
-                                     <div style="display: flex; flex-direction: column; gap: 4px;">
-                                          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                                             <input type="checkbox" id="orogeny-velocity-enabled" ${this.state.world.globalOptions.orogenyVelocityTransparency ? 'checked' : ''}> Opacity by Speed
-                                             <span class="info-icon" data-tooltip="Helper lines are darker when plate collision is faster (15cm/yr = 100%)">(i)</span>
-                                          </label>
-
-                                          <div id="orogeny-velocity-controls" style="display: flex; flex-direction: column; gap: 4px; margin-left: 18px; opacity: ${this.state.world.globalOptions.orogenyVelocityTransparency ? '1' : '0.5'}; pointer-events: ${this.state.world.globalOptions.orogenyVelocityTransparency ? 'auto' : 'none'};">
-                                                <!-- High Speed (100% Opacity) -->
-                                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                                    <span title="Speed for Max Opacity">Fast (cm/yr):</span>
-                                                    <input type="number" id="orogeny-vel-high" class="property-input" value="${Math.round((this.state.world.globalOptions.orogenySpeedThresholdHigh || 0.025) * 600)}" min="1" step="1" style="flex: 1; margin-left: 8px;">
-                                                </div>
-                                                <!-- Low Speed (Low Opacity) -->
-                                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                                    <span title="Speed for Min Opacity">Slow (cm/yr):</span>
-                                                    <input type="number" id="orogeny-vel-low" class="property-input" value="${Math.round((this.state.world.globalOptions.orogenySpeedThresholdLow || 0.002) * 600)}" min="0.1" step="0.5" style="flex: 1; margin-left: 8px;">
-                                                </div>
-                                                <!-- Opacity Levels -->
-                                                <div style="display: flex; justify-content: space-between; align-items: center; margin-top:2px;">
-                                                    <span>Min Opacity:</span>
-                                                    <input type="number" id="orogeny-opacity-low" class="property-input" value="${this.state.world.globalOptions.orogenyOpacityLow || 0.2}" min="0.1" max="1.0" step="0.1" style="flex: 1; margin-left: 8px;">
-                                                </div>
-
-                                                <button id="orogeny-velocity-reset" class="btn btn-secondary" style="width: 100%; margin-top: 4px; font-size: 10px;">Revert Velocity</button>
-                                          </div>
-                                     </div>
-
-                                </div>
+                            <div style="margin-left: 20px; padding: 8px; background: rgba(255,165,0,0.1); border-left: 2px solid orange; font-size: 10px;">
+                                ⚠️ <strong>Legacy Feature</strong><br>
+                                Use <strong>Elevation Simulation</strong> above for physical terrain generation.
+                            </div>
 
                             <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dotted var(--border-default);">
                                 <label class="view-dropdown-item">
@@ -1403,7 +1326,7 @@ class TectoLiteApp {
         const updateAutomationBtn = () => {
              const btn = document.getElementById('btn-automation-menu');
              if (btn) {
-                 const anyActive = this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableOrogeny;
+                 const anyActive = this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableElevationSimulation;
                  if (anyActive) {
                      btn.style.backgroundColor = 'var(--color-success)';
                      btn.style.color = 'white';
@@ -1441,36 +1364,6 @@ class TectoLiteApp {
              if (optionsDiv) optionsDiv.style.display = (e.target as HTMLInputElement).checked ? 'block' : 'none';
              updateAutomationBtn();
              this.updateTimeDisplay();
-        });
-
-        // Orogeny mode toggle (Features vs Paint)
-        document.getElementById('orogeny-mode-features')?.addEventListener('click', () => {
-            this.state.world.globalOptions.orogenyMode = 'features';
-            const featBtn = document.getElementById('orogeny-mode-features');
-            const paintBtn = document.getElementById('orogeny-mode-paint');
-            const colorsDiv = document.getElementById('orogeny-paint-colors');
-            if (featBtn) { featBtn.style.background = '#3b82f6'; featBtn.style.color = 'white'; }
-            if (paintBtn) { paintBtn.style.background = ''; paintBtn.style.color = ''; }
-            if (colorsDiv) colorsDiv.style.display = 'none';
-        });
-
-        document.getElementById('orogeny-mode-paint')?.addEventListener('click', () => {
-            this.state.world.globalOptions.orogenyMode = 'paint';
-            const featBtn = document.getElementById('orogeny-mode-features');
-            const paintBtn = document.getElementById('orogeny-mode-paint');
-            const colorsDiv = document.getElementById('orogeny-paint-colors');
-            if (featBtn) { featBtn.style.background = ''; featBtn.style.color = ''; }
-            if (paintBtn) { paintBtn.style.background = '#3b82f6'; paintBtn.style.color = 'white'; }
-            if (colorsDiv) colorsDiv.style.display = 'flex';
-        });
-
-        // Orogeny paint colors
-        document.getElementById('orogeny-color-convergent')?.addEventListener('input', (e) => {
-            this.state.world.globalOptions.orogenyPaintConvergent = (e.target as HTMLInputElement).value;
-        });
-
-        document.getElementById('orogeny-color-divergent')?.addEventListener('input', (e) => {
-            this.state.world.globalOptions.orogenyPaintDivergent = (e.target as HTMLInputElement).value;
         });
 
         // Elevation System controls
@@ -1558,27 +1451,6 @@ class TectoLiteApp {
              const g = this.state.world.globalOptions;
              const enabled = g.paintAgeingEnabled !== false;
              const autoDelete = g.paintAutoDelete === true;
-             
-             // Sync Orogeny Menu UI
-             const cbOrogeny = document.getElementById('orogeny-ageing-enabled') as HTMLInputElement;
-             if (cbOrogeny) cbOrogeny.checked = enabled;
-             const divOrogeny = document.getElementById('orogeny-ageing-controls');
-             if (divOrogeny) {
-                 divOrogeny.style.opacity = enabled ? '1' : '0.5';
-                 divOrogeny.style.pointerEvents = enabled ? 'auto' : 'none';
-             }
-             const inODur = document.getElementById('orogeny-ageing-duration') as HTMLInputElement;
-             if (inODur) inODur.value = (g.paintAgeingDuration || 100).toString();
-             const inOTrans = document.getElementById('orogeny-ageing-max-trans') as HTMLInputElement;
-             if (inOTrans) inOTrans.value = Math.round((1.0 - (g.paintMaxWaitOpacity ?? 0.05)) * 100).toString();
-             
-             // Sync Orogeny Auto-Delete
-             const cbOrogenyDel = document.getElementById('orogeny-auto-delete') as HTMLInputElement;
-             if (cbOrogenyDel) cbOrogenyDel.checked = autoDelete;
-             const divOrogenyDel = document.getElementById('orogeny-delete-delay-container');
-             if (divOrogenyDel) divOrogenyDel.style.display = autoDelete ? 'flex' : 'none';
-             const inODelDelay = document.getElementById('orogeny-delete-delay') as HTMLInputElement;
-             if (inODelDelay) inODelDelay.value = (g.paintDeleteDelay || 50).toString();
 
              // Sync Paint Tool UI
              const cbPaint = document.getElementById('paint-ageing-enabled') as HTMLInputElement;
@@ -1603,108 +1475,6 @@ class TectoLiteApp {
 
              this.canvasManager?.render();
         };
-
-        const syncVelocityUI = () => {
-             const g = this.state.world.globalOptions;
-             const enabled = g.orogenyVelocityTransparency === true;
-             
-             const cbVel = document.getElementById('orogeny-velocity-enabled') as HTMLInputElement;
-             if (cbVel) cbVel.checked = enabled;
-             
-             const divVel = document.getElementById('orogeny-velocity-controls');
-             if (divVel) {
-                 divVel.style.opacity = enabled ? '1' : '0.5';
-                 divVel.style.pointerEvents = enabled ? 'auto' : 'none';
-             }
-
-             const inHigh = document.getElementById('orogeny-vel-high') as HTMLInputElement;
-             // store as cm/yr ~ rad/Ma * 600
-             if(inHigh) inHigh.value = Math.round((g.orogenySpeedThresholdHigh || 0.025) * 600).toString();
-
-             const inLow = document.getElementById('orogeny-vel-low') as HTMLInputElement;
-             if(inLow) inLow.value = Math.round((g.orogenySpeedThresholdLow || 0.002) * 600).toString();
-
-             const inOpLow = document.getElementById('orogeny-opacity-low') as HTMLInputElement;
-             if(inOpLow) inOpLow.value = (g.orogenyOpacityLow !== undefined ? g.orogenyOpacityLow : 0.2).toString();
-        };
-
-        // Orogeny Menu Listeners
-        document.getElementById('orogeny-ageing-enabled')?.addEventListener('change', (e) => {
-             if (!this.state.world.globalOptions) return;
-             this.state.world.globalOptions.paintAgeingEnabled = (e.target as HTMLInputElement).checked;
-             syncAgeingUI();
-        });
-        document.getElementById('orogeny-ageing-duration')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val > 0) {
-                 this.state.world.globalOptions.paintAgeingDuration = val;
-                 syncAgeingUI();
-             }
-        });
-        document.getElementById('orogeny-ageing-max-trans')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val >= 0 && val <= 100) {
-                 this.state.world.globalOptions.paintMaxWaitOpacity = 1.0 - (val / 100.0);
-                 syncAgeingUI();
-             }
-        });
-        document.getElementById('orogeny-auto-delete')?.addEventListener('change', (e) => {
-             const enabled = (e.target as HTMLInputElement).checked;
-             if (!this.state.world.globalOptions) return;
-             this.state.world.globalOptions.paintAutoDelete = enabled;
-             syncAgeingUI();
-        });
-        document.getElementById('orogeny-delete-delay')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val >= 0) {
-                 this.state.world.globalOptions.paintDeleteDelay = val;
-                 syncAgeingUI();
-             }
-        });
-
-        document.getElementById('orogeny-ageing-reset')?.addEventListener('click', () => {
-             this.state.world.globalOptions.paintAgeingDuration = 100;
-             this.state.world.globalOptions.paintMaxWaitOpacity = 0.05; // 95% trans
-             this.state.world.globalOptions.paintAutoDelete = false;
-             this.state.world.globalOptions.paintDeleteDelay = 50;
-             syncAgeingUI();
-        });
-
-        // --- Velocity Transparency Listeners ---
-        document.getElementById('orogeny-velocity-enabled')?.addEventListener('change', (e) => {
-             const enabled = (e.target as HTMLInputElement).checked;
-             if (!this.state.world.globalOptions) return;
-             this.state.world.globalOptions.orogenyVelocityTransparency = enabled;
-             syncVelocityUI();
-        });
-        document.getElementById('orogeny-vel-high')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val > 0) {
-                 // Convert cm/yr back to rad/Ma (val / 600)
-                 this.state.world.globalOptions.orogenySpeedThresholdHigh = val / 600;
-             }
-        });
-        document.getElementById('orogeny-vel-low')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val >= 0) {
-                 this.state.world.globalOptions.orogenySpeedThresholdLow = val / 600;
-             }
-        });
-        document.getElementById('orogeny-opacity-low')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val >= 0 && val <= 1.0) {
-                 this.state.world.globalOptions.orogenyOpacityLow = val;
-             }
-        });
-        document.getElementById('orogeny-velocity-reset')?.addEventListener('click', () => {
-             this.state.world.globalOptions.orogenySpeedThresholdHigh = 0.025; // 15 cm/yr
-             this.state.world.globalOptions.orogenySpeedThresholdLow = 0.002;  // 1.2 cm/yr
-             this.state.world.globalOptions.orogenyOpacityLow = 0.2;
-             syncVelocityUI();
-        });
-
-        // Initialize Velocity UI state
-        syncVelocityUI();
 
         // Paint Tool Listeners (Synchronized)
         document.getElementById('paint-ageing-enabled')?.addEventListener('change', (e) => {
@@ -2221,6 +1991,20 @@ class TectoLiteApp {
                 case 'delete':
                 case 'backspace':
                     this.deleteSelected();
+                    break;
+                case '+':
+                case '=':
+                    // Raise selected vertex elevation
+                    if (this.state.activeTool === 'mesh_edit' && this.state.world.selectedVertexId) {
+                        this.adjustSelectedVertexElevation(500);
+                    }
+                    break;
+                case '-':
+                case '_':
+                    // Lower selected vertex elevation
+                    if (this.state.activeTool === 'mesh_edit' && this.state.world.selectedVertexId) {
+                        this.adjustSelectedVertexElevation(-500);
+                    }
                     break;
             }
         });
@@ -2911,7 +2695,7 @@ class TectoLiteApp {
                 hintText = "Click on a plate to place a flowline seed.";
                 break;
             case 'mesh_edit':
-                hintText = "Click on a vertex to select and inspect it. Edit elevation in the properties panel.";
+                hintText = "Click on a vertex to select and inspect it. Use +/- keys to adjust elevation by 500m. Edit details in properties panel.";
                 break;
         }
 
@@ -3668,6 +3452,100 @@ class TectoLiteApp {
         this.updateExplorer();
         this.canvasManager?.render();
     }
+    
+    /**
+     * Smooth vertex elevation by averaging with neighbors
+     */
+    private smoothVertexElevation(plate: any, vertex: any): void {
+        if (!plate.crustMesh) return;
+        
+        // Build neighbor graph using Delaunay triangulation
+        const vertices = plate.crustMesh;
+        const points: [number, number][] = vertices.map((v: any) => [v.pos[0], v.pos[1]]);
+        
+        try {
+            // Import Delaunay at runtime
+            import('d3-delaunay').then(({ Delaunay }) => {
+                const delaunay = Delaunay.from(points);
+                
+                // Find neighbors of the selected vertex
+                const vertexIdx = vertices.findIndex((v: any) => v.id === vertex.id);
+                if (vertexIdx === -1) return;
+                
+                const neighbors = new Set<number>();
+                
+                // Extract neighbors from triangulation
+                for (let i = 0; i < delaunay.triangles.length; i += 3) {
+                    const idx0 = delaunay.triangles[i];
+                    const idx1 = delaunay.triangles[i + 1];
+                    const idx2 = delaunay.triangles[i + 2];
+                    
+                    if (idx0 === vertexIdx) {
+                        neighbors.add(idx1);
+                        neighbors.add(idx2);
+                    } else if (idx1 === vertexIdx) {
+                        neighbors.add(idx0);
+                        neighbors.add(idx2);
+                    } else if (idx2 === vertexIdx) {
+                        neighbors.add(idx0);
+                        neighbors.add(idx1);
+                    }
+                }
+                
+                if (neighbors.size === 0) {
+                    console.log('No neighbors found for vertex');
+                    return;
+                }
+                
+                // Calculate average elevation of neighbors
+                let sum = 0;
+                neighbors.forEach(idx => {
+                    sum += vertices[idx].elevation;
+                });
+                const avgElevation = sum / neighbors.size;
+                
+                // Blend 50% with neighbors
+                const oldElevation = vertex.elevation;
+                vertex.elevation = (vertex.elevation + avgElevation) / 2;
+                
+                // Save to history
+                this.historyManager.push(this.state);
+                
+                // Update UI
+                this.updatePropertiesPanel();
+                this.canvasManager?.render();
+                
+                console.log(`Smoothed vertex: ${Math.round(oldElevation)}m → ${Math.round(vertex.elevation)}m (${neighbors.size} neighbors, avg: ${Math.round(avgElevation)}m)`);
+            });
+        } catch (error) {
+            console.error('Error smoothing elevation:', error);
+        }
+    }
+    
+    /**
+     * Adjust selected vertex elevation by delta (for keyboard shortcuts)
+     */
+    private adjustSelectedVertexElevation(delta: number): void {
+        if (!this.state.world.selectedVertexPlateId || !this.state.world.selectedVertexId) return;
+        
+        const plate = this.state.world.plates.find(p => p.id === this.state.world.selectedVertexPlateId);
+        if (!plate || !plate.crustMesh) return;
+        
+        const vertex = plate.crustMesh.find(v => v.id === this.state.world.selectedVertexId);
+        if (!vertex) return;
+        
+        const oldElevation = vertex.elevation;
+        vertex.elevation += delta;
+        
+        // Save to history
+        this.historyManager.push(this.state);
+        
+        // Update UI
+        this.updatePropertiesPanel();
+        this.canvasManager?.render();
+        
+        console.log(`Vertex ${vertex.id.substring(0, 8)}: Elevation ${Math.round(oldElevation)}m → ${Math.round(vertex.elevation)}m (${delta > 0 ? '+' : ''}${delta}m)`);
+    }
 
     private updatePropertiesPanel(): void {
         const content = document.getElementById('properties-content');
@@ -3938,9 +3816,27 @@ class TectoLiteApp {
                             <span class="property-value">${plate.name}</span>
                         </div>
 
+                        <div class="property-group" style="background: var(--bg-elevated); padding: 8px; border-radius: 4px; margin-bottom: 8px;">
+                            <div style="font-size: 10px; color: var(--text-secondary); margin-bottom: 4px; font-weight: 600;">PLATE MESH INFO</div>
+                            <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                                <span>Total Vertices:</span>
+                                <span style="font-weight: bold; color: var(--color-primary);">${plate.crustMesh.length}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                                <span>Simulated To:</span>
+                                <span style="font-weight: bold; color: var(--accent-success);">${this.getDisplayTimeValue(plate.elevationSimulatedTime || plate.birthTime)} Ma</span>
+                            </div>
+                        </div>
+
                         <div class="property-group">
                             <label class="property-label">Elevation (m)</label>
                             <input type="number" id="prop-vertex-elevation" class="property-input" value="${Math.round(vertex.elevation)}" step="100">
+                        </div>
+                        
+                        <div class="property-group" style="margin-top: 8px;">
+                            <button id="btn-smooth-elevation" class="btn btn-secondary" style="width: 100%; font-size: 11px;">
+                                Smooth with Neighbors
+                            </button>
                         </div>
 
                         <div class="property-group">
@@ -3957,9 +3853,22 @@ class TectoLiteApp {
                     document.getElementById('prop-vertex-elevation')?.addEventListener('change', (e) => {
                         const val = parseFloat((e.target as HTMLInputElement).value);
                         if (!isNaN(val)) {
+                            const oldElevation = vertex.elevation;
                             vertex.elevation = val;
+                            
+                            // Save to history for undo/redo
+                            this.historyManager.push(this.state);
+                            
                             this.canvasManager?.render();
+                            
+                            // Log the change
+                            console.log(`Vertex ${vertex.id.substring(0, 8)}: Elevation ${Math.round(oldElevation)}m → ${Math.round(val)}m`);
                         }
+                    });
+
+                    // Bind smooth elevation button
+                    document.getElementById('btn-smooth-elevation')?.addEventListener('click', () => {
+                        this.smoothVertexElevation(plate, vertex);
                     });
 
                     // Bind deselect button

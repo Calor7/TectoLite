@@ -1444,6 +1444,11 @@ export class CanvasManager {
         if (state.activeTool === 'paint' && this.paintMode === 'poly_fill' && this.polyFillPoints.length > 0) {
             this.drawPolyFillGizmo();
         }
+        
+        // Draw mesh statistics overlay when mesh_edit tool is active
+        if (state.activeTool === 'mesh_edit' && state.world.globalOptions.elevationViewMode && state.world.globalOptions.elevationViewMode !== 'off') {
+            this.drawMeshInfoOverlay(state);
+        }
     }
 
     private drawLinks(state: AppState, path: any): void {
@@ -2702,6 +2707,61 @@ export class CanvasManager {
         const label = `${Math.round(vertex.elevation)}m`;
         this.ctx.strokeText(label, screenPos[0] + 12, screenPos[1] - 8);
         this.ctx.fillText(label, screenPos[0] + 12, screenPos[1] - 8);
+        
+        this.ctx.restore();
+    }
+    
+    /**
+     * Draw mesh statistics overlay when mesh_edit tool is active
+     */
+    private drawMeshInfoOverlay(state: AppState): void {
+        let totalVertices = 0;
+        let visibleVertices = 0;
+        
+        for (const plate of state.world.plates) {
+            if (!plate.crustMesh) continue;
+            
+            totalVertices += plate.crustMesh.length;
+            
+            // Count visible vertices (lifecycle check)
+            if (plate.visible && 
+                state.world.currentTime >= plate.birthTime && 
+                (plate.deathTime === null || state.world.currentTime < plate.deathTime)) {
+                visibleVertices += plate.crustMesh.length;
+            }
+        }
+        
+        // Draw overlay in bottom-left corner
+        this.ctx.save();
+        
+        const padding = 12;
+        const lineHeight = 16;
+        const boxX = padding;
+        const boxY = this.canvas.height - padding - lineHeight * 3 - 8;
+        
+        // Background
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        this.ctx.fillRect(boxX, boxY, 180, lineHeight * 3 + 8);
+        
+        // Border
+        this.ctx.strokeStyle = '#00ffff';
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(boxX, boxY, 180, lineHeight * 3 + 8);
+        
+        // Text
+        this.ctx.font = '12px monospace';
+        this.ctx.fillStyle = '#00ffff';
+        
+        let yPos = boxY + lineHeight;
+        this.ctx.fillText('🔺 MESH EDITOR', boxX + 8, yPos);
+        
+        yPos += lineHeight;
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillText(`Total Vertices: ${totalVertices}`, boxX + 8, yPos);
+        
+        yPos += lineHeight;
+        this.ctx.fillStyle = visibleVertices > 0 ? '#00ff88' : '#888888';
+        this.ctx.fillText(`Visible: ${visibleVertices}`, boxX + 8, yPos);
         
         this.ctx.restore();
     }
