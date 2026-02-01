@@ -97,7 +97,7 @@ function findSegmentIntersection(
     };
 
     // Try both intersection points (+/- direction)
-    for (const sign of [1, -1]) {
+    for (let sign = 1; sign >= -1; sign -= 2) {
         const p = { x: dir.x * sign, y: dir.y * sign, z: dir.z * sign };
         if (isBetween(p, va1, va2) && isBetween(p, vb1, vb2)) {
             return vectorToLatLon(p);

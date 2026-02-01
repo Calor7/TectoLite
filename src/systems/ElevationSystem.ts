@@ -215,6 +215,7 @@ export class ElevationSystem {
         // Use custom starting height if set, otherwise calculate from isostasy
         const useCustomHeight = plate.meshStartingHeight !== undefined;
         const customHeight = plate.meshStartingHeight ?? 0;
+        const baseElevation = useCustomHeight ? customHeight : this.calculateIsostasyElevation(baseThickness, isOceanic);
         
         let row = 0;
         for (let lat = bMinLat; lat <= bMaxLat; lat += rowOffset) {
@@ -230,7 +231,7 @@ export class ElevationSystem {
                 const pos: Coordinate = [lon, lat];
                 
                 if (geoContains(feature, pos)) {
-                    const elevation = useCustomHeight ? customHeight : this.calculateIsostasyElevation(baseThickness, isOceanic);
+                    const elevation = baseElevation;
                     vertices.push({
                         id: generateId(),
                         pos: pos,
@@ -258,7 +259,7 @@ export class ElevationSystem {
                     if (d < minDistInfo) continue;
                 }
                 
-                const elevation = useCustomHeight ? customHeight : this.calculateIsostasyElevation(baseThickness, isOceanic);
+                const elevation = baseElevation;
                 vertices.push({
                     id: generateId(),
                     pos: p,

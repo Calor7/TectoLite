@@ -52,11 +52,12 @@ export class HeightmapGenerator {
         // 2. Render Plates (Base Elevation)
         const currentTime = state.world.currentTime;
         const activePlates = state.world.plates.filter(p => !p.deathTime && p.birthTime <= currentTime);
+        const baseVal = 120;
+        const color = `rgb(${baseVal}, ${baseVal}, ${baseVal})`;
+        const radiusScale = (width / 360) * 1.5;
 
         for (const plate of activePlates) {
             // Default to continental elevation behavior
-            const baseVal = 120;
-            const color = `rgb(${baseVal}, ${baseVal}, ${baseVal})`;
 
             ctx.beginPath();
             plate.polygons.forEach(poly => {
@@ -95,7 +96,7 @@ export class HeightmapGenerator {
                 // Size: feature.scale * 10 pixels?
                 // World width 4096. 1 degree ~ 11 pixels.
                 // Feature scale 1 ~ 100km ~ 1 degree.
-                const radius = (feature.scale || 1) * (options.width / 360) * 1.5;
+                const radius = (feature.scale || 1) * radiusScale;
 
                 // Height Impact
                 // Mountain: Add +100

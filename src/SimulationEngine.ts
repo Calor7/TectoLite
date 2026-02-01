@@ -106,15 +106,11 @@ export class SimulationEngine {
             // Calculate Boundaries if enabled
             // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization is enabled.
             // If none are on, clear boundaries to prevent stale artifacts.
-            let boundaries: any[] = [];
-            
-            if (state.world.globalOptions.enableBoundaryVisualization || 
+            const boundaries = (state.world.globalOptions.enableBoundaryVisualization || 
                 state.world.globalOptions.enableOrogeny || 
-                state.world.globalOptions.enableElevationSimulation) {
-                 boundaries = BoundarySystem.detectBoundaries(newPlates);
-            } else {
-                boundaries = [];
-            }   
+                state.world.globalOptions.enableElevationSimulation)
+                ? BoundarySystem.detectBoundaries(newPlates)
+                : [];
 
             const finalPlates = newPlates;
 
@@ -193,15 +189,11 @@ export class SimulationEngine {
             // Calculate Boundaries if enabled
             // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization is enabled.
             // If none are on, clear boundaries to prevent stale artifacts.
-            let boundaries: any[] = [];
-            
-            if (state.world.globalOptions.enableBoundaryVisualization || 
+            const boundaries = (state.world.globalOptions.enableBoundaryVisualization || 
                 state.world.globalOptions.enableOrogeny || 
-                state.world.globalOptions.enableElevationSimulation) {
-                 boundaries = BoundarySystem.detectBoundaries(newPlates);
-            } else {
-                boundaries = [];
-            }
+                state.world.globalOptions.enableElevationSimulation)
+                ? BoundarySystem.detectBoundaries(newPlates)
+                : [];
             
             // Phase 3: Geological Automation (during tick)
             const tempState = {
