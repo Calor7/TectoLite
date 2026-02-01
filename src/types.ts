@@ -35,8 +35,10 @@ export interface CrustVertex {
     id: string;
     pos: Coordinate;          // Current position [lon, lat] in degrees
     originalPos?: Coordinate; // Source of truth: position at mesh creation
-    elevation: number;        // meters above sea level
-    sediment: number;         // sediment thickness (future use)
+    elevation: number;        // meters above sea level (calculated from thickness via isostasy)
+    crustalThickness: number; // km - continental ~35km, oceanic ~7km, orogens up to 70km
+    sediment: number;         // sediment thickness in meters (deposited material)
+    isOceanic: boolean;       // true = oceanic crust, false = continental
 }
 
 export type ElevationViewMode = 'off' | 'overlay' | 'absolute';

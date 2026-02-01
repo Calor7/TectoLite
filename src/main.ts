@@ -1372,6 +1372,21 @@ class TectoLiteApp {
             const optionsDiv = document.getElementById('elevation-options');
             if (optionsDiv) optionsDiv.style.display = (e.target as HTMLInputElement).checked ? 'block' : 'none';
             updateAutomationBtn();
+            
+            // TEMP/TODO: Performance optimization needed
+            // When enabling elevation, enforce speed limit and warn user
+            if ((e.target as HTMLInputElement).checked) {
+                const speedSelect = document.getElementById('speed-select') as HTMLSelectElement;
+                if (speedSelect) {
+                    const currentSpeed = parseFloat(speedSelect.value);
+                    if (currentSpeed > 5) {
+                        speedSelect.value = '5';
+                        this.simulation?.setTimeScale(5);
+                        console.warn('Elevation system enabled: speed capped at 5x. Manual scrubbing disabled.');
+                    }
+                }
+            }
+            
             this.updateTimeDisplay();
         });
 
@@ -2016,11 +2031,31 @@ class TectoLiteApp {
         });
 
         document.getElementById('speed-select')?.addEventListener('change', (e) => {
-            const speed = parseFloat((e.target as HTMLSelectElement).value);
+            let speed = parseFloat((e.target as HTMLSelectElement).value);
+            
+            // TEMP/TODO: Performance optimization needed
+            // When elevation simulation is active, cap speed at 5 to prevent
+            // mesh update lag and desync issues
+            if (this.state.world.globalOptions.enableElevationSimulation && speed > 5) {
+                speed = 5;
+                (e.target as HTMLSelectElement).value = '5';
+                console.warn('Elevation system active: speed capped at 5x');
+            }
+            
             this.simulation?.setTimeScale(speed);
         });
 
         document.getElementById('time-slider')?.addEventListener('input', (e) => {
+            // TEMP/TODO: Performance optimization needed
+            // When elevation simulation is active, disable manual scrubbing
+            // to prevent mesh recalculation lag. Only reset button allowed.
+            if (this.state.world.globalOptions.enableElevationSimulation) {
+                // Revert slider to current time
+                (e.target as HTMLInputElement).value = this.state.world.currentTime.toString();
+                console.warn('Elevation system active: manual scrubbing disabled. Use Reset button.');
+                return;
+            }
+            
             const time = parseFloat((e.target as HTMLInputElement).value);
             this.simulation?.setTime(time);
             this.updateTimeDisplay();
@@ -4538,6 +4573,15 @@ class TectoLiteApp {
             maxTime: maxTime,
             mode: this.state.world.timeMode
         });
+        
+        // TEMP/TODO: Performance optimization needed
+        // When elevation simulation is active, only allow reset (time=0)
+        // to prevent expensive mesh recalculation on arbitrary scrubs
+        if (this.state.world.globalOptions.enableElevationSimulation && internalTime !== 0) {
+            console.warn('Elevation system active: only reset (time=0) allowed. Use Reset button.');
+            modal.style.display = 'none';
+            return;
+        }
         
         // Set the time
         this.simulation?.setTime(internalTime);

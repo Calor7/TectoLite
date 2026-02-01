@@ -2,8 +2,10 @@ import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, Interacti
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { Delaunay } from 'd3-delaunay';
-import { isPointInPolygon } from '../SplitTool';
 import { toGeoJSON } from '../utils/geoHelpers';
+import { geoContains, geoInterpolate } from 'd3-geo';
+import { toRad } from '../utils/sphericalMath';
+
 import {
     drawMountainIcon,
     drawVolcanoIcon,
@@ -2554,15 +2556,25 @@ export class CanvasManager {
                 const v1 = vertices[idx1];
                 const v2 = vertices[idx2];
                 
-                // Calculate triangle centroid
-                const centroidLon = (v0.pos[0] + v1.pos[0] + v2.pos[0]) / 3;
-                const centroidLat = (v0.pos[1] + v1.pos[1] + v2.pos[1]) / 3;
-                const centroid: [number, number] = [centroidLon, centroidLat];
-                
-                // Check if centroid is inside polygon to filter out gap-spanning triangles
+                // Calculate centroid correctly (spherical midpoint estimation)
+                // Use d3-geo interpolate which handles spherical paths
+                const mid01 = geoInterpolate(v0.pos, v1.pos)(0.5);
+                const centroid = geoInterpolate(mid01, v2.pos)(0.333) as [number, number];
+
+                // Check if centroid is inside plate using robust d3-geo check
+                // We use toGeoJSON to handle winding correctly
+                // Note: We need to check all polygons of the plate
                 let centroidInside = false;
+                
+                // Optimization: reuse GeoJSON feature if possible, but plate can change
                 for (const poly of plate.polygons) {
-                    if (isPointInPolygon(centroid, poly.points)) {
+                    const feature = toGeoJSON(poly);
+                    // Standard winding fix for d3-geo compatibility
+                    if (geoArea(feature) > 2 * Math.PI) {
+                        feature.geometry.coordinates[0].reverse();
+                    }
+                    
+                    if (geoContains(feature, centroid)) {
                         centroidInside = true;
                         break;
                     }
@@ -2572,13 +2584,15 @@ export class CanvasManager {
                 // This preserves concave shapes (C-channel) while boundary vertices ensure edge coverage
                 if (!centroidInside) continue;
 
-                // Check maximum edge length as secondary safeguard
-                const maxEdgeLengthDeg = 5.0; // ~550km
-                const edge01 = Math.hypot(v1.pos[0] - v0.pos[0], v1.pos[1] - v0.pos[1]);
-                const edge12 = Math.hypot(v2.pos[0] - v1.pos[0], v2.pos[1] - v1.pos[1]);
-                const edge20 = Math.hypot(v0.pos[0] - v2.pos[0], v0.pos[1] - v2.pos[1]);
+                // Check maximum edge length using PROPER spherical distance
+                // distance() returns radians. Convert to degrees to match our intuition.
+                const maxEdgeLengthRad = toRad(5.0); // 5 degrees ~ 550km
                 
-                if (edge01 > maxEdgeLengthDeg || edge12 > maxEdgeLengthDeg || edge20 > maxEdgeLengthDeg) {
+                const d01 = distance(v0.pos, v1.pos);
+                const d12 = distance(v1.pos, v2.pos);
+                const d20 = distance(v2.pos, v0.pos);
+                
+                if (d01 > maxEdgeLengthRad || d12 > maxEdgeLengthRad || d20 > maxEdgeLengthRad) {
                     continue; // Skip triangles with very long edges (spanning gaps)
                 }
                 

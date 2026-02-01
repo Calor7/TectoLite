@@ -101,11 +101,13 @@ export class SimulationEngine {
             });
 
             // Calculate Boundaries if enabled
-            // ALWAYS update boundaries if dynamicFeatures (Orogeny) is enabled, or if visualization is on.
-            // If neither is on, clear boundaries to prevent stale artifacts.
+            // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization is enabled.
+            // If none are on, clear boundaries to prevent stale artifacts.
             let boundaries: any[] = [];
             
-            if (state.world.globalOptions.enableBoundaryVisualization || state.world.globalOptions.enableOrogeny) {
+            if (state.world.globalOptions.enableBoundaryVisualization || 
+                state.world.globalOptions.enableOrogeny || 
+                state.world.globalOptions.enableElevationSimulation) {
                  boundaries = BoundarySystem.detectBoundaries(newPlates);
             } else {
                 boundaries = [];
@@ -189,11 +191,13 @@ export class SimulationEngine {
             });
 
             // Calculate Boundaries if enabled
-            // ALWAYS update boundaries if dynamicFeatures (Orogeny) is enabled, or if visualization is on.
-            // If neither is on, clear boundaries to prevent stale artifacts.
+            // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization is enabled.
+            // If none are on, clear boundaries to prevent stale artifacts.
             let boundaries: any[] = [];
             
-            if (state.world.globalOptions.enableBoundaryVisualization || state.world.globalOptions.enableOrogeny) {
+            if (state.world.globalOptions.enableBoundaryVisualization || 
+                state.world.globalOptions.enableOrogeny || 
+                state.world.globalOptions.enableElevationSimulation) {
                  boundaries = BoundarySystem.detectBoundaries(newPlates);
             } else {
                 boundaries = [];
