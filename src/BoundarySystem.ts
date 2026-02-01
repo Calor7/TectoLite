@@ -108,8 +108,13 @@ export class BoundarySystem {
                 // Area Check (Shoelace Formula approximation)
                 // Discard slivers with negligible area
                 let area = 0;
-                for (let i = 0; i < ring.length - 1; i++) {
-                    area += ring[i][0] * ring[i+1][1] - ring[i+1][0] * ring[i][1];
+                if (ring.length > 1) {
+                    let prev = ring[0];
+                    for (let i = 1; i < ring.length; i++) {
+                        const curr = ring[i];
+                        area += prev[0] * curr[1] - curr[0] * prev[1];
+                        prev = curr;
+                    }
                 }
                 area = Math.abs(area / 2);
                 

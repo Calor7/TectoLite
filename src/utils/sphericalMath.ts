@@ -13,6 +13,7 @@ export interface Vector3 {
 // Degree/Radian conversions
 const DEG2RAD = Math.PI / 180;
 const RAD2DEG = 180 / Math.PI;
+const clamp = (v: number, min: number, max: number) => (v < min ? min : v > max ? max : v);
 
 export function toRad(deg: number): number {
     return deg * DEG2RAD;
@@ -26,16 +27,17 @@ export function toDeg(rad: number): number {
 export function latLonToVector(p: Coordinate): Vector3 {
     const phi = toRad(p[1]);      // Lat
     const lambda = toRad(p[0]);   // Lon
+    const cosPhi = Math.cos(phi);
     return {
-        x: Math.cos(phi) * Math.cos(lambda),
-        y: Math.cos(phi) * Math.sin(lambda),
+        x: cosPhi * Math.cos(lambda),
+        y: cosPhi * Math.sin(lambda),
         z: Math.sin(phi)
     };
 }
 
 // Convert 3D unit vector to [lon, lat]
 export function vectorToLatLon(v: Vector3): Coordinate {
-    const phi = Math.asin(Math.max(-1, Math.min(1, v.z))); // Clamp for safety
+    const phi = Math.asin(clamp(v.z, -1, 1)); // Clamp for safety
     const lambda = Math.atan2(v.y, v.x);
     return [toDeg(lambda), toDeg(phi)];
 }
@@ -150,7 +152,7 @@ export function axisAngleFromQuat(q: Quaternion): { axis: Vector3, angle: number
     // angle = 2 * acos(w)
     // s = sqrt(1-w*w)
     // x,y,z / s
-    const angle = 2 * Math.acos(Math.min(1, Math.max(-1, q.w)));
+    const angle = 2 * Math.acos(clamp(q.w, -1, 1));
     const s = Math.sqrt(1 - q.w * q.w);
 
     if (s < 0.001) {
@@ -173,5 +175,5 @@ export function distance(a: Coordinate, b: Coordinate): number {
     const v2 = latLonToVector(b);
     // Standard spherical distance: acos(dot product)
     // Clamp to [-1, 1] to avoid NaN due to FP errors
-    return Math.acos(Math.min(1, Math.max(-1, dot(v1, v2))));
+    return Math.acos(clamp(dot(v1, v2), -1, 1));
 }

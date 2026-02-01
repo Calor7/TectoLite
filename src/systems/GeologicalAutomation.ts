@@ -43,13 +43,21 @@ export class GeologicalAutomationSystem {
                 if (inside) {
                     const rate = plume.spawnRate ?? state.world.globalOptions.hotspotSpawnRate ?? 1.0;
 
-                    const recentFeature = plate.features
-                        .filter(f => 
-                            f.type === 'hotspot' && 
+                    let recentFeature: Feature | undefined;
+                    let recentTime = -Infinity;
+                    for (const f of plate.features) {
+                        if (
+                            f.type === 'hotspot' &&
                             f.properties?.source === 'plume' &&
                             f.properties?.plumeId === plume.id
-                        )
-                        .sort((a,b) => (b.generatedAt || 0) - (a.generatedAt || 0))[0];
+                        ) {
+                            const t = f.generatedAt || 0;
+                            if (t > recentTime) {
+                                recentTime = t;
+                                recentFeature = f;
+                            }
+                        }
+                    }
 
                     const timeSinceLast = currentTime - (recentFeature?.generatedAt || 0);
 

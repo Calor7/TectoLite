@@ -30,15 +30,17 @@ export class SimulationEngine {
     private isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
         if (polygon.length < 3) return false;
 
+        const pLat = point[1];
+        const pLon = point[0];
         let windingNumber = 0;
 
+        let prev = polygon[polygon.length - 1];
         for (let i = 0; i < polygon.length; i++) {
-            const lat1 = polygon[i][1];
-            const lat2 = polygon[(i + 1) % polygon.length][1];
-            const lon1 = polygon[i][0];
-            const lon2 = polygon[(i + 1) % polygon.length][0];
-            const pLat = point[1];
-            const pLon = point[0];
+            const curr = polygon[i];
+            const lat1 = prev[1];
+            const lat2 = curr[1];
+            const lon1 = prev[0];
+            const lon2 = curr[0];
 
             if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
                 const t = (pLat - lat1) / (lat2 - lat1);
@@ -53,6 +55,8 @@ export class SimulationEngine {
                     windingNumber += (lat2 > lat1) ? 1 : -1;
                 }
             }
+
+            prev = curr;
         }
 
         return windingNumber !== 0;

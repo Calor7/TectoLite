@@ -14,8 +14,7 @@ export class HistoryManager {
         if (this.isProcessing) return;
 
         // Deep clone the state to prevent mutations
-        const snapshot = this.cloneState(state);
-        this.history.push(snapshot);
+        this.history.push(this.cloneState(state));
 
         // Clear future when new action is taken
         this.future = [];

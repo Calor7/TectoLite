@@ -14,8 +14,9 @@ export class HeightmapGenerator {
     public static async generate(state: AppState, options: HeightmapOptions): Promise<string> {
         // Create offscreen canvas
         const canvas = document.createElement('canvas');
-        canvas.width = options.width;
-        canvas.height = options.height;
+        const { width, height, projection: projectionType } = options;
+        canvas.width = width;
+        canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('Could not get 2d context');
 
@@ -25,20 +26,20 @@ export class HeightmapGenerator {
         
         switch (options.projection) {
             case 'equirectangular':
-                projection = geoEquirectangular().fitSize([options.width, options.height], projectionOptions);
+                projection = geoEquirectangular().fitSize([width, height], projectionOptions);
                 break;
             case 'mercator':
-                projection = geoMercator().fitSize([options.width, options.height], projectionOptions);
+                projection = geoMercator().fitSize([width, height], projectionOptions);
                 break;
             case 'mollweide':
-                projection = (geoProjection as any).geoMollweide().fitSize([options.width, options.height], projectionOptions);
+                projection = (geoProjection as any).geoMollweide().fitSize([width, height], projectionOptions);
                 break;
             case 'robinson':
-                projection = (geoProjection as any).geoRobinson().fitSize([options.width, options.height], projectionOptions);
+                projection = (geoProjection as any).geoRobinson().fitSize([width, height], projectionOptions);
                 break;
             case 'orthographic':
             default:
-                projection = geoOrthographic().fitSize([options.width, options.height], projectionOptions);
+                projection = geoOrthographic().fitSize([width, height], projectionOptions);
                 break;
         }
 
@@ -46,10 +47,11 @@ export class HeightmapGenerator {
 
         // 1. Fill Background (Ocean Deep)
         ctx.fillStyle = '#0a0a0a'; // Very dark gray/black (Deep Ocean)
-        ctx.fillRect(0, 0, options.width, options.height);
+        ctx.fillRect(0, 0, width, height);
 
         // 2. Render Plates (Base Elevation)
-        const activePlates = state.world.plates.filter(p => !p.deathTime && p.birthTime <= state.world.currentTime);
+        const currentTime = state.world.currentTime;
+        const activePlates = state.world.plates.filter(p => !p.deathTime && p.birthTime <= currentTime);
 
         for (const plate of activePlates) {
             // Default to continental elevation behavior
@@ -83,7 +85,7 @@ export class HeightmapGenerator {
         for (const plate of activePlates) {
             for (const feature of plate.features) {
                 // Skip inactive
-                if (feature.generatedAt && feature.generatedAt > state.world.currentTime) continue;
+                if (feature.generatedAt && feature.generatedAt > currentTime) continue;
 
                 const pt = projection(feature.position);
                 if (!pt) continue;

@@ -985,17 +985,22 @@ class TectoLiteApp {
 
         // Update Canvas Hint
         const hint = document.getElementById('canvas-hint');
-        if (hint) {
-            if (showHints && text) {
-                hint.textContent = text;
-                hint.style.display = 'block';
-            } else {
-                hint.style.display = 'none';
-            }
+        if (!hint) return;
+        if (showHints && text) {
+            hint.textContent = text;
+            hint.style.display = 'block';
+        } else {
+            hint.style.display = 'none';
         }
     }
 
     private setupEventListeners(): void {
+        const getIsRetro = () => !!document.querySelector('.app-container')?.classList.contains('oldschool-mode');
+        const getTooltipText = (el: Element): string | null => {
+            const childIcon = el.querySelector('.info-icon');
+            return childIcon?.getAttribute('data-tooltip') || el.getAttribute('data-tooltip');
+        };
+
         // Fullscreen Toggle
         document.getElementById('btn-fullscreen')?.addEventListener('click', () => {
             if (!document.fullscreenElement) {
@@ -1094,25 +1099,28 @@ class TectoLiteApp {
 
         // Global Tooltip Logic
         const tooltip = document.getElementById('global-tooltip');
+        const tooltipTargetSelector = '[data-tooltip], [title], .info-icon, .tool-btn, .feature-btn, button, input, select, label, h3, .view-dropdown-item';
 
         const updateTooltipPos = (e: MouseEvent) => {
             if (tooltip) {
-                const x = e.clientX + 15;
-                const y = e.clientY + 15;
+                const x = e.clientX;
+                const y = e.clientY;
+                const xOffset = x + 15;
+                const yOffset = y + 15;
 
                 // Prevent overflow
                 const rect = tooltip.getBoundingClientRect();
                 const winWidth = window.innerWidth;
                 const winHeight = window.innerHeight;
 
-                let finalX = x;
-                let finalY = y;
+                let finalX = xOffset;
+                let finalY = yOffset;
 
-                if (x + rect.width > winWidth) {
-                    finalX = e.clientX - rect.width - 10;
+                if (xOffset + rect.width > winWidth) {
+                    finalX = x - rect.width - 10;
                 }
-                if (y + rect.height > winHeight) {
-                    finalY = e.clientY - rect.height - 10;
+                if (yOffset + rect.height > winHeight) {
+                    finalY = y - rect.height - 10;
                 }
 
                 tooltip.style.left = `${finalX}px`;
@@ -1125,12 +1133,11 @@ class TectoLiteApp {
             const target = e.target as HTMLElement;
             // Find relevant interactive ancestor
             // We want to capture the specific element that triggered it, but also check its context
-            const element = target.closest('[data-tooltip], [title], .info-icon, .tool-btn, .feature-btn, button, input, select, label, h3, .view-dropdown-item');
+            const element = target.closest(tooltipTargetSelector);
 
             if (!element) return;
 
-            const appContainer = document.querySelector('.app-container');
-            const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
+            const isRetro = getIsRetro();
 
             // In modern mode, only allow standard tooltip behavior
             if (!isRetro && !element.classList.contains('info-icon') && !element.closest('.info-icon') && !element.hasAttribute('data-tooltip')) {
@@ -1200,7 +1207,7 @@ class TectoLiteApp {
             const related = e.relatedTarget as HTMLElement;
 
             // Find the element we are leaving
-            const element = target.closest('[data-tooltip], [title], .info-icon, .tool-btn, .feature-btn, button, input, select, label, h3, .view-dropdown-item');
+            const element = target.closest(tooltipTargetSelector);
 
             // Restore title if valid
             if (element && element.hasAttribute('data-original-title')) {
@@ -1218,8 +1225,7 @@ class TectoLiteApp {
                 return;
             }
 
-            const appContainer = document.querySelector('.app-container');
-            const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
+            const isRetro = getIsRetro();
 
             if (isRetro) {
                 // Restore active tool text
@@ -1233,8 +1239,7 @@ class TectoLiteApp {
         document.body.addEventListener('mouseover', handleTooltipHover);
         document.body.addEventListener('mouseout', handleTooltipOut);
         document.body.addEventListener('mousemove', (e) => {
-            const appContainer = document.querySelector('.app-container');
-            const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
+            const isRetro = getIsRetro();
 
             if (!isRetro && tooltip && tooltip.style.display === 'block') {
                 updateTooltipPos(e);
@@ -1281,23 +1286,12 @@ class TectoLiteApp {
 
                 // Update Active Tool Status text
                 // Check child icon FIRST (Priority)
-                let text: string | null = null;
-                const childIcon = btn.querySelector('.info-icon');
-
-                if (childIcon) {
-                    text = childIcon.getAttribute('data-tooltip');
-                }
-
-                // Fallback to button tooltip
-                if (!text) {
-                    text = btn.getAttribute('data-tooltip');
-                }
+                const text = getTooltipText(btn);
 
                 if (text) {
                     this.activeToolText = text;
                     // Always update logic, even if not in retro mode, so state is correct when switching
-                    const appContainer = document.querySelector('.app-container');
-                    if (appContainer && appContainer.classList.contains('oldschool-mode')) {
+                    if (getIsRetro()) {
                         this.updateRetroStatusBox(this.activeToolText);
                     }
                 }
@@ -1306,10 +1300,7 @@ class TectoLiteApp {
             // Initial Check for active tool
             if (btn.classList.contains('active')) {
                 // Initialize text based on default active button
-                let text: string | null = null;
-                const childIcon = btn.querySelector('.info-icon');
-                if (childIcon) text = childIcon.getAttribute('data-tooltip');
-                if (!text) text = btn.getAttribute('data-tooltip');
+                const text = getTooltipText(btn);
 
                 if (text) {
                     this.activeToolText = text;

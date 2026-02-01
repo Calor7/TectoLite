@@ -40,6 +40,8 @@ export function exportToPNG(
     // Setup viewport for export
     // Use the current viewport settings but scaled to the new resolution
     const ratio = width / state.viewport.width;
+    const currentTime = state.world.currentTime;
+    const { waterMode, plateColorMode, includeLandmasses, includeFeatures, includePaint } = options;
 
     const exportViewport = {
         ...state.viewport,
@@ -54,26 +56,26 @@ export function exportToPNG(
     const path = pm.getPathGenerator();
 
     // 1. Background (Water)
-    if (options.waterMode === 'color') {
+    if (waterMode === 'color') {
         ctx.fillStyle = '#1a3a4a'; // Deep Ocean
         ctx.fillRect(0, 0, width, height);
-    } else if (options.waterMode === 'white') {
+    } else if (waterMode === 'white') {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, width, height);
     }
     // If transparent, do nothing (canvas is transparent by default)
 
     // Globe Background (only for Orthographic if not transparent)
-    if (options.projection === 'orthographic' && options.waterMode !== 'transparent') {
+    if (options.projection === 'orthographic' && waterMode !== 'transparent') {
         ctx.beginPath();
         path({ type: 'Sphere' } as any);
-        ctx.fillStyle = options.waterMode === 'white' ? '#f0f0f0' : '#0f2634';
+        ctx.fillStyle = waterMode === 'white' ? '#f0f0f0' : '#0f2634';
         ctx.fill();
     }
 
     // 2. Graticule
     if (options.showGrid) {
-        ctx.strokeStyle = options.waterMode === 'white' ? 'rgba(0, 0, 0, 0.1)' : 'rgba(255, 255, 255, 0.05)';
+        ctx.strokeStyle = waterMode === 'white' ? 'rgba(0, 0, 0, 0.1)' : 'rgba(255, 255, 255, 0.05)';
         ctx.lineWidth = 1 * ratio;
         ctx.beginPath();
         path(geoGraticule()());
@@ -83,8 +85,8 @@ export function exportToPNG(
     // 3. Plates
     for (const plate of state.world.plates) {
         if (!plate.visible) continue;
-        if (state.world.currentTime < plate.birthTime) continue;
-        if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
+        if (currentTime < plate.birthTime) continue;
+        if (plate.deathTime !== null && currentTime >= plate.deathTime) continue;
 
         // Polygons
         for (const polygon of plate.polygons) {
@@ -93,7 +95,7 @@ export function exportToPNG(
             path(geojson);
 
             // Plate Color Logic
-            if (options.plateColorMode === 'land') {
+            if (plateColorMode === 'land') {
                 ctx.fillStyle = '#C2B280'; // Ecru/Sand Land Color
             } else {
                 ctx.fillStyle = plate.color;
@@ -101,29 +103,29 @@ export function exportToPNG(
             ctx.fill();
 
             // Border
-            ctx.strokeStyle = options.waterMode === 'white' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.3)';
+            ctx.strokeStyle = waterMode === 'white' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.3)';
             ctx.lineWidth = 1 * ratio;
             ctx.stroke();
         }
 
         // Landmasses
-        if (options.includeLandmasses && plate.landmasses) {
+        if (includeLandmasses && plate.landmasses) {
             for (const landmass of plate.landmasses) {
-                if (state.world.currentTime < landmass.birthTime) continue;
-                if (landmass.deathTime !== undefined && state.world.currentTime >= landmass.deathTime) continue;
+                if (currentTime < landmass.birthTime) continue;
+                if (landmass.deathTime !== undefined && currentTime >= landmass.deathTime) continue;
                 drawLandmass(ctx, pm, landmass, ratio);
             }
         }
 
         // Features
-        if (options.includeFeatures !== false) {
+        if (includeFeatures !== false) {
             for (const feature of plate.features) {
                 drawFeature(ctx, pm, feature, ratio);
             }
         }
 
         // Paint Strokes
-        if (options.includePaint && plate.paintStrokes) {
+        if (includePaint && plate.paintStrokes) {
             for (const stroke of plate.paintStrokes) {
                 if (stroke.points.length < 2) continue;
 

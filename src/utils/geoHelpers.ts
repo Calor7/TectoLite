@@ -7,11 +7,14 @@ import { Polygon, Coordinate } from '../types';
 function calculateSignedArea(coords: Coordinate[]): number {
     let area = 0;
     const n = coords.length;
-    for (let i = 0; i < n; i++) {
-        const j = (i + 1) % n;
+    if (n) {
         // Use lon as x, lat as y for 2D signed area approximation
-        area += coords[i][0] * coords[j][1];
-        area -= coords[j][0] * coords[i][1];
+        let prev = coords[n - 1];
+        for (let i = 0; i < n; i++) {
+            const curr = coords[i];
+            area += prev[0] * curr[1] - curr[0] * prev[1];
+            prev = curr;
+        }
     }
     return area / 2;
 }

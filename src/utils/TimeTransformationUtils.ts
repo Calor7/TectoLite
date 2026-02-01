@@ -24,7 +24,7 @@ interface TimeTransformationContext {
 export function toDisplayTime(internalTime: number, context: TimeTransformationContext): number {
     const { maxTime, mode } = context;
     // negative mode: 0 becomes -maxTime, maxTime becomes 0
-    return mode === 'positive' ? internalTime : internalTime - maxTime;
+    return internalTime + (mode === 'positive' ? 0 : -maxTime);
 }
 
 /**
@@ -36,7 +36,8 @@ export function toDisplayTime(internalTime: number, context: TimeTransformationC
 export function toInternalTime(displayTime: number, context: TimeTransformationContext): number {
     const { maxTime, mode } = context;
     // negative mode: -maxTime becomes 0, 0 becomes maxTime
-    return Math.max(0, Math.min(mode === 'positive' ? displayTime : displayTime + maxTime, maxTime));
+    const internal = displayTime + (mode === 'positive' ? 0 : maxTime);
+    return Math.max(0, Math.min(internal, maxTime));
 }
 
 /**

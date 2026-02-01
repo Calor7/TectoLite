@@ -26,16 +26,18 @@ interface SplitPolyline {
 export function isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
     if (polygon.length < 3) return false;
 
+    const pLat = point[1];
+    const pLon = point[0];
     let windingNumber = 0;
 
+    let prev = polygon[polygon.length - 1];
     for (let i = 0; i < polygon.length; i++) {
         // Check vertical crossing (simplified spherical version)
-        const lat1 = polygon[i][1];
-        const lat2 = polygon[(i + 1) % polygon.length][1];
-        const lon1 = polygon[i][0];
-        const lon2 = polygon[(i + 1) % polygon.length][0];
-        const pLat = point[1];
-        const pLon = point[0];
+        const curr = polygon[i];
+        const lat1 = prev[1];
+        const lat2 = curr[1];
+        const lon1 = prev[0];
+        const lon2 = curr[0];
 
         // Ray casting using longitude
         if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
@@ -53,6 +55,8 @@ export function isPointInPolygon(point: Coordinate, polygon: Coordinate[]): bool
                 windingNumber += (lat2 > lat1) ? 1 : -1;
             }
         }
+
+        prev = curr;
     }
 
     return windingNumber !== 0;
