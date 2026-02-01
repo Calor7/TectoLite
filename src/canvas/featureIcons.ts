@@ -1,7 +1,7 @@
 // Feature Icon Rendering for TectoLite
 // Shared icon drawing functions for canvas rendering
 
-export interface IconOptions {
+interface IconOptions {
     isSelected?: boolean;
     scaleRatio?: number;
 }

@@ -1,5 +1,5 @@
 // PNG Export functionality
-import { AppState, Feature, WorldState, ProjectionType, GeoPackageExportOptions } from './types';
+import { AppState, Feature, WorldState, ProjectionType } from './types';
 import { ProjectionManager } from './canvas/ProjectionManager';
 import { geoGraticule } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
@@ -393,13 +393,6 @@ export async function exportToJSON(state: AppState): Promise<void> {
 
 export type ImportMode = 'replace_current' | 'at_beginning' | 'at_current_time';
 
-export interface ImportResult {
-    world: WorldState;
-    viewport?: any;
-    mode: ImportMode;
-    filename: string;
-}
-
 export function showImportDialog(filename: string, plateCount: number, currentTime: number): Promise<ImportMode | null> {
     return new Promise((resolve) => {
         // Create modal overlay
@@ -493,34 +486,6 @@ export function showImportDialog(filename: string, plateCount: number, currentTi
     });
 }
 
-export function importFromJSON(file: File): Promise<WorldState> {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const text = e.target?.result as string;
-                const data = JSON.parse(text);
-
-                // Validate version
-                if (!data.version || data.version > SAVE_VERSION) {
-                    throw new Error('Unsupported save file version');
-                }
-
-                // Validate world data exists
-                if (!data.world || !Array.isArray(data.world.plates)) {
-                    throw new Error('Invalid save file format');
-                }
-
-                resolve(data.world as WorldState);
-            } catch (err) {
-                reject(err);
-            }
-        };
-        reader.onerror = () => reject(new Error('Failed to read file'));
-        reader.readAsText(file);
-    });
-}
-
 // Parse file to get metadata without full import
 export function parseImportFile(file: File): Promise<{ world: WorldState; viewport?: any; name: string; activeTool?: string; activeFeatureType?: string }> {
     return new Promise((resolve, reject) => {
@@ -554,93 +519,6 @@ export function parseImportFile(file: File): Promise<{ world: WorldState; viewpo
     });
 }
 
-// GeoPackage (QGIS) Export Dialog
-export function showGeoPackageExportDialog(): Promise<GeoPackageExportOptions | null> {
-    return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.style.cssText = `
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7); z-index: 10000;
-            display: flex; align-items: center; justify-content: center;
-        `;
-
-        const dialog = document.createElement('div');
-        dialog.style.cssText = `
-            background: #1e1e2e; border-radius: 12px; padding: 24px;
-            min-width: 400px; color: #cdd6f4; font-family: system-ui, sans-serif;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        `;
-
-        dialog.innerHTML = `
-            <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🗺️ Export to QGIS (GeoPackage)</h3>
-            
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Projection:</label>
-                <select id="gpkg-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
-                    <option value="equirectangular">Equirectangular</option>
-                    <option value="mercator">Mercator</option>
-                    <option value="mollweide">Mollweide</option>
-                    <option value="robinson">Robinson</option>
-                    <option value="orthographic">Orthographic (Globe)</option>
-                </select>
-            </div>
-
-            <div style="margin-bottom: 16px;">
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                    <input type="checkbox" id="gpkg-heightmap" checked style="cursor: pointer;">
-                    <span>Include Heightmap Raster Layer</span>
-                </label>
-            </div>
-            
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Resolution:</label>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
-                        <input type="number" id="gpkg-width" value="2048" min="512" max="8192"
-                            style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
-                    </div>
-                    <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
-                        <input type="number" id="gpkg-height" value="1024" min="512" max="8192"
-                            style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
-                    </div>
-                </div>
-            </div>
-
-            <div style="background: #313244; border-left: 4px solid #89b4fa; padding: 12px; border-radius: 4px; margin-bottom: 16px; font-size: 13px; color: #a6adc8;">
-                <strong style="color: #89b4fa;">ℹ️ Info:</strong> GeoPackage exports plates, features, and optional heightmap raster for use in QGIS.
-            </div>
-
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button id="gpkg-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
-                <button id="gpkg-confirm" style="padding: 8px 16px; border: none; border-radius: 6px; background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 500;">Export to QGIS</button>
-            </div>
-        `;
-
-        overlay.appendChild(dialog);
-        document.body.appendChild(overlay);
-
-        const cleanup = () => document.body.removeChild(overlay);
-        const onCancel = () => { cleanup(); resolve(null); };
-
-        dialog.querySelector('#gpkg-cancel')?.addEventListener('click', onCancel);
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
-
-        dialog.querySelector('#gpkg-confirm')?.addEventListener('click', () => {
-            const w = parseInt((dialog.querySelector('#gpkg-width') as HTMLInputElement).value);
-            const h = parseInt((dialog.querySelector('#gpkg-height') as HTMLInputElement).value);
-            const projection = (dialog.querySelector('#gpkg-projection') as HTMLSelectElement).value as ProjectionType;
-            const includeHeightmap = (dialog.querySelector('#gpkg-heightmap') as HTMLInputElement).checked;
-            cleanup();
-            if (w > 0 && h > 0) {
-                resolve({ width: w, height: h, projection, includeHeightmap });
-            } else {
-                resolve(null);
-            }
-        });
-    });
-}
 // Unified Export Dialog (consolidates PNG, Heightmap, and QGIS options)
 export type UnifiedExportFormat = 'png' | 'heightmap' | 'qgis';
 

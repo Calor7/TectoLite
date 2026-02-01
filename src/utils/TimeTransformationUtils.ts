@@ -8,9 +8,9 @@
  * UI Display: Can show as positive (0 to maxTime) or negative (-maxTime to 0)
  */
 
-export type TimeMode = 'positive' | 'negative';
+type TimeMode = 'positive' | 'negative';
 
-export interface TimeTransformationContext {
+interface TimeTransformationContext {
     maxTime: number;
     mode: TimeMode;
 }
@@ -51,21 +51,6 @@ export function toInternalTime(displayTime: number, context: TimeTransformationC
 }
 
 /**
- * Format a display time for UI presentation
- * @param displayTime - Display time value
- * @param mode - Time mode
- * @param decimals - Number of decimal places to show
- * @returns Formatted string
- */
-export function formatDisplayTime(displayTime: number, mode: TimeMode, decimals: number = 1): string {
-    if (mode === 'negative') {
-        return displayTime.toFixed(decimals);
-    } else {
-        return displayTime.toFixed(decimals);
-    }
-}
-
-/**
  * Parse user input string to a numeric time value
  * Handles input like "50", "-50", "50.5", "-50.5"
  * @param input - User input string
@@ -79,16 +64,3 @@ export function parseTimeInput(input: string): number | null {
     return isNaN(parsed) ? null : parsed;
 }
 
-/**
- * Get the label suffix for the time mode
- */
-export function getTimeModeLabel(mode: TimeMode): string {
-    return mode === 'negative' ? 'Years Ago' : 'Ma';
-}
-
-/**
- * Toggle between positive and negative time modes
- */
-export function toggleTimeMode(current: TimeMode): TimeMode {
-    return current === 'positive' ? 'negative' : 'positive';
-}

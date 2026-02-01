@@ -9,7 +9,6 @@ import {
 import { BoundarySystem } from './BoundarySystem';
 import { GeologicalAutomationSystem } from './systems/GeologicalAutomation';
 import { ElevationSystem } from './systems/ElevationSystem';
-// import { SpawnerSystem } from './systems/SpawnerSystem';
 
 
 export class SimulationEngine {
@@ -113,11 +112,8 @@ export class SimulationEngine {
                 boundaries = [];
             }   
 
-            // Phase 3: Dynamic Feature Spawning - DISABLED
-            let finalPlates = newPlates;
-            // Removed for lightweight performance per user request
-            // if (state.world.globalOptions.enableDynamicFeatures && boundaries && boundaries.length > 0) ...
-            
+            const finalPlates = newPlates;
+
             // Phase 4: Geological Automation
             const tempState = {
                 ...state,
