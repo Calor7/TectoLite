@@ -48,10 +48,21 @@ class TectoLiteApp {
     // UI State for Explorer Sidebar
     private explorerState: { 
         sections: { [key: string]: boolean }, 
-        paintGroups: { [key: string]: boolean } 
+        paintGroups: { [key: string]: boolean },
+        actionFilters: { [key: string]: boolean }
     } = { 
         sections: { plates: true, events: false, paint: false }, 
-        paintGroups: {} 
+        paintGroups: {},
+        actionFilters: {
+            created: true,
+            motion_change: true,
+            split: true,
+            fusion: true,
+            feature: true,
+            landmass_create: true,
+            landmass_edit: true,
+            plate_edit: true
+        }
     };
 
     constructor() {
@@ -3612,11 +3623,11 @@ class TectoLiteApp {
 
         // --- 2. ACTIONS SECTION (Previously Events) ---
         // Aggregate all plate events + user actions
-        let allEvents: {time: number, desc: string, plateName: string, plateId: string}[] = [];
+        let allEvents: {time: number, desc: string, plateName: string, plateId: string, type: string}[] = [];
 
-        const addAction = (time: number | undefined, desc: string, plate: TectonicPlate) => {
+        const addAction = (time: number | undefined, desc: string, plate: TectonicPlate, type: string) => {
             if (time === undefined || isNaN(time)) return;
-            allEvents.push({ time, desc, plateName: plate.name, plateId: plate.id });
+            allEvents.push({ time, desc, plateName: plate.name, plateId: plate.id, type });
         };
 
         this.state.world.plates.forEach(p => {
@@ -3626,32 +3637,32 @@ class TectoLiteApp {
                      if(ev.type === 'motion_change') desc = 'Motion Change';
                      if(ev.type === 'split') desc = 'Plate Split';
                      if(ev.type === 'fusion') desc = 'Fusion';
-                     addAction(ev.time, desc, p);
+                     addAction(ev.time, desc, p, ev.type);
                  });
              }
              // Also add creation time as event
-             addAction(p.birthTime, 'Created', p);
+             addAction(p.birthTime, 'Created', p, 'created');
 
              // Feature placements
              p.features.forEach(f => {
                  if (typeof f.generatedAt === 'number') {
                      const label = f.name ? `Feature Placed: ${f.name}` : `Feature Placed: ${f.type}`;
-                     addAction(f.generatedAt, label, p);
+                     addAction(f.generatedAt, label, p, 'feature');
                  }
              });
 
              // Plate edits captured as explicit Edit keyframes
              p.motionKeyframes?.forEach(kf => {
                  if (kf.label === 'Edit') {
-                     addAction(kf.time, 'Plate Edited', p);
+                     addAction(kf.time, 'Plate Edited', p, 'plate_edit');
                  }
              });
 
              // Landmass actions
              p.landmasses?.forEach(l => {
-                 addAction(l.birthTime, `Landmass Created: ${l.name || 'Landmass'}`, p);
+                 addAction(l.birthTime, `Landmass Created: ${l.name || 'Landmass'}`, p, 'landmass_create');
                  if (typeof l.lastEditedTime === 'number' && l.lastEditedTime !== l.birthTime) {
-                     addAction(l.lastEditedTime, `Landmass Edited: ${l.name || 'Landmass'}`, p);
+                     addAction(l.lastEditedTime, `Landmass Edited: ${l.name || 'Landmass'}`, p, 'landmass_edit');
                  }
              });
         });
@@ -3664,10 +3675,56 @@ class TectoLiteApp {
         
         if (this.explorerState.sections['events']) {
              const actionContent = actionSection.content;
-             if (allEvents.length === 0) {
-                 actionContent.innerHTML = '<p class="empty-message">No actions recorded</p>';
+             const filters = this.explorerState.actionFilters;
+             const filterRow = document.createElement('div');
+             filterRow.style.display = 'grid';
+             filterRow.style.gridTemplateColumns = '1fr 1fr';
+             filterRow.style.gap = '4px';
+             filterRow.style.marginBottom = '6px';
+
+             const createFilter = (key: string, label: string) => {
+                 const wrapper = document.createElement('label');
+                 wrapper.style.display = 'flex';
+                 wrapper.style.alignItems = 'center';
+                 wrapper.style.gap = '6px';
+                 wrapper.style.cursor = 'pointer';
+                 wrapper.style.fontSize = '11px';
+
+                 const input = document.createElement('input');
+                 input.type = 'checkbox';
+                 input.checked = !!filters[key];
+                 input.addEventListener('change', () => {
+                     this.explorerState.actionFilters[key] = input.checked;
+                     this.updateExplorer();
+                 });
+
+                 const span = document.createElement('span');
+                 span.textContent = label;
+
+                 wrapper.appendChild(input);
+                 wrapper.appendChild(span);
+                 filterRow.appendChild(wrapper);
+             };
+
+             createFilter('created', 'Created');
+             createFilter('motion_change', 'Motion');
+             createFilter('split', 'Split');
+             createFilter('fusion', 'Fusion');
+             createFilter('feature', 'Features');
+             createFilter('landmass_create', 'Landmass+');
+             createFilter('landmass_edit', 'Landmass Edit');
+             createFilter('plate_edit', 'Plate Edit');
+
+             actionContent.appendChild(filterRow);
+
+             const filteredEvents = allEvents.filter(ev => filters[ev.type] !== false);
+             if (filteredEvents.length === 0) {
+                 const empty = document.createElement('p');
+                 empty.className = 'empty-message';
+                 empty.textContent = 'No actions recorded';
+                 actionContent.appendChild(empty);
              } else {
-                 allEvents.forEach(ev => {
+                 filteredEvents.forEach(ev => {
                      const row = document.createElement('div');
                      row.className = 'paint-stroke-item';
                      row.style.cursor = 'pointer';

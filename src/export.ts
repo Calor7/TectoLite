@@ -217,198 +217,6 @@ function drawLandmass(
     ctx.restore();
 }
 
-// Heightmap Export Dialog
-export interface HeightmapExportOptions {
-    width: number;
-    height: number;
-    projection: ProjectionType;
-}
-
-export function showHeightmapExportDialog(defaultWidth: number = 4096, defaultHeight: number = 2048): Promise<HeightmapExportOptions | null> {
-    return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.style.cssText = `
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7); z-index: 10000;
-            display: flex; align-items: center; justify-content: center;
-        `;
-
-        const dialog = document.createElement('div');
-        dialog.style.cssText = `
-            background: #1e1e2e; border-radius: 12px; padding: 24px;
-            min-width: 350px; color: #cdd6f4; font-family: system-ui, sans-serif;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        `;
-
-        dialog.innerHTML = `
-            <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🗺️ Export Heightmap</h3>
-            
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Projection:</label>
-                <select id="hm-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
-                    <option value="equirectangular">Equirectangular</option>
-                    <option value="mercator">Mercator</option>
-                    <option value="mollweide">Mollweide</option>
-                    <option value="robinson">Robinson</option>
-                    <option value="orthographic">Orthographic (Globe)</option>
-                    <option value="qgis-note" disabled style="font-style: italic; color: #a6adc8;">QGIS: Export PNG first, then import</option>
-                </select>
-            </div>
-            
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Resolution:</label>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
-                        <input type="number" id="hm-width" value="${defaultWidth}" 
-                            style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
-                    </div>
-                    <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
-                        <input type="number" id="hm-height" value="${defaultHeight}" 
-                            style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
-                    </div>
-                </div>
-            </div>
-
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button id="hm-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
-                <button id="hm-confirm" style="padding: 8px 16px; border: none; border-radius: 6px; background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 500;">Export</button>
-            </div>
-        `;
-
-        overlay.appendChild(dialog);
-        document.body.appendChild(overlay);
-
-        const cleanup = () => document.body.removeChild(overlay);
-        const onCancel = () => { cleanup(); resolve(null); };
-
-        dialog.querySelector('#hm-cancel')?.addEventListener('click', onCancel);
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
-
-        dialog.querySelector('#hm-confirm')?.addEventListener('click', () => {
-            const w = parseInt((dialog.querySelector('#hm-width') as HTMLInputElement).value);
-            const h = parseInt((dialog.querySelector('#hm-height') as HTMLInputElement).value);
-            const projection = (dialog.querySelector('#hm-projection') as HTMLSelectElement).value as ProjectionType;
-            cleanup();
-            if (w > 0 && h > 0) resolve({ width: w, height: h, projection });
-            else resolve(null);
-        });
-    });
-}
-
-// PNG Export Dialog
-export function showPNGExportDialog(currentProjection: ProjectionType): Promise<PNGExportOptions | null> {
-    return new Promise((resolve) => {
-        // Create modal overlay
-        const overlay = document.createElement('div');
-        overlay.style.cssText = `
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7); z-index: 10000;
-            display: flex; align-items: center; justify-content: center;
-        `;
-
-        const dialog = document.createElement('div');
-        dialog.style.cssText = `
-            background: #1e1e2e; border-radius: 12px; padding: 24px;
-            min-width: 350px; color: #cdd6f4; font-family: system-ui, sans-serif;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        `;
-
-        dialog.innerHTML = `
-            <h3 style="margin: 0 0 16px 0; color: #89b4fa;">🖼️ Export PNG Image</h3>
-            
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Projection:</label>
-                <select id="export-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4;">
-                    <option value="orthographic">Globe (Orthographic)</option>
-                    <option value="equirectangular">Equirectangular</option>
-                    <option value="mercator">Mercator</option>
-                    <option value="mollweide">Mollweide</option>
-                    <option value="robinson">Robinson</option>
-                </select>
-            </div>
-            
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Water Color:</label>
-                <div style="display: flex; gap: 12px;">
-                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                        <input type="radio" name="water-mode" value="color" checked> Blue
-                    </label>
-                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                        <input type="radio" name="water-mode" value="white"> White
-                    </label>
-                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                        <input type="radio" name="water-mode" value="transparent"> None
-                    </label>
-                </div>
-            </div>
-
-            <div style="margin-bottom: 24px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Plate Colors:</label>
-                <div style="display: flex; gap: 12px;">
-                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                        <input type="radio" name="plate-color" value="native" checked> Plate Colors
-                    </label>
-                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                        <input type="radio" name="plate-color" value="land"> Land Color
-                    </label>
-                </div>
-            </div>
-
-            <div style="margin-bottom: 24px;">
-                <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
-                    <input type="checkbox" id="export-grid" checked> Show Grid
-                </label>
-                <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
-                    <input type="checkbox" id="export-include-features" checked> Include Features
-                </label>
-                <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
-                    <input type="checkbox" id="export-include-paint" checked> Include Paint
-                </label>
-                <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
-                    <input type="checkbox" id="export-include-landmasses" checked> Include Landmasses
-                </label>
-            </div>
-            
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button id="export-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
-                <button id="export-confirm" style="padding: 8px 16px; border: none; border-radius: 6px; background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 500;">Export PNG</button>
-            </div>
-        `;
-
-        // Set current projection
-        const select = dialog.querySelector('#export-projection') as HTMLSelectElement;
-        if (select) select.value = currentProjection;
-
-        overlay.appendChild(dialog);
-        document.body.appendChild(overlay);
-
-        const cleanup = () => document.body.removeChild(overlay);
-
-        const onCancel = () => {
-            cleanup();
-            resolve(null);
-        };
-
-        dialog.querySelector('#export-cancel')?.addEventListener('click', onCancel);
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
-
-        dialog.querySelector('#export-confirm')?.addEventListener('click', () => {
-            const projection = (dialog.querySelector('#export-projection') as HTMLSelectElement).value as ProjectionType;
-            const waterMode = (dialog.querySelector('input[name="water-mode"]:checked') as HTMLInputElement).value as any;
-            const plateColorMode = (dialog.querySelector('input[name="plate-color"]:checked') as HTMLInputElement).value as any;
-            const showGrid = (dialog.querySelector('#export-grid') as HTMLInputElement).checked;
-            const includePaint = (dialog.querySelector('#export-include-paint') as HTMLInputElement).checked;
-            const includeFeatures = (dialog.querySelector('#export-include-features') as HTMLInputElement).checked;
-            const includeLandmasses = (dialog.querySelector('#export-include-landmasses') as HTMLInputElement).checked;
-
-            cleanup();
-            resolve({ projection, waterMode, plateColorMode, showGrid, includePaint, includeFeatures, includeLandmasses });
-        });
-    });
-}
-
 // JSON Export functionality
 const SAVE_VERSION = 1;
 
@@ -624,7 +432,10 @@ export function showImportDialog(filename: string, plateCount: number, currentTi
                         background: #313244; border-radius: 6px; border: 1px solid #45475a;">
                         <input type="radio" name="import-mode" value="replace_current" checked>
                         <div>
-                            <div style="font-weight: 500;">♻️ Replace Current Simulation</div>
+                            <div style="font-weight: 500; display: flex; align-items: center; gap: 6px;">
+                                ♻️ Replace Current Simulation
+                                <span title="Restore the saved file exactly. Use Import modes below to merge into the current timeline." style="font-size: 11px; color: #a6adc8; cursor: help;">(i)</span>
+                            </div>
                             <div style="font-size: 12px; color: #a6adc8;">Fully restore the saved state</div>
                         </div>
                     </label>
@@ -905,6 +716,13 @@ export function showUnifiedExportDialog(defaults?: {
                     <option value="mollweide">Mollweide</option>
                     <option value="robinson">Robinson</option>
                 </select>
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Preset:</label>
+                <select id="png-preset" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4; margin-bottom: 12px;">
+                    <option value="custom" selected>Custom</option>
+                    <option value="presentation">Presentation (1920×1080)</option>
+                    <option value="print">Print (4096×2160)</option>
+                    <option value="gis">GIS Clean (4096×2048)</option>
+                </select>
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Layers:</label>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
                     <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
@@ -1023,6 +841,45 @@ export function showUnifiedExportDialog(defaults?: {
 
         const select = dialog.querySelector('#export-projection') as HTMLSelectElement | null;
         if (select) select.value = pngDefaults.projection;
+
+        const applyPngPreset = (preset: string) => {
+            const width = dialog.querySelector('#export-width') as HTMLInputElement;
+            const height = dialog.querySelector('#export-height') as HTMLInputElement;
+            const grid = dialog.querySelector('#png-show-grid') as HTMLInputElement;
+            const features = dialog.querySelector('#png-include-features') as HTMLInputElement;
+            const paint = dialog.querySelector('#png-include-paint') as HTMLInputElement;
+            const landmasses = dialog.querySelector('#png-include-landmasses') as HTMLInputElement;
+
+            if (!width || !height || !grid || !features || !paint || !landmasses) return;
+
+            if (preset === 'presentation') {
+                width.value = '1920';
+                height.value = '1080';
+                grid.checked = false;
+                features.checked = true;
+                paint.checked = false;
+                landmasses.checked = true;
+            } else if (preset === 'print') {
+                width.value = '4096';
+                height.value = '2160';
+                grid.checked = false;
+                features.checked = true;
+                paint.checked = true;
+                landmasses.checked = true;
+            } else if (preset === 'gis') {
+                width.value = '4096';
+                height.value = '2048';
+                grid.checked = true;
+                features.checked = false;
+                paint.checked = false;
+                landmasses.checked = true;
+            }
+        };
+
+        const presetSelect = dialog.querySelector('#png-preset') as HTMLSelectElement | null;
+        presetSelect?.addEventListener('change', () => {
+            applyPngPreset(presetSelect.value);
+        });
 
         const cleanup = () => document.body.removeChild(overlay);
         const onCancel = () => { cleanup(); resolve(null); };
