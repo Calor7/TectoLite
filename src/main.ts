@@ -646,6 +646,45 @@ class TectoLiteApp {
             </div>
           </div>
         </div>
+        
+        <!-- Drag Target Modal (Dynamic Velocity Feedback) -->
+        <div id="drag-target-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
+          <div class="modal-content" style="background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 8px; padding: 20px; min-width: 400px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;">
+            <h3 style="margin: 0; color: var(--text-primary); border-bottom: 1px solid var(--border-default); padding-bottom: 8px;">Set Motion Target</h3>
+            
+            <div style="display: flex; flex-direction: column; gap: 5px;">
+                <label style="color: var(--text-secondary); font-size: 12px; text-transform: uppercase; font-weight: 600;">Current Time</label>
+                <div id="drag-target-current-time" style="color: var(--text-primary); font-weight: bold; font-family: monospace; font-size: 14px;">0 Ma</div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 5px;">
+                <label style="color: var(--text-secondary); font-size: 12px; text-transform: uppercase; font-weight: 600;">Target Time (Ma)</label>
+                <input type="number" id="drag-target-input" class="property-input" step="any" style="width: 100%; padding: 8px; font-size: 14px; color: var(--text-primary); background: var(--bg-dark); border: 1px solid var(--border-muted);">
+            </div>
+
+            <div style="background: var(--bg-elevated); padding: 12px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border-muted);">
+                 <label style="color: var(--text-muted); font-size: 10px; letter-spacing: 0.5px; font-weight: bold;">ESTIMATED VELOCITY</label>
+                 
+                 <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: baseline; gap: 6px;">
+                        <span id="drag-target-speed-deg" style="color: var(--accent-primary); font-size: 20px; font-weight: bold; font-family: monospace;">--</span>
+                        <span style="color: var(--text-secondary); font-size: 12px;">deg/Ma</span>
+                    </div>
+                    <div style="display: flex; align-items: baseline; gap: 6px;">
+                        <span id="drag-target-speed-cm" style="color: var(--accent-success); font-size: 16px; font-weight: bold; font-family: monospace;">--</span>
+                        <span style="color: var(--text-secondary); font-size: 12px;">cm/yr</span>
+                    </div>
+                 </div>
+                 <div id="drag-target-warning" style="font-size: 11px; color: var(--accent-warning); display: none;">Warning: Excessive velocity detected!</div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
+                <button id="btn-drag-target-cancel" class="btn btn-secondary" style="min-width: 80px;">Cancel</button>
+                <button id="btn-drag-target-confirm" class="btn btn-primary" style="min-width: 80px; background-color: var(--accent-primary); color: white;">Confirm</button>
+            </div>
+          </div>
+        </div>
+
       </div>
     `;
     }
@@ -3673,32 +3712,109 @@ class TectoLiteApp {
     }
 
     private handleDragTargetRequest(plateId: string, axis: Vector3, angleRad: number): void {
+        const modal = document.getElementById('drag-target-modal');
+        const input = document.getElementById('drag-target-input') as HTMLInputElement;
+        const btnConfirm = document.getElementById('btn-drag-target-confirm');
+        const btnCancel = document.getElementById('btn-drag-target-cancel');
+        const lblCurrent = document.getElementById('drag-target-current-time');
+        const lblSpeedDeg = document.getElementById('drag-target-speed-deg');
+        const lblSpeedCm = document.getElementById('drag-target-speed-cm');
+        const lblWarning = document.getElementById('drag-target-warning');
+
+        if (!modal || !input || !btnConfirm || !btnCancel || !lblCurrent || !lblSpeedDeg || !lblSpeedCm) {
+            console.error("Modal elements missing");
+            return;
+        }
+
         const current = this.state.world.currentTime;
         const displayCurrent = toDisplayTime(current, {
             maxTime: this.getMaxTime(),
             mode: this.state.world.timeMode
         });
-        const promptText = `Target Time(Ma) ? (Current: ${displayCurrent})`;
-        const input = window.prompt(promptText);
-        if (!input) return;
+        
+        lblCurrent.textContent = String(displayCurrent);
+        input.value = '';
+        lblSpeedDeg.textContent = '--';
+        lblSpeedCm.textContent = '--';
+        if (lblWarning) lblWarning.style.display = 'none';
 
-        const userInputTime = parseFloat(input);
-        if (isNaN(userInputTime)) return;
+        // Show Modal
+        modal.style.display = 'flex';
+        input.focus();
 
-        // Transform user input based on time mode
-        const targetTime = this.transformInputTime(userInputTime);
+        let cleanup: () => void;
 
-        const dt = targetTime - current;
-        if (Math.abs(dt) < 0.001) {
-            alert("Time difference too small!");
-            return;
-        }
+        const close = () => {
+            modal.style.display = 'none';
+            cleanup();
+        };
 
-        const angleDeg = angleRad * 180 / Math.PI;
-        const rate = angleDeg / dt;
+        const calculate = () => {
+            const val = parseFloat(input.value);
+            if (isNaN(val)) {
+                lblSpeedDeg.textContent = '--';
+                lblSpeedCm.textContent = '--';
+                if (lblWarning) lblWarning.style.display = 'none';
+                return null;
+            }
 
-        const pole = vectorToLatLon(axis);
-        this.handleMotionChange(plateId, pole, rate);
+            // Transform input time to internal time
+            const targetTime = this.transformInputTime(val);
+            const dt = targetTime - current;
+
+            // Handle very small dt to avoid infinity
+            if (Math.abs(dt) < 0.001) {
+                lblSpeedDeg.textContent = '∞';
+                lblSpeedCm.textContent = '∞';
+                if (lblWarning) lblWarning.style.display = 'none';
+                return null;
+            }
+
+            const angleDeg = angleRad * 180 / Math.PI;
+            const rate = angleDeg / dt; 
+
+            const speedMag = Math.abs(rate);
+            lblSpeedDeg.textContent = rate.toFixed(2);
+            
+            const cmYr = this.convertDegMaToCmYr(speedMag);
+            lblSpeedCm.textContent = cmYr.toFixed(2);
+
+            if (cmYr > 20 && lblWarning) lblWarning.style.display = 'block';
+            else if (lblWarning) lblWarning.style.display = 'none';
+
+            return rate;
+        };
+
+        const onInput = () => calculate();
+
+        const onConfirm = () => {
+             const rate = calculate();
+             if (rate === null) {
+                 return;
+             }
+             
+             const pole = vectorToLatLon(axis);
+             this.handleMotionChange(plateId, pole, rate);
+             close();
+        };
+
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Enter') onConfirm();
+            if (e.key === 'Escape') close();
+        };
+
+        // Listeners
+        input.addEventListener('input', onInput);
+        btnConfirm.addEventListener('click', onConfirm);
+        btnCancel.addEventListener('click', close);
+        window.addEventListener('keydown', onKey);
+
+        cleanup = () => {
+            input.removeEventListener('input', onInput);
+            btnConfirm.removeEventListener('click', onConfirm);
+            btnCancel.removeEventListener('click', close);
+            window.removeEventListener('keydown', onKey);
+        };
     }
 
     private handleMotionChange(plateId: string, pole: Coordinate, rate: number): void {

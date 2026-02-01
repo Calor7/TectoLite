@@ -257,20 +257,22 @@ export class MotionGizmo {
         if (!this.state) return null;
 
         const poleProj = projectionManager.project(this.state.polePosition);
-        const centerProj = projectionManager.project(plateCenter);
-
-        if (!poleProj || !centerProj) return null;
-
-        // Check pole handle
-        const poleDist = Math.sqrt(
-            Math.pow(mouseX - poleProj[0], 2) + Math.pow(mouseY - poleProj[1], 2)
-        );
-        if (poleDist <= HANDLE_RADIUS + 4) {
-            return 'pole';
+        
+        // Check pole handle if visible
+        if (poleProj) {
+            const poleDist = Math.sqrt(
+                Math.pow(mouseX - poleProj[0], 2) + Math.pow(mouseY - poleProj[1], 2)
+            );
+            if (poleDist <= HANDLE_RADIUS + 4) {
+                return 'pole';
+            }
         }
 
-        // Check rate handle (at end of arc on globe)
+        // Check rate handle (Arrow)
+        // We check both the Tip Handle AND the Arrow Body for better usability
         const arcPoints = this.calculateRotationArc(plateCenter, this.state.polePosition, this.state.rate);
+        
+        // 1. Check Tip Handle (Standard)
         if (arcPoints.length > 0) {
             const lastPoint = arcPoints[arcPoints.length - 1];
             const lastProj = projectionManager.project(lastPoint);
@@ -282,7 +284,30 @@ export class MotionGizmo {
             }
         }
 
+        // 2. Check Arrow Body (Segment Hit Test)
+        // Helps when the tip is obscured or hard to click
+        const projectedPoints: [number, number][] = [];
+        for (const pt of arcPoints) {
+            const proj = projectionManager.project(pt);
+            if (proj) projectedPoints.push(proj);
+        }
+
+        for (let i = 0; i < projectedPoints.length - 1; i++) {
+            const p1 = projectedPoints[i];
+            const p2 = projectedPoints[i+1];
+            const d = this.distToSegment({x: mouseX, y: mouseY}, {x: p1[0], y: p1[1]}, {x: p2[0], y: p2[1]});
+            if (d < 6) return 'rate'; // 6px tolerance for line click
+        }
+
         return null;
+    }
+
+    private distToSegment(p: {x:number, y:number}, v: {x:number, y:number}, w: {x:number, y:number}) {
+        const l2 = (v.x - w.x)**2 + (v.y - w.y)**2;
+        if (l2 === 0) return Math.sqrt((p.x - v.x)**2 + (p.y - v.y)**2);
+        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+        t = Math.max(0, Math.min(1, t));
+        return Math.sqrt((p.x - (v.x + t * (w.x - v.x)))**2 + (p.y - (v.y + t * (w.y - v.y)))**2);
     }
 
     public startDrag(handle: GizmoHandle, mouseX: number, mouseY: number): void {
