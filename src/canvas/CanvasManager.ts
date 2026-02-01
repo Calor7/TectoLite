@@ -1920,6 +1920,11 @@ export class CanvasManager {
                 continue; // Skip strokes from the "future"
             }
 
+            // Check if stroke has "died" (eroded/subducted)
+            if (stroke.deathTime !== undefined && currentTime >= stroke.deathTime) {
+                continue; // Skip dead strokes
+            }
+
             // Check if this stroke is selected
             const isSelected = stroke.id === selectedStrokeId;
 

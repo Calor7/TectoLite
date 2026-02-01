@@ -43,6 +43,15 @@ class TectoLiteApp {
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
     private timelineSystem: TimelineSystem | null = null;
 
+    // UI State for Explorer Sidebar
+    private explorerState: { 
+        sections: { [key: string]: boolean }, 
+        paintGroups: { [key: string]: boolean } 
+    } = { 
+        sections: { plates: true, events: false, paint: false }, 
+        paintGroups: {} 
+    };
+
     constructor() {
         this.state = createDefaultAppState();
         this.init();
@@ -570,7 +579,7 @@ class TectoLiteApp {
           <div class="resizer-x" id="resizer-left" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
           
           <aside class="plate-sidebar" id="plate-sidebar">
-             <h3 class="tool-group-title" style="padding: 16px 16px 0 16px;">Plates</h3>
+             <h3 class="tool-group-title" style="padding: 16px 16px 0 16px;">Explorer</h3>
              <div id="plate-list" class="plate-list" style="padding: 0 16px 16px 16px; overflow-y: auto; flex:1;"></div>
           </aside>
           
@@ -2077,7 +2086,7 @@ class TectoLiteApp {
                         this.state.viewport = importedViewport;
                     }
 
-                    this.updatePlateList();
+                    this.updateExplorer();
                     this.updateUI();
                     this.syncUIToState();
                     this.canvasManager?.render();
@@ -2411,7 +2420,7 @@ class TectoLiteApp {
 
     private updateUI(): void {
         this.updateToolbarState();
-        this.updatePlateList();
+        this.updateExplorer();
         this.updatePropertiesPanel();
         this.updateSpeedInputsFromSelected();
         this.updatePlayButton();
@@ -2675,6 +2684,7 @@ class TectoLiteApp {
         // Handle paint stroke selection
         if (paintStrokeId) {
             this.state.world.selectedPaintStrokeId = paintStrokeId;
+            this.state.world.selectedPaintStrokeIds = [paintStrokeId];
             this.state.world.selectedPlateId = plateId; // Keep plate context
             this.state.world.selectedFeatureId = null;
             this.state.world.selectedFeatureIds = [];
@@ -2684,10 +2694,12 @@ class TectoLiteApp {
              this.state.world.selectedFeatureId = plumeId;
              this.state.world.selectedFeatureIds = [plumeId];
              this.state.world.selectedPaintStrokeId = null;
+             this.state.world.selectedPaintStrokeIds = [];
         } else {
              this.state.world.selectedPlateId = plateId;
              this.state.world.selectedFeatureId = featureId ?? null;
              this.state.world.selectedPaintStrokeId = null;
+             this.state.world.selectedPaintStrokeIds = [];
     
              // Handle multi-selection
              if (featureIds.length > 0) {
@@ -2907,6 +2919,21 @@ class TectoLiteApp {
         this.pushState(); // Save state for undo
 
         const { selectedFeatureId, selectedFeatureIds, selectedPlateId } = this.state.world;
+        const paintIds = this.state.world.selectedPaintStrokeIds || (this.state.world.selectedPaintStrokeId ? [this.state.world.selectedPaintStrokeId] : []);
+
+        if (paintIds.length > 0) {
+            // Delete selected paint strokes
+            const idSet = new Set(paintIds);
+             this.state.world.plates = this.state.world.plates.map(p => {
+                if(!p.paintStrokes) return p;
+                return {
+                    ...p,
+                    paintStrokes: p.paintStrokes.filter((s:any) => !idSet.has(s.id))
+                };
+            });
+            this.state.world.selectedPaintStrokeId = null;
+            this.state.world.selectedPaintStrokeIds = [];
+        }
 
         if (selectedFeatureId || (selectedFeatureIds && selectedFeatureIds.length > 0)) {
             // Build set of all feature IDs to delete
@@ -2932,7 +2959,9 @@ class TectoLiteApp {
 
             this.state.world.selectedFeatureId = null;
             this.state.world.selectedFeatureIds = [];
-        } else if (selectedPlateId) {
+        } else if (selectedPlateId && paintIds.length === 0) { 
+            // Only delete plate if we didn't just delete strokes using the same key press 
+            // (though UI usually separates them, hotkey collision is possible)
             this.deletePlates([selectedPlateId]);
         }
         this.updateUI();
@@ -2962,16 +2991,22 @@ class TectoLiteApp {
         this.canvasManager?.render();
     }
 
-    private updatePlateList(): void {
+    private updateExplorer(): void {
         const list = document.getElementById('plate-list');
         if (!list) return;
 
-        if (this.state.world.plates.length === 0) {
-            list.innerHTML = '<p class="empty-message">Draw a landmass to create a plate</p>';
-            return;
-        }
-
-        list.innerHTML = this.state.world.plates.map(plate => `
+        list.innerHTML = '';
+        
+        // --- 1. PLATES SECTION ---
+        const platesSection = this.createExplorerSection('Plates', 'plates', this.state.world.plates.length);
+        list.appendChild(platesSection.header);
+        
+        if (this.explorerState.sections['plates']) {
+            const content = platesSection.content;
+            if (this.state.world.plates.length === 0) {
+                content.innerHTML = '<p class="empty-message">Draw a landmass to create a plate</p>';
+            } else {
+                content.innerHTML = this.state.world.plates.map(plate => `
       <div class="plate-item ${plate.id === this.state.world.selectedPlateId ? 'selected' : ''}" 
            data-plate-id="${plate.id}">
         <span class="plate-color" style="background: ${plate.color}"></span>
@@ -2982,25 +3017,210 @@ class TectoLiteApp {
       </div>
     `).join('');
 
-        list.querySelectorAll('.plate-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                if ((e.target as HTMLElement).classList.contains('plate-visibility')) return;
-                const plateId = item.getAttribute('data-plate-id');
-                this.handleSelect(plateId, null);
-            });
-        });
+                content.querySelectorAll('.plate-item').forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        if ((e.target as HTMLElement).classList.contains('plate-visibility')) return;
+                        const plateId = item.getAttribute('data-plate-id');
+                        // Use original handleSelect which now probably needs to support modifiers in other contexts, 
+                        // but here we just select the plate. 
+                        // If user wants to multiselect plates, that's a different feature request not strictly asked for, 
+                        // but let's be safe and check Modifier keys if we were rewriting handleSelect.
+                        // For now keep standard select.
+                        this.handleSelect(plateId, null);
+                    });
+                });
 
-        // Visibility toggle
-        list.querySelectorAll('.plate-visibility').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const item = (e.target as HTMLElement).closest('.plate-item');
-                const plateId = item?.getAttribute('data-plate-id');
-                if (plateId) {
-                    this.togglePlateVisibility(plateId);
-                }
-            });
+                // Visibility toggle
+                content.querySelectorAll('.plate-visibility').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const item = (e.target as HTMLElement).closest('.plate-item');
+                        const plateId = item?.getAttribute('data-plate-id');
+                        if (plateId) {
+                            this.togglePlateVisibility(plateId);
+                        }
+                    });
+                });
+            }
+            list.appendChild(content);
+        }
+
+        // --- 2. ACTIONS SECTION (Previously Events) ---
+        // Aggregate all plate events
+        let allEvents: {time: number, desc: string, plateName: string, plateId: string}[] = [];
+        this.state.world.plates.forEach(p => {
+             if(p.events) {
+                 p.events.forEach(ev => {
+                     let desc = ev.type;
+                     if(ev.type === 'motion_change') desc = 'Motion Change';
+                     if(ev.type === 'split') desc = 'Plate Split';
+                     if(ev.type === 'fusion') desc = 'Fusion';
+                     allEvents.push({
+                         time: ev.time, 
+                         desc: desc,
+                         plateName: p.name,
+                         plateId: p.id
+                     });
+                 });
+             }
+             // Also add creation time as event
+             allEvents.push({time: p.birthTime, desc: 'Created', plateName: p.name, plateId: p.id});
         });
+        
+        // Sort by time
+        allEvents.sort((a,b) => a.time - b.time);
+        
+        const actionSection = this.createExplorerSection('Actions', 'events', allEvents.length);
+        list.appendChild(actionSection.header);
+        
+        if (this.explorerState.sections['events']) {
+             const actionContent = actionSection.content;
+             if (allEvents.length === 0) {
+                 actionContent.innerHTML = '<p class="empty-message">No actions recorded</p>';
+             } else {
+                 allEvents.forEach(ev => {
+                     const row = document.createElement('div');
+                     row.className = 'paint-stroke-item';
+                     row.style.cursor = 'pointer';
+                     row.innerText = `${ev.time.toFixed(1)} Ma: ${ev.desc} (${ev.plateName})`;
+                     
+                     // Click to select the plate involved in the action
+                     row.onclick = () => {
+                         this.handleSelect(ev.plateId, null);
+                     };
+
+                     actionContent.appendChild(row);
+                 });
+             }
+             list.appendChild(actionContent);
+        }
+
+        // --- 3. PAINT STROKES SECTION ---
+        let allStrokes: any[] = [];
+        this.state.world.plates.forEach(p => {
+            if (p.paintStrokes) {
+                p.paintStrokes.forEach(s => allStrokes.push({...s, _plateId: p.id}));
+            }
+        });
+        
+        const paintSection = this.createExplorerSection('Paint Strokes', 'paint', allStrokes.length);
+        list.appendChild(paintSection.header);
+        
+        if (this.explorerState.sections['paint']) {
+             const paintContent = paintSection.content;
+             if (allStrokes.length === 0) {
+                 paintContent.innerHTML = '<p class="empty-message">No paint strokes</p>';
+             } else {
+                 const groups: {[key: string]: any[]} = {};
+                 allStrokes.forEach(s => {
+                     // Group by Plate ID to keep manual and auto strokes of a plate together
+                     const k = s._plateId;
+                     if(!groups[k]) groups[k] = [];
+                     groups[k].push(s);
+                 });
+                 
+                 Object.keys(groups).forEach(gid => { // gid is plateId
+                     const plate = this.state.world.plates.find(p => p.id === gid);
+                     const label = plate ? plate.name : 'Unknown Plate';
+                     
+                     const isGroupExpanded = this.explorerState.paintGroups[gid];
+                     // Check if ALL in group are selected
+                     const groupIds = groups[gid].map(s => s.id);
+                     const allSelected = groupIds.length > 0 && groupIds.every(id => this.state.world.selectedPaintStrokeIds?.includes(id));
+                     
+                     const gHeader = document.createElement('div');
+                     gHeader.className = `paint-group-header ${isGroupExpanded ? 'selected' : ''}`;
+                     // Add checkbox-like indicator or just bold if selected
+                     const selIndicator = allSelected ? '☑' : '☐';
+                     
+                     gHeader.innerHTML = `<span>${selIndicator} ${label} (${groups[gid].length})</span> <span>${isGroupExpanded ? '▼' : '▶'}</span>`;
+                     gHeader.onclick = (e) => {
+                         // Click on header logic:
+                         // Select all strokes in this group (Plate)
+                         
+                         const currentSelected = new Set(this.state.world.selectedPaintStrokeIds || []);
+                         
+                         if (allSelected) {
+                             // Deselect all in group
+                             groupIds.forEach(id => currentSelected.delete(id));
+                         } else {
+                             // Select all in group
+                             groupIds.forEach(id => currentSelected.add(id));
+                             // Ensure we are in paint selection mode
+                             this.state.world.selectedPlateId = null;
+                             this.state.world.selectedFeatureId = null;
+                         }
+                         
+                         this.state.world.selectedPaintStrokeIds = Array.from(currentSelected);
+                         // Sync single ID
+                         this.state.world.selectedPaintStrokeId = this.state.world.selectedPaintStrokeIds.length > 0 ? this.state.world.selectedPaintStrokeIds[0] : null;
+
+                         // Also toggle expansion
+                         if(!allSelected) {
+                            this.explorerState.paintGroups[gid] = true;
+                         }
+                         
+                         this.updatePropertiesPanel();
+                         this.updateExplorer();
+                         this.canvasManager?.render();
+                     };
+                     
+                     paintContent.appendChild(gHeader);
+                     
+                     if(isGroupExpanded) {
+                         groups[gid].forEach(s => {
+                             const row = document.createElement('div');
+                             const isSel = this.state.world.selectedPaintStrokeIds?.includes(s.id);
+                             row.className = `paint-stroke-item ${isSel ? 'selected' : ''}`;
+                             
+                             // Differentiate manual vs auto in the individual item text
+                             const type = s.boundaryId ? 'Auto' : 'Manual';
+                             row.innerText = `${type} - ${s.id.substring(0,4)}...`;
+                             
+                             row.onclick = (e) => {
+                                 e.stopPropagation();
+                                 const id = s.id;
+                                 let newSel = new Set(this.state.world.selectedPaintStrokeIds || []);
+                                 
+                                 if (e.ctrlKey || e.metaKey) {
+                                     if(newSel.has(id)) newSel.delete(id);
+                                     else newSel.add(id);
+                                 } else {
+                                     newSel = new Set([id]);
+                                 }
+                                 
+                                 this.state.world.selectedPaintStrokeIds = Array.from(newSel);
+                                 this.state.world.selectedPaintStrokeId = this.state.world.selectedPaintStrokeIds.length > 0 ? this.state.world.selectedPaintStrokeIds[0] : null;
+
+                                 this.state.world.selectedPlateId = null;
+                                 this.state.world.selectedFeatureId = null;
+                                 this.updatePropertiesPanel();
+                                 this.updateExplorer();
+                                 this.canvasManager?.render();
+                             };
+                             paintContent.appendChild(row);
+                         });
+                    }
+                 });
+             }
+             list.appendChild(paintContent);
+        }
+    }
+
+    private createExplorerSection(title: string, key: string, count: number): {header: HTMLElement, content: HTMLElement} {
+        const header = document.createElement('div');
+        header.className = 'explorer-header';
+        header.style.marginBottom = '2px';
+        const isOpen = this.explorerState.sections[key];
+        header.innerHTML = `<span>${title} (${count})</span> <span>${isOpen ? '▼' : '▶'}</span>`;
+        header.onclick = () => {
+            this.explorerState.sections[key] = !isOpen;
+            this.updateExplorer();
+        };
+        const content = document.createElement('div');
+        content.className = 'explorer-content';
+        if(key === 'plates') content.classList.add('plate-list');
+        return {header, content};
     }
 
     private togglePlateVisibility(plateId: string): void {
@@ -3015,7 +3235,7 @@ class TectoLiteApp {
                 )
             }
         };
-        this.updatePlateList();
+        this.updateExplorer();
         this.canvasManager?.render();
     }
 
@@ -3024,8 +3244,40 @@ class TectoLiteApp {
         if (!content) return;
 
         // Check for Paint Stroke Selection
-        if (this.state.world.selectedPaintStrokeId) {
-            const strokeId = this.state.world.selectedPaintStrokeId;
+        // Support multi-select logic
+        const selIds = this.state.world.selectedPaintStrokeIds || (this.state.world.selectedPaintStrokeId ? [this.state.world.selectedPaintStrokeId] : []);
+        
+        if (selIds.length > 0) {
+            // If multiple selected, show aggregate info
+            if (selIds.length > 1) {
+                 content.innerHTML = `
+                    <h3 class="panel-section-title">Paint Strokes (${selIds.length})</h3>
+                    <div class="property-group">
+                        <label class="property-label">Multiple selected</label>
+                    </div>
+                    <div class="property-group" style="margin-top:20px;">
+                        <button id="btn-delete-stroke" class="btn btn-danger" style="width:100%">Delete Selected (${selIds.length})</button>
+                    </div>
+                 `;
+                 
+                document.getElementById('btn-delete-stroke')?.addEventListener('click', () => {
+                    this.state.world.plates = this.state.world.plates.map(p => {
+                        if(!p.paintStrokes) return p;
+                        return {
+                            ...p,
+                            paintStrokes: p.paintStrokes.filter((s:any) => !selIds.includes(s.id))
+                        };
+                    });
+                    this.state.world.selectedPaintStrokeIds = [];
+                    this.state.world.selectedPaintStrokeId = null;
+                    this.updateUI();
+                    this.canvasManager?.render();
+                });
+                return;
+            }
+
+            // Single item logic
+            const strokeId = selIds[0];
             let foundStroke: any = null;
             let strokePlate: any = null;
 
@@ -3064,13 +3316,12 @@ class TectoLiteApp {
                     </div>
 
                     <div class="property-group">
-                        <label class="property-label">Birth Time</label>
-                        <span class="property-value">${birthTimeDisplay}</span>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Age</label>
-                        <span class="property-value">${ageDisplay}</span>
+                        <label class="property-label">Timeline (Ma)</label>
+                        <div style="display: flex; gap: 4px;">
+                             <input type="number" id="prop-stroke-birth-time" class="property-input" title="Start Time" value="${foundStroke.birthTime !== undefined ? this.getDisplayTimeValue(foundStroke.birthTime) : ''}" step="5" style="flex:1">
+                             <span style="align-self: center;">-</span>
+                             <input type="number" id="prop-stroke-death-time" class="property-input" title="End Time" value="${foundStroke.deathTime !== undefined ? this.getDisplayTimeValue(foundStroke.deathTime) : ''}" placeholder="Active" step="5" style="flex:1">
+                        </div>
                     </div>
 
                     <div class="property-group">
@@ -3100,6 +3351,28 @@ class TectoLiteApp {
                 `;
 
                 // Bind events
+                document.getElementById('prop-stroke-birth-time')?.addEventListener('change', (e) => {
+                    const val = parseFloat((e.target as HTMLInputElement).value);
+                    if (!isNaN(val)) {
+                        foundStroke.birthTime = this.transformInputTime(val);
+                        this.canvasManager?.render();
+                        // this.updateExplorer(); // Timeline might change? Actions list uses birthTime but strokes list doesn't sort by time yet explicitly, just groups.
+                    }
+                });
+
+                document.getElementById('prop-stroke-death-time')?.addEventListener('change', (e) => {
+                    const val = (e.target as HTMLInputElement).value;
+                    if (val === '') {
+                        delete foundStroke.deathTime;
+                    } else {
+                        const num = parseFloat(val);
+                        if (!isNaN(num)) {
+                            foundStroke.deathTime = this.transformInputTime(num);
+                        }
+                    }
+                    this.canvasManager?.render();
+                });
+
                 document.getElementById('prop-stroke-color')?.addEventListener('input', (e) => {
                     foundStroke.color = (e.target as HTMLInputElement).value;
                     this.canvasManager?.render();
@@ -3124,6 +3397,7 @@ class TectoLiteApp {
                 document.getElementById('btn-delete-stroke')?.addEventListener('click', () => {
                     strokePlate.paintStrokes = strokePlate.paintStrokes.filter((s: any) => s.id !== strokeId);
                     this.state.world.selectedPaintStrokeId = null;
+                    this.state.world.selectedPaintStrokeIds = [];
                     this.updateUI();
                     this.canvasManager?.render();
                 });
@@ -3345,7 +3619,7 @@ class TectoLiteApp {
         // Bind events
         document.getElementById('prop-name')?.addEventListener('change', (e) => {
             plate.name = (e.target as HTMLInputElement).value;
-            this.updatePlateList();
+            this.updateExplorer();
         });
 
         document.getElementById('prop-description')?.addEventListener('change', (e) => {
@@ -3358,7 +3632,7 @@ class TectoLiteApp {
 
         document.getElementById('prop-color')?.addEventListener('change', (e) => {
             plate.color = (e.target as HTMLInputElement).value;
-            this.updatePlateList();
+            this.updateExplorer();
             this.canvasManager?.render();
         });
 

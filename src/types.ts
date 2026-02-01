@@ -50,6 +50,9 @@ export interface PaintStroke {
   isFilled?: boolean;   // True for polygon fill, false/undefined for brush strokes
   source?: 'user' | 'orogeny';  // Origin: user-drawn or auto-generated
   birthTime?: number;   // Geological time (Ma) when created - for time-based visibility
+  deathTime?: number;   // Geological time (Ma) when destroyed/eroded - undefined means active indefinitely
+  boundaryId?: string;  // ID of the boundary that generated this stroke (for grouping)
+  boundaryType?: 'convergent' | 'divergent' | 'transform'; // Type of boundary (for grouping)
 }
 
 export interface Feature {
@@ -152,7 +155,8 @@ export interface WorldState {
   selectedPlateId: string | null;
   selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
   selectedFeatureIds: string[];     // Support multiple selection
-  selectedPaintStrokeId: string | null;  // Selected paint stroke for properties panel
+  selectedPaintStrokeId: string | null;  // Selected paint stroke for properties panel (Deprecated: Use Ids array)
+  selectedPaintStrokeIds: string[];      // Multiple selection support for paint strokes
   projection: ProjectionType;
   timeMode: TimeMode;               // NEW: Display mode for time (positive or negative/ago)
   showGrid: boolean;
@@ -259,6 +263,7 @@ export function createDefaultWorldState(): WorldState {
     selectedFeatureId: null,
     selectedFeatureIds: [],
     selectedPaintStrokeId: null,
+    selectedPaintStrokeIds: [],
     projection: 'orthographic', // Default to globe as requested
     timeMode: 'positive',       // NEW: Default to positive time mode
     showGrid: true,

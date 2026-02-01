@@ -534,7 +534,9 @@ export class GeologicalAutomationSystem {
                         points: localPoints1,
                         timestamp: Date.now(),
                         source: 'orogeny',
-                        birthTime: currentTime  // Track when this stroke was created
+                        birthTime: currentTime,  // Track when this stroke was created
+                        boundaryId: boundary.id,
+                        boundaryType: boundary.type
                     };
 
                     if (!plates[p1Index].paintStrokes) plates[p1Index] = { ...plates[p1Index], paintStrokes: [] };
@@ -558,7 +560,9 @@ export class GeologicalAutomationSystem {
                         points: localPoints2,
                         timestamp: Date.now(),
                         source: 'orogeny',
-                        birthTime: currentTime  // Track when this stroke was created
+                        birthTime: currentTime,  // Track when this stroke was created
+                        boundaryId: boundary.id,
+                        boundaryType: boundary.type
                     };
 
                     if (!plates[p2Index].paintStrokes) plates[p2Index] = { ...plates[p2Index], paintStrokes: [] };
