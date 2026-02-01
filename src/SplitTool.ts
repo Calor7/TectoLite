@@ -1,4 +1,4 @@
-import { AppState, TectonicPlate, Polygon, Coordinate, generateId, createDefaultMotion } from './types';
+import { AppState, TectonicPlate, Polygon, Coordinate, CrustVertex, generateId, createDefaultMotion } from './types';
 import {
     Vector3,
     latLonToVector,
@@ -6,8 +6,10 @@ import {
     cross,
     dot,
     normalize,
-    calculateSphericalCentroid
+    calculateSphericalCentroid,
+    distance
 } from './utils/sphericalMath';
+import { ElevationSystem } from './systems/ElevationSystem';
 
 // Legacy interface for start/end splits
 interface SplitLine {
@@ -196,9 +198,9 @@ function splitPolygonWithPolyline(
         }
     }
 
-    // Need exactly 2 crossings for a clean split
-    // If more than 2, it means disjoint or complex topology - fallback for safety
-    if (crossings.length !== 2) {
+    // Need at least 2 crossings for a clean split
+    // If more than 2, use the first and last crossings along the polyline
+    if (crossings.length < 2) {
         return fallbackGreatCircleSplit(polygonPoints, polylinePoints);
     }
 
@@ -206,7 +208,7 @@ function splitPolygonWithPolyline(
     crossings.sort((a, b) => a.polylineIdx - b.polylineIdx);
 
     const firstCrossing = crossings[0];
-    const secondCrossing = crossings[1];
+    const secondCrossing = crossings[crossings.length - 1];
 
     // Get the polyline points between crossings
     const cutSegment: Coordinate[] = [];
@@ -242,6 +244,54 @@ function splitPolygonWithPolyline(
     polyB.push(...cutSegment);
 
     return [polyA, polyB];
+}
+
+function sampleNearestVertexAttributes(
+    parentMesh: CrustVertex[],
+    position: Coordinate
+): Pick<CrustVertex, 'elevation' | 'sediment'> {
+    if (parentMesh.length === 0) {
+        return { elevation: 0, sediment: 0 };
+    }
+
+    let nearest = parentMesh[0];
+    let minDist = distance(position, nearest.pos);
+
+    for (let i = 1; i < parentMesh.length; i++) {
+        const candidate = parentMesh[i];
+        const d = distance(position, candidate.pos);
+        if (d < minDist) {
+            minDist = d;
+            nearest = candidate;
+        }
+    }
+
+    return {
+        elevation: nearest.elevation ?? 0,
+        sediment: nearest.sediment ?? 0
+    };
+}
+
+function rebuildMeshFromParent(
+    plate: TectonicPlate,
+    parentMesh: CrustVertex[],
+    resolution: number
+): CrustVertex[] | undefined {
+    const elevationSystem = new ElevationSystem();
+    const initializedPlate = elevationSystem.initializePlateMesh(plate, resolution);
+
+    if (!initializedPlate.crustMesh || initializedPlate.crustMesh.length === 0) {
+        return undefined;
+    }
+
+    return initializedPlate.crustMesh.map(vertex => {
+        const attrs = sampleNearestVertexAttributes(parentMesh, vertex.pos);
+        return {
+            ...vertex,
+            elevation: attrs.elevation,
+            sediment: attrs.sediment
+        };
+    });
 }
 
 export function splitPlate(
@@ -360,37 +410,22 @@ export function splitPlate(
         }
     }
 
-    // Assign Mesh Vertices based on polygon containment
-    const leftMeshVertices = [];
-    const rightMeshVertices = [];
+    // Rebuild Mesh for children (if parent had mesh) and transfer attributes
+    let leftMeshVertices: CrustVertex[] | undefined;
+    let rightMeshVertices: CrustVertex[] | undefined;
 
-    if (plateToSplit.crustMesh) {
-        for (const vertex of plateToSplit.crustMesh) {
-            const inLeft = leftPolygons.some(poly => isPointInPolygon(vertex.pos, poly.points));
-            const inRight = rightPolygons.some(poly => isPointInPolygon(vertex.pos, poly.points));
-
-            if (inLeft && !inRight) {
-                leftMeshVertices.push({ ...vertex });
-            } else if (inRight && !inLeft) {
-                rightMeshVertices.push({ ...vertex });
-            } else if (inLeft && inRight) {
-                // Vertex on boundary - use dot product as tiebreaker
-                const v = latLonToVector(vertex.pos);
-                if (dot(v, overallNormal) > 0) {
-                    leftMeshVertices.push({ ...vertex });
-                } else {
-                    rightMeshVertices.push({ ...vertex });
-                }
-            } else {
-                // Not in either polygon - use dot product fallback
-                const v = latLonToVector(vertex.pos);
-                if (dot(v, overallNormal) > 0) {
-                    leftMeshVertices.push({ ...vertex });
-                } else {
-                    rightMeshVertices.push({ ...vertex });
-                }
-            }
-        }
+    if (plateToSplit.crustMesh && plateToSplit.crustMesh.length > 0) {
+        const resolution = state.world.globalOptions.meshResolution || 150;
+        leftMeshVertices = rebuildMeshFromParent(
+            { ...plateToSplit, polygons: leftPolygons, center: leftCenter },
+            plateToSplit.crustMesh,
+            resolution
+        );
+        rightMeshVertices = rebuildMeshFromParent(
+            { ...plateToSplit, polygons: rightPolygons, center: rightCenter },
+            plateToSplit.crustMesh,
+            resolution
+        );
     }
 
 
@@ -435,7 +470,8 @@ export function splitPlate(
         parentPlateIds: [plateToSplit.id],
         initialPolygons: leftPolygons,
         initialFeatures: leftFeatures,
-        crustMesh: leftMeshVertices.length > 0 ? leftMeshVertices : undefined
+        crustMesh: leftMeshVertices && leftMeshVertices.length > 0 ? leftMeshVertices : undefined,
+        elevationSimulatedTime: currentTime
     };
 
     const rightPlate: TectonicPlate = {
@@ -459,7 +495,8 @@ export function splitPlate(
         parentPlateIds: [plateToSplit.id],
         initialPolygons: rightPolygons,
         initialFeatures: rightFeatures,
-        crustMesh: rightMeshVertices.length > 0 ? rightMeshVertices : undefined
+        crustMesh: rightMeshVertices && rightMeshVertices.length > 0 ? rightMeshVertices : undefined,
+        elevationSimulatedTime: currentTime
     };
 
     // Mark old plate as dead
