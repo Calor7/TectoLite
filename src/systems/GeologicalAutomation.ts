@@ -50,18 +50,23 @@ export class GeologicalAutomationSystem {
                 }
 
                 if (inside) {
-                    // Check if we should spawn (Rate limiting would go here, e.g. every 5 Ma)
-                    // For MVP, lets just mark interaction or spawn if getting far from last usage?
-                    // Let's spawn a simplistic 'Hotspot Trail' feature if none exists close by
-                    
-                    const recentFeature = plate.features.find(f => 
-                        f.type === 'volcano' && 
-                        f.properties?.source === 'plume' &&
-                        f.properties?.plumeId === plume.id &&
-                        (currentTime - (f.generatedAt || 0)) < 2 // 2 Ma gap
-                    );
+                    // Determine spawn rate: Prefer Plume-specific rate, fall back to Global rate
+                    const rate = plume.spawnRate ?? state.world.globalOptions.hotspotSpawnRate ?? 1.0;
 
-                    if (!recentFeature) {
+                    // Check if we should spawn
+                    // Find the MOST RECENT feature spawned by this plume
+                    const recentFeature = plate.features
+                        .filter(f => 
+                            f.type === 'hotspot' && 
+                            f.properties?.source === 'plume' &&
+                            f.properties?.plumeId === plume.id
+                        )
+                        .sort((a,b) => (b.generatedAt || 0) - (a.generatedAt || 0))[0];
+
+                    const timeSinceLast = currentTime - (recentFeature?.generatedAt || 0);
+
+                    // Allow initial spawn (recentFeature undefined) OR if time gap exceeded
+                    if (!recentFeature || timeSinceLast >= rate) {
                         // Spawn new feature on the plate
                         // Position is the plume's fixed World Position converted to what it is NOW on the plate
                         // Wait, Features move with the plate. So we spawn it AT the plume's world pos.
@@ -69,8 +74,9 @@ export class GeologicalAutomationSystem {
                         
                         const newFeature: Feature = {
                             id: generateId(),
-                            type: 'volcano',
+                            type: 'hotspot',
                             position: [...plume.position],
+                            originalPosition: [...plume.position], // Store original position for accurate rotation
                             rotation: 0,
                             scale: 1,
                             generatedAt: currentTime,
@@ -192,6 +198,7 @@ export class GeologicalAutomationSystem {
              id: generateId(),
              type: type,
              position: [...pos], // Spread to copy
+             originalPosition: [...pos], // Important for rotation stability
              rotation: Math.random() * 360,
              scale: 0.8 + Math.random() * 0.4,
              generatedAt: time,

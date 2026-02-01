@@ -289,6 +289,12 @@ class TectoLiteApp {
                                  <input type="checkbox" id="check-enable-hotspots" ${this.state.world.globalOptions.enableHotspots ? 'checked' : ''}> Hotspot Tracking <span class="info-icon" data-tooltip="Stationary plumes create volcanic trails on moving plates">(i)</span>
                             </label>
                             
+                            <div class="view-dropdown-subitem" style="${this.state.world.globalOptions.enableHotspots ? 'display:flex' : 'display:none'}; align-items:center; gap:8px;">
+                                <span style="font-size:11px;">Spawn every:</span>
+                                <input type="number" id="input-hotspot-rate" value="${this.state.world.globalOptions.hotspotSpawnRate || 1.0}" step="0.1" min="0.1" style="width:50px; font-size:11px; padding:2px;">
+                                <span style="font-size:11px;">Ma</span>
+                            </div>
+                            
                             <label class="view-dropdown-item">
                                  <input type="checkbox" id="check-enable-orogeny" ${this.state.world.globalOptions.enableOrogeny ? 'checked' : ''}> Orogeny Detection <span class="info-icon" data-tooltip="Spawns mountains and trenches at plate collisions based on crust type">(i)</span>
                             </label>
@@ -1187,9 +1193,23 @@ class TectoLiteApp {
         };
 
         document.getElementById('check-enable-hotspots')?.addEventListener('change', (e) => {
-             this.state.world.globalOptions.enableHotspots = (e.target as HTMLInputElement).checked;
+             const checked = (e.target as HTMLInputElement).checked;
+             this.state.world.globalOptions.enableHotspots = checked;
+             
+             const subItem = (e.target as HTMLElement).closest('.view-dropdown-item')?.nextElementSibling as HTMLElement;
+             if (subItem && subItem.classList.contains('view-dropdown-subitem')) {
+                 subItem.style.display = checked ? 'flex' : 'none';
+             }
+             
              updateAutomationBtn();
              this.updateTimeDisplay();
+        });
+
+        document.getElementById('input-hotspot-rate')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val > 0) {
+                 this.state.world.globalOptions.hotspotSpawnRate = val;
+             }
         });
 
         document.getElementById('check-enable-orogeny')?.addEventListener('change', (e) => {
@@ -3147,6 +3167,35 @@ class TectoLiteApp {
         <label class="property-label">Description</label>
         <textarea id="feature-description" class="property-input" rows="2" placeholder="Description...">${description}</textarea>
       </div>
+      ${(() => {
+          if (feature.type === 'hotspot' && feature.properties?.source === 'plume' && feature.properties?.plumeId) {
+             const plumeId = feature.properties.plumeId as string;
+             const plume = this.state.world.mantlePlumes?.find(p => p.id === plumeId);
+             if (plume) {
+                 const currentRate = plume.spawnRate;
+                 const globalRate = this.state.world.globalOptions.hotspotSpawnRate || 1.0;
+                 // If define, use it. If undefined, it uses global.
+                 const isGlobal = currentRate === undefined;
+                 const displayRate = isGlobal ? globalRate : currentRate;
+                 
+                 return `
+                   <hr class="property-divider">
+                   <h4 class="property-section-title">Mantle Plume Source</h4>
+                   <div style="background:var(--bg-elevated); padding:8px; border-radius:4px;">
+                       <div class="property-group">
+                         <label class="property-label">Spawn Rate (Ma)</label>
+                         <input type="number" id="prop-plume-rate" class="property-input" value="${displayRate}" step="0.1" min="0.1" ${isGlobal ? 'disabled' : ''}>
+                       </div>
+                       <div class="property-group" style="justify-content:flex-start">
+                         <input type="checkbox" id="prop-plume-use-global" style="margin-right:8px;" ${isGlobal ? 'checked' : ''}>
+                         <label for="prop-plume-use-global" class="property-label" style="width:auto;">Use Global Rate</label>
+                       </div>
+                   </div>
+                 `;
+             }
+          }
+          return '';
+      })()}
     `;
     }
 
@@ -3188,6 +3237,47 @@ class TectoLiteApp {
                 }
             }
         });
+
+        // Plume Override Logic
+        const propPlumeRate = document.getElementById('prop-plume-rate') as HTMLInputElement;
+        const propPlumeUseGlobal = document.getElementById('prop-plume-use-global') as HTMLInputElement;
+
+        if (propPlumeRate && propPlumeUseGlobal) {
+             // Find plume ID
+             // We need to look up the feature again
+             const plates = this.state.world.plates;
+             let feature;
+             for (const p of plates) {
+                 feature = p.features.find(f => f.id === singleFeatureId);
+                 if (feature) break;
+             }
+
+             if (feature && feature.type === 'hotspot' && feature.properties?.plumeId) {
+                 const plumeId = feature.properties.plumeId;
+                 const plume = this.state.world.mantlePlumes?.find(p => p.id === plumeId);
+
+                 if (plume) {
+                     propPlumeUseGlobal.addEventListener('change', (e) => {
+                         const useGlobal = (e.target as HTMLInputElement).checked;
+                         propPlumeRate.disabled = useGlobal;
+                         
+                         if (useGlobal) {
+                             delete plume.spawnRate;
+                             propPlumeRate.value = (this.state.world.globalOptions.hotspotSpawnRate || 1.0).toString();
+                         } else {
+                             plume.spawnRate = parseFloat(propPlumeRate.value) || 1.0;
+                         }
+                     });
+
+                     propPlumeRate.addEventListener('change', (e) => {
+                         const val = parseFloat((e.target as HTMLInputElement).value);
+                         if (!isNaN(val) && val > 0) {
+                             plume.spawnRate = val;
+                         }
+                     });
+                 }
+             }
+        }
     }
 
     private getFeatureTypeName(type: FeatureType): string {

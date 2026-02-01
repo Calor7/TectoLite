@@ -37,6 +37,7 @@ export interface MantlePlume {
     radius: number;       // Size of the hotspot magmatism
     strength: number;     // How frequently it spawns features
     active: boolean;
+    spawnRate?: number;   // Override global spawn rate (Ma per feature)
 }
 
 export interface PaintStroke {
@@ -174,6 +175,7 @@ export interface WorldState {
     enableDynamicFeatures?: boolean;
     // Granular Automation Options
     enableHotspots?: boolean;
+    hotspotSpawnRate?: number; // Ma per feature (default 1.0)
     enableOrogeny?: boolean;
     showHints?: boolean;
   };
@@ -267,6 +269,7 @@ export function createDefaultWorldState(): WorldState {
       enableBoundaryVisualization: false,
       enableDynamicFeatures: false,
       enableHotspots: false,
+      hotspotSpawnRate: 1.0,
       enableOrogeny: false,
       showHints: true
     }
