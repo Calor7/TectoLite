@@ -31,6 +31,15 @@ export interface CrustSegment {
     birthTime: number; // When was this segment created?
 }
 
+export interface CrustVertex {
+    id: string;
+    pos: Coordinate;      // [lon, lat] in degrees
+    elevation: number;    // meters above sea level
+    sediment: number;     // sediment thickness (future use)
+}
+
+export type ElevationViewMode = 'off' | 'overlay' | 'absolute';
+
 export interface MantlePlume {
     id: string;
     position: Coordinate; // Fixed geographic location (lat/lon)
@@ -149,6 +158,9 @@ export interface TectonicPlate {
   // Paint system
   paintStrokes?: PaintStroke[];
 
+  // Elevation system
+  crustMesh?: CrustVertex[];
+
   visible: boolean;
   locked: boolean;
 }
@@ -163,6 +175,8 @@ export interface WorldState {
   selectedFeatureIds: string[];     // Support multiple selection
   selectedPaintStrokeId: string | null;  // Selected paint stroke for properties panel (Deprecated: Use Ids array)
   selectedPaintStrokeIds: string[];      // Multiple selection support for paint strokes
+  selectedVertexPlateId?: string | null;  // Selected vertex for mesh editing
+  selectedVertexId?: string | null;       // Selected vertex ID
   projection: ProjectionType;
   timeMode: TimeMode;               // NEW: Display mode for time (positive or negative/ago)
   showGrid: boolean;
@@ -210,6 +224,13 @@ export interface WorldState {
     paintMaxWaitOpacity?: number;        // Minimum opacity (max transparency target) [0.0 - 1.0]
     paintAutoDelete?: boolean;           // Whether to delete strokes after ageing
     paintDeleteDelay?: number;           // Extra time (Ma) after fade before deletion
+    
+    // Elevation System
+    elevationViewMode?: ElevationViewMode;  // Visualization mode: off/overlay/absolute
+    enableElevationSimulation?: boolean;    // Enable physical elevation simulation
+    upliftRate?: number;                    // Uplift rate at collision zones (m/Ma)
+    erosionRate?: number;                   // Erosion transport rate (0-1 fraction)
+    meshResolution?: number;                // Mesh vertex spacing (km)
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
@@ -226,7 +247,7 @@ export interface Boundary {
   velocity?: number; // Relative velocity magnitude
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit' | 'paint';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit' | 'paint' | 'mesh_edit';
 
 export type PaintMode = 'brush' | 'poly_fill';
 
@@ -320,7 +341,14 @@ export function createDefaultWorldState(): WorldState {
       paintAgeingDuration: 100, // Ma
       paintMaxWaitOpacity: 0.05, // 95% transparency
       paintAutoDelete: false, // Default: keep strokes, just fade
-      paintDeleteDelay: 50 // Ma after fade, if auto-delete enabled
+      paintDeleteDelay: 50, // Ma after fade, if auto-delete enabled
+      
+      // Elevation System defaults
+      elevationViewMode: 'off',
+      enableElevationSimulation: false,
+      upliftRate: 1000,        // 1000 m/Ma = 1 km per million years
+      erosionRate: 0.001,      // 0.1% transport per Ma
+      meshResolution: 150      // 150 km spacing between vertices
     }
   };
 }

@@ -8,6 +8,7 @@ import {
 } from './utils/sphericalMath';
 import { BoundarySystem } from './BoundarySystem';
 import { GeologicalAutomationSystem } from './systems/GeologicalAutomation';
+import { ElevationSystem } from './systems/ElevationSystem';
 // import { SpawnerSystem } from './systems/SpawnerSystem';
 
 
@@ -16,12 +17,14 @@ export class SimulationEngine {
     private lastUpdate = 0;
     private animationId: number | null = null;
     private geologicalAutomation: GeologicalAutomationSystem;
+    private elevationSystem: ElevationSystem;
 
     constructor(
         private getState: () => AppState,
         private setState: (updater: (state: AppState) => AppState) => void
     ) { 
         this.geologicalAutomation = new GeologicalAutomationSystem();
+        this.elevationSystem = new ElevationSystem();
     }
 
     // Helper: Check if a point is inside a spherical polygon using ray casting
@@ -124,8 +127,12 @@ export class SimulationEngine {
                 }
             };
             const postAutomationState = this.geologicalAutomation.update(tempState);
+            
+            // Phase 5: Elevation System
+            const deltaT = Math.abs(time - state.world.currentTime);
+            const finalState = this.elevationSystem.update(postAutomationState, deltaT);
 
-            return postAutomationState;
+            return finalState;
         });
         this.updateFlowlines();
     }
@@ -203,8 +210,12 @@ export class SimulationEngine {
                 }
             };
             const postAutomationState = this.geologicalAutomation.update(tempState);
+            
+            // Phase 4: Elevation System
+            const deltaT = state.world.timeScale;
+            const finalState = this.elevationSystem.update(postAutomationState, deltaT);
 
-            return postAutomationState;
+            return finalState;
         });
         this.updateFlowlines();
     }
@@ -410,6 +421,24 @@ export class SimulationEngine {
 
         const newPaintStrokes = [...transformSnapshotStrokes, ...transformDynamicStrokes];
 
+        // --- Mesh Vertex Transformation ---
+        // Transform mesh vertices to follow plate rotation
+        let newCrustMesh = plate.crustMesh;
+        if (plate.crustMesh && plate.crustMesh.length > 0) {
+            const meshElapsed = Math.max(0, time - plate.birthTime);
+            const meshAngle = toRad(pole.rate * meshElapsed);
+            
+            if (meshAngle !== 0) {
+                newCrustMesh = plate.crustMesh.map(vertex => {
+                    const v = latLonToVector(vertex.pos);
+                    const vRot = rotateVector(v, axis, meshAngle);
+                    return {
+                        ...vertex,
+                        pos: vectorToLatLon(vRot)
+                    };
+                });
+            }
+        }
 
         const allPoints = newPolygons.flatMap(poly => poly.points);
         const newCenter = calculateSphericalCentroid(allPoints);
@@ -419,6 +448,7 @@ export class SimulationEngine {
             polygons: newPolygons,
             features: newFeatures,
             paintStrokes: newPaintStrokes,
+            crustMesh: newCrustMesh,
             center: newCenter
         };
 

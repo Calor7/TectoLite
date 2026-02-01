@@ -297,7 +297,7 @@ class TectoLiteApp {
                 </div>
 
                 <div class="view-dropdown-container">
-                    <button id="btn-automation-menu" class="btn btn-secondary" title="Geological Automation" style="${(this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableOrogeny) ? 'background-color: var(--color-success); color: white;' : ''}">
+                    <button id="btn-automation-menu" class="btn btn-secondary" title="Geological Automation" style="${(this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableOrogeny || this.state.world.globalOptions.enableElevationSimulation) ? 'background-color: var(--color-success); color: white;' : ''}">
                         <span class="icon">⚙️</span> Automation
                     </button>
                     <div id="automation-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
@@ -396,6 +396,45 @@ class TectoLiteApp {
                                 <label class="view-dropdown-item">
                                     <input type="checkbox" id="check-boundary-vis"> Visualize Boundaries <span class="info-icon" data-tooltip="Show Convergent (Red) and Divergent (Blue) lines">(i)</span>
                                 </label>
+                            </div>
+                            
+                            <!-- Elevation System -->
+                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);">
+                                <div style="font-weight: 600; color: var(--text-highlight); margin-bottom: 6px;">⛰️ Elevation System <span style="font-size: 9px; background: #2563eb; color: white; padding: 1px 4px; border-radius: 3px; margin-left: 4px;">NEW</span></div>
+                                
+                                <label class="view-dropdown-item">
+                                    <input type="checkbox" id="check-enable-elevation" ${this.state.world.globalOptions.enableElevationSimulation ? 'checked' : ''}> Physical Elevation <span class="info-icon" data-tooltip="Simulate realistic mountain building and erosion using physics">(i)</span>
+                                </label>
+                                
+                                <div id="elevation-options" style="margin-left: 20px; display: ${this.state.world.globalOptions.enableElevationSimulation ? 'block' : 'none'};">
+                                    <div style="margin: 8px 0;">
+                                        <label style="font-size: 10px; color: var(--text-secondary);">View Mode:</label>
+                                        <select id="elevation-view-mode" class="property-input" style="width: 100%; padding: 4px;">
+                                            <option value="off" ${this.state.world.globalOptions.elevationViewMode === 'off' ? 'selected' : ''}>Off</option>
+                                            <option value="overlay" ${this.state.world.globalOptions.elevationViewMode === 'overlay' ? 'selected' : ''}>Overlay</option>
+                                            <option value="absolute" ${this.state.world.globalOptions.elevationViewMode === 'absolute' ? 'selected' : ''}>Absolute</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
+                                        <span style="font-size: 10px; color: var(--text-secondary);">Mesh Resolution:</span>
+                                        <input type="number" id="elevation-resolution" class="property-input" value="${this.state.world.globalOptions.meshResolution || 150}" min="50" max="300" step="25" style="width: 70px;"> km
+                                    </div>
+                                    
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
+                                        <span style="font-size: 10px; color: var(--text-secondary);">Uplift Rate:</span>
+                                        <input type="number" id="elevation-uplift" class="property-input" value="${this.state.world.globalOptions.upliftRate || 1000}" min="100" max="5000" step="100" style="width: 70px;"> m/Ma
+                                    </div>
+                                    
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
+                                        <span style="font-size: 10px; color: var(--text-secondary);">Erosion Rate:</span>
+                                        <input type="number" id="elevation-erosion" class="property-input" value="${this.state.world.globalOptions.erosionRate || 0.001}" min="0.0001" max="0.01" step="0.0001" style="width: 70px;">
+                                    </div>
+                                    
+                                    <div style="margin-top: 8px; padding: 6px; background: rgba(37, 99, 235, 0.1); border-radius: 4px; font-size: 9px; color: var(--text-secondary);">
+                                        💡 Use the Mesh Edit tool (M) to inspect and manually sculpt terrain
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1427,6 +1466,42 @@ class TectoLiteApp {
 
         document.getElementById('orogeny-color-divergent')?.addEventListener('input', (e) => {
             this.state.world.globalOptions.orogenyPaintDivergent = (e.target as HTMLInputElement).value;
+        });
+
+        // Elevation System controls
+        document.getElementById('check-enable-elevation')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.enableElevationSimulation = (e.target as HTMLInputElement).checked;
+            const optionsDiv = document.getElementById('elevation-options');
+            if (optionsDiv) optionsDiv.style.display = (e.target as HTMLInputElement).checked ? 'block' : 'none';
+            updateAutomationBtn();
+            this.updateTimeDisplay();
+        });
+
+        document.getElementById('elevation-view-mode')?.addEventListener('change', (e) => {
+            const value = (e.target as HTMLSelectElement).value as any;
+            this.state.world.globalOptions.elevationViewMode = value;
+            this.updateTimeDisplay();
+        });
+
+        document.getElementById('elevation-resolution')?.addEventListener('change', (e) => {
+            const val = parseInt((e.target as HTMLInputElement).value);
+            if (!isNaN(val) && val >= 50 && val <= 300) {
+                this.state.world.globalOptions.meshResolution = val;
+            }
+        });
+
+        document.getElementById('elevation-uplift')?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val) && val >= 0) {
+                this.state.world.globalOptions.upliftRate = val;
+            }
+        });
+
+        document.getElementById('elevation-erosion')?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val) && val >= 0) {
+                this.state.world.globalOptions.erosionRate = val;
+            }
         });
 
         // Debug: Add Test Plume
@@ -2828,6 +2903,9 @@ class TectoLiteApp {
                 break;
             case 'flowline':
                 hintText = "Click on a plate to place a flowline seed.";
+                break;
+            case 'mesh_edit':
+                hintText = "Click on a vertex to select and inspect it. Edit elevation in the properties panel.";
                 break;
         }
 

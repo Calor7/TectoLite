@@ -1,6 +1,7 @@
-import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, PaintStroke, generateId, PaintMode } from '../types';
+import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, PaintStroke, generateId, PaintMode, ElevationViewMode } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
+import { Delaunay } from 'd3-delaunay';
 import { toGeoJSON } from '../utils/geoHelpers';
 import {
     drawMountainIcon,
@@ -1298,6 +1299,9 @@ export class CanvasManager {
             this.drawBoundaries(state.world.boundaries, path);
         }
 
+        // Render Elevation Meshes (after plate polygons, overlaid on plates)
+        this.renderElevationMesh(state);
+
         // Draw Mantle Plumes (Global Features)
         if (state.world.mantlePlumes) {
             for (const plume of state.world.mantlePlumes) {
@@ -2455,5 +2459,136 @@ export class CanvasManager {
                  this.ctx.stroke();
              }
          }
+    }
+    
+    /**
+     * Render elevation mesh for all visible plates
+     */
+    private renderElevationMesh(state: AppState): void {
+        const mode = state.world.globalOptions.elevationViewMode;
+        if (!mode || mode === 'off') return;
+        
+        for (const plate of state.world.plates) {
+            if (!plate.visible || !plate.crustMesh || plate.crustMesh.length < 3) continue;
+            
+            // Lifecycle check
+            if (state.world.currentTime < plate.birthTime) continue;
+            if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
+            
+            this.renderPlateMesh(plate, mode);
+        }
+    }
+    
+    /**
+     * Render elevation mesh for a single plate using Delaunay triangulation
+     */
+    private renderPlateMesh(plate: any, mode: ElevationViewMode): void {
+        if (!plate.crustMesh || plate.crustMesh.length < 3) return;
+        
+        const vertices = plate.crustMesh;
+        
+        // Project all vertices to screen space
+        const screenPoints: [number, number][] = [];
+        const validIndices: number[] = [];
+        
+        for (let i = 0; i < vertices.length; i++) {
+            const proj = this.projectionManager.project(vertices[i].pos);
+            if (proj) {
+                screenPoints.push([proj[0], proj[1]]);
+                validIndices.push(i);
+            }
+        }
+        
+        if (screenPoints.length < 3) return;
+        
+        try {
+            // Build Delaunay triangulation in screen space
+            const delaunay = Delaunay.from(screenPoints);
+            
+            // Set alpha based on mode
+            const alpha = mode === 'overlay' ? 0.7 : 1.0;
+            
+            // Render each triangle
+            for (let i = 0; i < delaunay.triangles.length; i += 3) {
+                const idx0 = validIndices[delaunay.triangles[i]];
+                const idx1 = validIndices[delaunay.triangles[i + 1]];
+                const idx2 = validIndices[delaunay.triangles[i + 2]];
+                
+                const v0 = vertices[idx0];
+                const v1 = vertices[idx1];
+                const v2 = vertices[idx2];
+                
+                // Calculate average elevation for triangle
+                const avgElevation = (v0.elevation + v1.elevation + v2.elevation) / 3;
+                
+                // Get color for elevation
+                const color = this.elevationToColor(avgElevation);
+                
+                // Draw triangle
+                this.ctx.beginPath();
+                this.ctx.moveTo(screenPoints[delaunay.triangles[i]][0], screenPoints[delaunay.triangles[i]][1]);
+                this.ctx.lineTo(screenPoints[delaunay.triangles[i + 1]][0], screenPoints[delaunay.triangles[i + 1]][1]);
+                this.ctx.lineTo(screenPoints[delaunay.triangles[i + 2]][0], screenPoints[delaunay.triangles[i + 2]][1]);
+                this.ctx.closePath();
+                
+                this.ctx.fillStyle = this.applyAlpha(color, alpha);
+                this.ctx.fill();
+            }
+        } catch (error) {
+            console.error('Failed to render mesh:', error);
+        }
+    }
+    
+    /**
+     * Map elevation to topographic color
+     */
+    private elevationToColor(elevation: number): string {
+        if (elevation < 0) {
+            // Ocean: Dark blue -> Light blue
+            const depth = Math.abs(elevation);
+            const intensity = Math.max(0, 1 - depth / 4000);
+            const blue = Math.floor(100 + intensity * 155);
+            return `rgb(0, 50, ${blue})`;
+        } else if (elevation < 1000) {
+            // Land: Green -> Yellow
+            const t = elevation / 1000;
+            const r = Math.floor(34 + t * 186);  // 34 -> 220
+            const g = Math.floor(139 + t * 61);  // 139 -> 200
+            return `rgb(${r}, ${g}, 34)`;
+        } else if (elevation < 3000) {
+            // Hills: Brown
+            const t = (elevation - 1000) / 2000;
+            const r = Math.floor(139 + t * 50);  // Brown -> Grey
+            const g = Math.floor(90 + t * 50);
+            const b = Math.floor(43 + t * 87);
+            return `rgb(${r}, ${g}, ${b})`;
+        } else if (elevation < 5000) {
+            // Mountains: Grey
+            const t = (elevation - 3000) / 2000;
+            const intensity = Math.floor(130 + t * 70);
+            return `rgb(${intensity}, ${intensity}, ${intensity})`;
+        } else {
+            // Peaks: White
+            return '#ffffff';
+        }
+    }
+    
+    /**
+     * Apply alpha to RGB color string
+     */
+    private applyAlpha(rgbColor: string, alpha: number): string {
+        // Parse rgb(r, g, b) format
+        const match = rgbColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        if (match) {
+            return `rgba(${match[1]}, ${match[2]}, ${match[3]}, ${alpha})`;
+        }
+        // Handle hex colors
+        if (rgbColor.startsWith('#')) {
+            const r = parseInt(rgbColor.slice(1, 3), 16);
+            const g = parseInt(rgbColor.slice(3, 5), 16);
+            const b = parseInt(rgbColor.slice(5, 7), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+        return rgbColor;
     }
 }
