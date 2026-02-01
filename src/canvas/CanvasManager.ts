@@ -2,6 +2,7 @@ import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, Interacti
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { Delaunay } from 'd3-delaunay';
+import { isPointInPolygon } from '../SplitTool';
 import { toGeoJSON } from '../utils/geoHelpers';
 import {
     drawMountainIcon,
@@ -2499,7 +2500,24 @@ export class CanvasManager {
     private renderPlateMesh(plate: any, mode: ElevationViewMode): void {
         if (!plate.crustMesh || plate.crustMesh.length < 3) return;
         
-        const vertices = plate.crustMesh;
+        // Apply ghost rotation if active (same as renderPlates)
+        let vertices = plate.crustMesh;
+        if (this.ghostRotation && this.ghostRotation.plateId === plate.id) {
+            const { axis, angle } = this.ghostRotation;
+            const spinRad = -this.ghostSpin * Math.PI / 180;
+            const vCenter = latLonToVector(plate.center);
+            const vRotCenter = rotateVector(vCenter, axis, angle);
+
+            vertices = vertices.map((v: any) => {
+                const vec = latLonToVector(v.pos);
+                // 1. Drag Rotation
+                const v1 = rotateVector(vec, axis, angle);
+                // 2. Spin Rotation
+                const v2 = rotateVector(v1, vRotCenter, spinRad);
+                const newPos = vectorToLatLon(v2);
+                return { ...v, pos: newPos };
+            });
+        }
         
         // Project all vertices to screen space first
         const screenPoints: [number, number][] = [];
@@ -2536,8 +2554,26 @@ export class CanvasManager {
                 const v1 = vertices[idx1];
                 const v2 = vertices[idx2];
                 
-                // Check maximum edge length to prevent spanning across gaps in concave plates
-                const maxEdgeLengthDeg = 5.0; // ~550km - increased to allow edge coverage
+                // Calculate triangle centroid
+                const centroidLon = (v0.pos[0] + v1.pos[0] + v2.pos[0]) / 3;
+                const centroidLat = (v0.pos[1] + v1.pos[1] + v2.pos[1]) / 3;
+                const centroid: [number, number] = [centroidLon, centroidLat];
+                
+                // Check if centroid is inside polygon to filter out gap-spanning triangles
+                let centroidInside = false;
+                for (const poly of plate.polygons) {
+                    if (isPointInPolygon(centroid, poly.points)) {
+                        centroidInside = true;
+                        break;
+                    }
+                }
+                
+                // If centroid is outside, skip this triangle
+                // This preserves concave shapes (C-channel) while boundary vertices ensure edge coverage
+                if (!centroidInside) continue;
+
+                // Check maximum edge length as secondary safeguard
+                const maxEdgeLengthDeg = 5.0; // ~550km
                 const edge01 = Math.hypot(v1.pos[0] - v0.pos[0], v1.pos[1] - v0.pos[1]);
                 const edge12 = Math.hypot(v2.pos[0] - v1.pos[0], v2.pos[1] - v1.pos[1]);
                 const edge20 = Math.hypot(v0.pos[0] - v2.pos[0], v0.pos[1] - v2.pos[1]);
@@ -2778,39 +2814,5 @@ export class CanvasManager {
         this.ctx.fillText(`Visible: ${visibleVertices}`, boxX + 8, yPos);
         
         this.ctx.restore();
-    }
-
-    /**
-     * Check if a point is inside a spherical polygon using ray casting
-     */
-    private isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
-        if (polygon.length < 3) return false;
-
-        let windingNumber = 0;
-
-        for (let i = 0; i < polygon.length; i++) {
-            const lat1 = polygon[i][1];
-            const lat2 = polygon[(i + 1) % polygon.length][1];
-            const lon1 = polygon[i][0];
-            const lon2 = polygon[(i + 1) % polygon.length][0];
-            const pLat = point[1];
-            const pLon = point[0];
-
-            if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
-                const t = (pLat - lat1) / (lat2 - lat1);
-                let lonAtIntersection = lon1 + t * (lon2 - lon1);
-
-                if (Math.abs(lon2 - lon1) > 180) {
-                    if (lon2 < lon1) lonAtIntersection = lon1 + t * (lon2 + 360 - lon1);
-                    else lonAtIntersection = lon1 + t * (lon2 - 360 - lon1);
-                }
-
-                if (pLon < lonAtIntersection) {
-                    windingNumber += (lat2 > lat1) ? 1 : -1;
-                }
-            }
-        }
-
-        return windingNumber !== 0;
     }
 }

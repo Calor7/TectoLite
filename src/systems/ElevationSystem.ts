@@ -3,8 +3,9 @@
 
 import { AppState, TectonicPlate, CrustVertex, Coordinate, generateId } from '../types';
 import { distance } from '../utils/sphericalMath';
-import { isPointInPolygon } from '../SplitTool';
 import { Delaunay } from 'd3-delaunay';
+import { geoBounds, geoContains } from 'd3-geo';
+import { toGeoJSON } from '../utils/geoHelpers';
 
 export class ElevationSystem {
     private neighborCache: Map<string, Map<string, Set<string>>> = new Map(); // plateId -> neighborGraph
@@ -122,68 +123,91 @@ export class ElevationSystem {
     public initializePlateMesh(plate: TectonicPlate, resolution: number = 150): TectonicPlate {
         if (plate.polygons.length === 0) return plate;
         
-        // Calculate bounding box
-        const allPoints = plate.polygons.flatMap(poly => poly.points);
-        if (allPoints.length === 0) return plate;
+        // Convert to GeoJSON Feature for robust spherical bounds/contains check
+        const polys = plate.polygons.map(p => toGeoJSON(p).geometry);
+        const multiPoly: GeoJSON.MultiPolygon = {
+            type: 'MultiPolygon',
+            coordinates: polys.map(p => p.coordinates)
+        };
+        const feature: GeoJSON.Feature<GeoJSON.MultiPolygon> = { 
+            type: 'Feature', 
+            geometry: multiPoly, 
+            properties: {} 
+        };
         
-        const lons = allPoints.map(p => p[0]);
-        const lats = allPoints.map(p => p[1]);
-        const minLon = Math.min(...lons);
-        const maxLon = Math.max(...lons);
-        const minLat = Math.min(...lats);
-        const maxLat = Math.max(...lats);
+        // Calculate bounds using d3-geo (handles poles and date line correctly)
+        const [[bMinLon, bMinLat], [bMaxLon, bMaxLat]] = geoBounds(feature);
         
         // Convert resolution from km to degrees (approximate)
         const spacing = resolution / 111.0; // 1 degree ≈ 111 km
-        
-        // Generate hex grid points
-        const vertices: CrustVertex[] = [];
         const rowOffset = spacing * 0.866; // sqrt(3)/2 for hex pattern
         
+        const vertices: CrustVertex[] = [];
+        
         let row = 0;
-        for (let lat = minLat; lat <= maxLat; lat += rowOffset) {
+        for (let lat = bMinLat; lat <= bMaxLat; lat += rowOffset) {
             const lonOffset = (row % 2) * (spacing / 2); // Offset every other row
-            for (let lon = minLon + lonOffset; lon <= maxLon; lon += spacing) {
+            
+            // Handle longitude wrapping for date-line crossing plates
+            const startLon = bMinLon;
+            const endLon = bMinLon <= bMaxLon ? bMaxLon : bMaxLon + 360;
+            
+            for (let l = startLon; l <= endLon; l += spacing) {
+                // Normalize longitude to -180..180
+                let lon = l + lonOffset;
+                if (lon > 180) lon -= 360;
+                if (lon < -180) lon += 360;
+                
                 const pos: Coordinate = [lon, lat];
                 
-                // Check if point is inside any of the plate's polygons
-                let inside = false;
-                for (const poly of plate.polygons) {
-                    if (isPointInPolygon(pos, poly.points)) {
-                        inside = true;
-                        break;
-                    }
-                }
-                
-                if (inside) {
+                // Use robust d3-geo contains check
+                if (geoContains(feature, pos)) {
                     vertices.push({
                         id: generateId(),
                         pos: pos,
-                        originalPos: pos, // Store original position
-                        elevation: 0, // Start at sea level
+                        originalPos: pos,
+                        elevation: 0,
                         sediment: 0
                     });
                 }
             }
             row++;
         }
+
+        // Add boundary vertices to ensure exact edge coverage
+        // This fixes graphical gaps at plate boundaries
         
-        // Enforce minimum vertex count for small plates
-        if (vertices.length < 10 && allPoints.length > 0) {
-            // Fallback: sample from polygon vertices
-            for (let i = 0; i < Math.min(10, allPoints.length); i++) {
+        for (const poly of plate.polygons) {
+            // Sample polygon points (don't take every single one if super dense, but ensure structure)
+            // For now, take points that are at least 'spacing/3' apart to keep shape but reduce count
+            const minDistInfo = spacing * 0.3; 
+            
+            let lastAdded: Coordinate | null = null;
+            
+            for (let i = 0; i < poly.points.length; i++) {
+                const p = poly.points[i];
+                
+                // Always add corners/sharp turns? 
+                // Simple distance filter:
+                if (lastAdded) {
+                    const d = Math.hypot(p[0] - lastAdded[0], p[1] - lastAdded[1]);
+                    if (d < minDistInfo) continue;
+                }
+                
                 vertices.push({
                     id: generateId(),
-                    pos: allPoints[i],
-                    originalPos: allPoints[i], // Store original position
+                    pos: p,
+                    originalPos: p,
                     elevation: 0,
                     sediment: 0
                 });
+                lastAdded = p;
             }
         }
         
         // Enforce maximum vertex count for performance
-        const maxVertices = 500;
+        // Increase limit to accommodate boundary points
+        const maxVertices = 1000;
         if (vertices.length > maxVertices) {
             // Randomly sample to reduce count
             const sampled: CrustVertex[] = [];

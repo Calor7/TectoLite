@@ -423,17 +423,21 @@ export class SimulationEngine {
 
         // --- Mesh Vertex Transformation ---
         // Transform mesh vertices to follow plate rotation
-        // CRITICAL: Transform from originalPos to avoid compounding rotation
+        // CHANGED: Use incremental update from last simulated time to prevent history rewriting issues
         let newCrustMesh = plate.crustMesh;
         if (plate.crustMesh && plate.crustMesh.length > 0) {
-            const meshElapsed = Math.max(0, time - plate.birthTime);
-            const meshAngle = toRad(pole.rate * meshElapsed);
+            // Determine the time the current mesh positions are valid for
+            const meshTime = plate.elevationSimulatedTime !== undefined ? plate.elevationSimulatedTime : plate.birthTime;
             
-            if (meshAngle !== 0) {
+            // Calculate elapsed time since last update
+            const dt = time - meshTime;
+            const meshAngle = toRad(pole.rate * dt);
+            
+            // Only rotate if there is a time delta and a rate (and use small threshold to avoid jitter)
+            if (Math.abs(meshAngle) > 1e-9) {
                 newCrustMesh = plate.crustMesh.map(vertex => {
-                    // Use originalPos as source of truth, fallback to pos for legacy data
-                    const sourcePos = vertex.originalPos || vertex.pos;
-                    const v = latLonToVector(sourcePos);
+                    // Always use current 'pos' as the source for incremental update
+                    const v = latLonToVector(vertex.pos);
                     const vRot = rotateVector(v, axis, meshAngle);
                     return {
                         ...vertex,
