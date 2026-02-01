@@ -2501,7 +2501,7 @@ export class CanvasManager {
         
         const vertices = plate.crustMesh;
         
-        // Project all vertices to screen space
+        // Project all vertices to screen space first
         const screenPoints: [number, number][] = [];
         const validIndices: number[] = [];
         
@@ -2524,13 +2524,27 @@ export class CanvasManager {
             
             // Render each triangle
             for (let i = 0; i < delaunay.triangles.length; i += 3) {
-                const idx0 = validIndices[delaunay.triangles[i]];
-                const idx1 = validIndices[delaunay.triangles[i + 1]];
-                const idx2 = validIndices[delaunay.triangles[i + 2]];
+                const screenIdx0 = delaunay.triangles[i];
+                const screenIdx1 = delaunay.triangles[i + 1];
+                const screenIdx2 = delaunay.triangles[i + 2];
+                
+                const idx0 = validIndices[screenIdx0];
+                const idx1 = validIndices[screenIdx1];
+                const idx2 = validIndices[screenIdx2];
                 
                 const v0 = vertices[idx0];
                 const v1 = vertices[idx1];
                 const v2 = vertices[idx2];
+                
+                // Check maximum edge length to prevent spanning across gaps in concave plates
+                const maxEdgeLengthDeg = 5.0; // ~550km - increased to allow edge coverage
+                const edge01 = Math.hypot(v1.pos[0] - v0.pos[0], v1.pos[1] - v0.pos[1]);
+                const edge12 = Math.hypot(v2.pos[0] - v1.pos[0], v2.pos[1] - v1.pos[1]);
+                const edge20 = Math.hypot(v0.pos[0] - v2.pos[0], v0.pos[1] - v2.pos[1]);
+                
+                if (edge01 > maxEdgeLengthDeg || edge12 > maxEdgeLengthDeg || edge20 > maxEdgeLengthDeg) {
+                    continue; // Skip triangles with very long edges (spanning gaps)
+                }
                 
                 // Calculate average elevation for triangle
                 const avgElevation = (v0.elevation + v1.elevation + v2.elevation) / 3;
@@ -2538,11 +2552,11 @@ export class CanvasManager {
                 // Get color for elevation
                 const color = this.elevationToColor(avgElevation);
                 
-                // Draw triangle
+                // Draw triangle in screen space
                 this.ctx.beginPath();
-                this.ctx.moveTo(screenPoints[delaunay.triangles[i]][0], screenPoints[delaunay.triangles[i]][1]);
-                this.ctx.lineTo(screenPoints[delaunay.triangles[i + 1]][0], screenPoints[delaunay.triangles[i + 1]][1]);
-                this.ctx.lineTo(screenPoints[delaunay.triangles[i + 2]][0], screenPoints[delaunay.triangles[i + 2]][1]);
+                this.ctx.moveTo(screenPoints[screenIdx0][0], screenPoints[screenIdx0][1]);
+                this.ctx.lineTo(screenPoints[screenIdx1][0], screenPoints[screenIdx1][1]);
+                this.ctx.lineTo(screenPoints[screenIdx2][0], screenPoints[screenIdx2][1]);
                 this.ctx.closePath();
                 
                 this.ctx.fillStyle = this.applyAlpha(color, alpha);
@@ -2764,5 +2778,39 @@ export class CanvasManager {
         this.ctx.fillText(`Visible: ${visibleVertices}`, boxX + 8, yPos);
         
         this.ctx.restore();
+    }
+
+    /**
+     * Check if a point is inside a spherical polygon using ray casting
+     */
+    private isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
+        if (polygon.length < 3) return false;
+
+        let windingNumber = 0;
+
+        for (let i = 0; i < polygon.length; i++) {
+            const lat1 = polygon[i][1];
+            const lat2 = polygon[(i + 1) % polygon.length][1];
+            const lon1 = polygon[i][0];
+            const lon2 = polygon[(i + 1) % polygon.length][0];
+            const pLat = point[1];
+            const pLon = point[0];
+
+            if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
+                const t = (pLat - lat1) / (lat2 - lat1);
+                let lonAtIntersection = lon1 + t * (lon2 - lon1);
+
+                if (Math.abs(lon2 - lon1) > 180) {
+                    if (lon2 < lon1) lonAtIntersection = lon1 + t * (lon2 + 360 - lon1);
+                    else lonAtIntersection = lon1 + t * (lon2 - 360 - lon1);
+                }
+
+                if (pLon < lonAtIntersection) {
+                    windingNumber += (lat2 > lat1) ? 1 : -1;
+                }
+            }
+        }
+
+        return windingNumber !== 0;
     }
 }
