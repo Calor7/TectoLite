@@ -145,18 +145,16 @@ class TectoLiteApp {
         const target = document.getElementById(targetId);
         if (!resizer || !target) return;
 
+        const isWidth = dimension === 'width';
+
         let startVal = 0;
         let startDim = 0;
 
         const onMouseMove = (e: MouseEvent) => {
             let newVal;
-            if (dimension === 'width') {
-                const diff = inverse ? (startVal - e.clientX) : (e.clientX - startVal);
-                newVal = startDim + diff;
-            } else {
-                const diff = inverse ? (startVal - e.clientY) : (e.clientY - startVal);
-                newVal = startDim + diff;
-            }
+            const cursorVal = isWidth ? e.clientX : e.clientY;
+            const diff = inverse ? (startVal - cursorVal) : (cursorVal - startVal);
+            newVal = startDim + diff;
             
             // Constrain minimums
             const minSize = 50;
@@ -178,7 +176,7 @@ class TectoLiteApp {
 
         resizer.addEventListener('mousedown', (e) => {
             e.preventDefault(); // Prevent text selection
-            if (dimension === 'width') {
+            if (isWidth) {
                 startVal = e.clientX;
                 startDim = target.getBoundingClientRect().width;
                 document.body.style.cursor = 'col-resize';

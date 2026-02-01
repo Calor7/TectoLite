@@ -190,10 +190,10 @@ export class CanvasManager {
         }
 
         let closestVertex: { plateId: string; landmassId: string; vertexIndex: number; type: 'vertex' } | null = null;
-        let minVertexDist = 12; // px - larger hit target for easier editing
+        let minVertexDist2 = 12 * 12; // px^2 - larger hit target for easier editing
 
         let closestEdge: { plateId: string; landmassId: string; edgeStartIndex: number; pointOnEdge: Coordinate; type: 'edge' } | null = null;
-        let minEdgeDist = 12; // px
+        let minEdgeDist2 = 12 * 12; // px^2
 
         const screenPoints = polygon.map(p => this.projectionManager.project(p));
 
@@ -202,9 +202,11 @@ export class CanvasManager {
             if (!p) continue;
 
             // Vertex check
-            const d = Math.sqrt((p[0] - mouseX) ** 2 + (p[1] - mouseY) ** 2);
-            if (d < minVertexDist) {
-                minVertexDist = d;
+            const dx = p[0] - mouseX;
+            const dy = p[1] - mouseY;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < minVertexDist2) {
+                minVertexDist2 = d2;
                 closestVertex = { plateId: plate.id, landmassId: landmass.id, vertexIndex: i, type: 'vertex' };
             }
 
@@ -215,14 +217,13 @@ export class CanvasManager {
                 if (!pNext) continue;
 
                 const dist2 = this.distToSegmentSquared({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
-                const dEdge = Math.sqrt(dist2);
-                if (dEdge < minEdgeDist) {
+                if (dist2 < minEdgeDist2) {
                     const t = this.getT({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
                     const screenX = p[0] + t * (pNext[0] - p[0]);
                     const screenY = p[1] + t * (pNext[1] - p[1]);
                     const geo = this.projectionManager.invert(screenX, screenY);
                     if (geo) {
-                        minEdgeDist = dEdge;
+                        minEdgeDist2 = dist2;
                         closestEdge = { plateId: plate.id, landmassId: landmass.id, edgeStartIndex: i, pointOnEdge: geo, type: 'edge' };
                     }
                 }
@@ -247,10 +248,10 @@ export class CanvasManager {
             : plate.polygons;
 
         let closestVertex: { plateId: string; polyIndex: number; vertexIndex: number } | null = null;
-        let minVertexDist = 8; // px
+        let minVertexDist2 = 8 * 8; // px^2
 
         let closestEdge: { plateId: string; polyIndex: number; vertexIndex: number; pointOnEdge: Coordinate } | null = null;
-        let minEdgeDist = 8; // px
+        let minEdgeDist2 = 8 * 8; // px^2
 
         // Get Mouse Geo Position for spherical calculations
         const mouseGeo = this.projectionManager.invert(mouseX, mouseY);
@@ -265,9 +266,11 @@ export class CanvasManager {
                 if(!p) continue;
                 
                 // Vertex check (Screen Space is accurate for user intention)
-                const d = Math.sqrt((p[0]-mouseX)**2 + (p[1]-mouseY)**2);
-                if(d < minVertexDist) {
-                    minVertexDist = d;
+                const dx = p[0] - mouseX;
+                const dy = p[1] - mouseY;
+                const d2 = dx * dx + dy * dy;
+                if(d2 < minVertexDist2) {
+                    minVertexDist2 = d2;
                     closestVertex = { plateId: plate.id, polyIndex, vertexIndex: i };
                 }
 
@@ -277,7 +280,7 @@ export class CanvasManager {
                     const pNext = screenPoints[nextIdx];
                     if(!pNext) continue;
 
-                    let currentEdgeDist = 9999;
+                    let currentEdgeDist2 = Infinity;
                     let currentEdgePoint: Coordinate | null = null;
                     let isGeodesicHit = false;
 
@@ -309,7 +312,7 @@ export class CanvasManager {
                                     
                                     if (Math.abs((dA + dB) - dAB) < 0.05) {
                                         currentEdgePoint = vectorToLatLon(P);
-                                        currentEdgeDist = 0; // High priority (0 screen distance equivalent)
+                                        currentEdgeDist2 = 0; // High priority (0 screen distance equivalent)
                                         isGeodesicHit = true;
                                     }
                                 }
@@ -323,22 +326,21 @@ export class CanvasManager {
                     // If NO geodesic hit, we check screen chord.
                     if (!isGeodesicHit) {
                         const dist2 = this.distToSegmentSquared({x: mouseX, y: mouseY}, {x: p[0], y: p[1]}, {x: pNext[0], y: pNext[1]});
-                        const dEdge = Math.sqrt(dist2);
-                        if (dEdge < minEdgeDist) { // Only worth refining if better than current global best
+                        if (dist2 < minEdgeDist2) { // Only worth refining if better than current global best
                             const t = this.getT({x: mouseX, y: mouseY}, {x: p[0], y: p[1]}, {x: pNext[0], y: pNext[1]});
                             const screenX = p[0] + t * (pNext[0]-p[0]);
                             const screenY = p[1] + t * (pNext[1]-p[1]);
                             const geo = this.projectionManager.invert(screenX, screenY);
                             if (geo) {
                                 currentEdgePoint = geo;
-                                currentEdgeDist = dEdge;
+                                currentEdgeDist2 = dist2;
                             }
                         }
                     }
 
                     // Update Best Edge
-                    if (currentEdgePoint && currentEdgeDist < minEdgeDist) {
-                        minEdgeDist = currentEdgeDist;
+                    if (currentEdgePoint && currentEdgeDist2 < minEdgeDist2) {
+                        minEdgeDist2 = currentEdgeDist2;
                         closestEdge = { plateId: plate.id, polyIndex, vertexIndex: i, pointOnEdge: currentEdgePoint }; 
                     }
                 }

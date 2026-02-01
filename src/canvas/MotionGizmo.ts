@@ -225,9 +225,9 @@ export class MotionGizmo {
         // Scale 33 means visual arc angle = rate * 33
         // e.g. 1 deg/Ma will show as a 33 degree arc on the globe
         const totalAngle = rate * 33 * Math.PI / 180;
+        const step = totalAngle / numPoints;
 
-        for (let i = 0; i <= numPoints; i++) {
-            const angle = (i / numPoints) * totalAngle;
+        for (let i = 0, angle = 0; i <= numPoints; i++, angle += step) {
 
             // Rodrigues' rotation formula
             const cosA = Math.cos(angle);
@@ -257,13 +257,13 @@ export class MotionGizmo {
         if (!this.state) return null;
 
         const poleProj = projectionManager.project(this.state.polePosition);
+        const handleDist2 = (HANDLE_RADIUS + 4) ** 2;
         
         // Check pole handle if visible
         if (poleProj) {
-            const poleDist = Math.sqrt(
-                Math.pow(mouseX - poleProj[0], 2) + Math.pow(mouseY - poleProj[1], 2)
-            );
-            if (poleDist <= HANDLE_RADIUS + 4) {
+            const dx = mouseX - poleProj[0];
+            const dy = mouseY - poleProj[1];
+            if (dx * dx + dy * dy <= handleDist2) {
                 return 'pole';
             }
         }
@@ -277,8 +277,9 @@ export class MotionGizmo {
             const lastPoint = arcPoints[arcPoints.length - 1];
             const lastProj = projectionManager.project(lastPoint);
             if (lastProj) {
-                const rateDist = Math.sqrt(Math.pow(mouseX - lastProj[0], 2) + Math.pow(mouseY - lastProj[1], 2));
-                if (rateDist <= HANDLE_RADIUS + 4) {
+                const dx = mouseX - lastProj[0];
+                const dy = mouseY - lastProj[1];
+                if (dx * dx + dy * dy <= handleDist2) {
                     return 'rate';
                 }
             }
@@ -295,19 +296,21 @@ export class MotionGizmo {
         for (let i = 0; i < projectedPoints.length - 1; i++) {
             const p1 = projectedPoints[i];
             const p2 = projectedPoints[i+1];
-            const d = this.distToSegment({x: mouseX, y: mouseY}, {x: p1[0], y: p1[1]}, {x: p2[0], y: p2[1]});
-            if (d < 6) return 'rate'; // 6px tolerance for line click
+            const d2 = this.distToSegmentSquared({x: mouseX, y: mouseY}, {x: p1[0], y: p1[1]}, {x: p2[0], y: p2[1]});
+            if (d2 < 36) return 'rate'; // 6px tolerance for line click
         }
 
         return null;
     }
 
-    private distToSegment(p: {x:number, y:number}, v: {x:number, y:number}, w: {x:number, y:number}) {
+    private distToSegmentSquared(p: {x:number, y:number}, v: {x:number, y:number}, w: {x:number, y:number}) {
         const l2 = (v.x - w.x)**2 + (v.y - w.y)**2;
-        if (l2 === 0) return Math.sqrt((p.x - v.x)**2 + (p.y - v.y)**2);
+        if (l2 === 0) return (p.x - v.x)**2 + (p.y - v.y)**2;
         let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
         t = Math.max(0, Math.min(1, t));
-        return Math.sqrt((p.x - (v.x + t * (w.x - v.x)))**2 + (p.y - (v.y + t * (w.y - v.y)))**2);
+        const dx = p.x - (v.x + t * (w.x - v.x));
+        const dy = p.y - (v.y + t * (w.y - v.y));
+        return dx * dx + dy * dy;
     }
 
     public startDrag(handle: GizmoHandle, mouseX: number, mouseY: number): void {

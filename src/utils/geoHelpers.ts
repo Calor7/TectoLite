@@ -20,16 +20,13 @@ function calculateSignedArea(coords: Coordinate[]): number {
 function ensureClockwise(coords: Coordinate[]): Coordinate[] {
     const signedArea = calculateSignedArea(coords);
     // If positive (counter-clockwise), reverse to make clockwise
-    if (signedArea > 0) {
-        return [...coords].reverse();
-    }
-    return coords;
+    return signedArea > 0 ? coords.reverse() : coords;
 }
 
 // Convert internal Polygon type to GeoJSON Feature
 export function toGeoJSON(polygon: Polygon): GeoJSON.Feature<GeoJSON.Polygon> {
     // Ensure clockwise winding for exterior ring (d3-geo convention)
-    let coords = ensureClockwise([...polygon.points]);
+    const coords = ensureClockwise(polygon.points.slice());
 
     // Ensure closure - GeoJSON polygons must have first === last point
     if (coords.length > 0) {

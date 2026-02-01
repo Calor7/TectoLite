@@ -11,7 +11,7 @@ export function drawMountainIcon(
     size: number,
     options: IconOptions = {}
 ): void {
-    const { isSelected = false } = options;
+    const isSelected = !!options.isSelected;
 
     ctx.beginPath();
     ctx.moveTo(-size, size * 0.8);
@@ -39,7 +39,7 @@ export function drawVolcanoIcon(
     size: number,
     options: IconOptions = {}
 ): void {
-    const { isSelected = false } = options;
+    const isSelected = !!options.isSelected;
 
     ctx.beginPath();
     ctx.moveTo(-size, size * 0.8);
@@ -65,7 +65,7 @@ export function drawHotspotIcon(
     size: number,
     options: IconOptions = {}
 ): void {
-    const { isSelected = false } = options;
+    const isSelected = !!options.isSelected;
 
     ctx.beginPath();
     ctx.arc(0, 0, size, 0, Math.PI * 2);
@@ -86,7 +86,7 @@ export function drawRiftIcon(
     size: number,
     options: IconOptions = {}
 ): void {
-    const { isSelected = false } = options;
+    const isSelected = !!options.isSelected;
 
     ctx.beginPath();
     ctx.moveTo(-size, 0);
@@ -104,7 +104,7 @@ export function drawTrenchIcon(
     size: number,
     options: IconOptions = {}
 ): void {
-    const { isSelected = false } = options;
+    const isSelected = !!options.isSelected;
 
     ctx.beginPath();
     ctx.arc(0, size * 0.5, size, Math.PI * 0.2, Math.PI * 0.8);
@@ -118,7 +118,7 @@ export function drawIslandIcon(
     size: number,
     options: IconOptions = {}
 ): void {
-    const { isSelected = false } = options;
+    const isSelected = !!options.isSelected;
 
     ctx.beginPath();
     ctx.ellipse(0, 0, size, size * 0.6, 0, 0, Math.PI * 2);

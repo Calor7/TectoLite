@@ -28,25 +28,14 @@ export class ProjectionManager {
         this.currentProjectionType = type;
         
         // 1. Select Projection
-        switch (type) {
-            case 'orthographic':
-                this.projection = geoOrthographic();
-                break;
-            case 'mercator':
-                this.projection = geoMercator();
-                break;
-            case 'equirectangular':
-                this.projection = geoEquirectangular();
-                break;
-            case 'mollweide':
-                this.projection = geoMollweide();
-                break;
-            case 'robinson':
-                this.projection = geoRobinson();
-                break;
-            default:
-                this.projection = geoOrthographic();
-        }
+        const projectionFactory =
+            type === 'orthographic' ? geoOrthographic :
+            type === 'mercator' ? geoMercator :
+            type === 'equirectangular' ? geoEquirectangular :
+            type === 'mollweide' ? geoMollweide :
+            type === 'robinson' ? geoRobinson :
+            geoOrthographic;
+        this.projection = projectionFactory();
 
         // 2. Apply Viewport State
         // D3 projections typically use:

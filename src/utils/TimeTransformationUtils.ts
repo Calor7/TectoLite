@@ -23,13 +23,8 @@ interface TimeTransformationContext {
  */
 export function toDisplayTime(internalTime: number, context: TimeTransformationContext): number {
     const { maxTime, mode } = context;
-    
-    if (mode === 'positive') {
-        return internalTime;
-    } else {
-        // negative mode: 0 becomes -maxTime, maxTime becomes 0
-        return internalTime - maxTime;
-    }
+    // negative mode: 0 becomes -maxTime, maxTime becomes 0
+    return mode === 'positive' ? internalTime : internalTime - maxTime;
 }
 
 /**
@@ -40,14 +35,8 @@ export function toDisplayTime(internalTime: number, context: TimeTransformationC
  */
 export function toInternalTime(displayTime: number, context: TimeTransformationContext): number {
     const { maxTime, mode } = context;
-    
-    if (mode === 'positive') {
-        return Math.max(0, Math.min(displayTime, maxTime));
-    } else {
-        // negative mode: -maxTime becomes 0, 0 becomes maxTime
-        const internal = displayTime + maxTime;
-        return Math.max(0, Math.min(internal, maxTime));
-    }
+    // negative mode: -maxTime becomes 0, 0 becomes maxTime
+    return Math.max(0, Math.min(mode === 'positive' ? displayTime : displayTime + maxTime, maxTime));
 }
 
 /**
@@ -61,6 +50,6 @@ export function parseTimeInput(input: string): number | null {
     if (!trimmed) return null;
     
     const parsed = parseFloat(trimmed);
-    return isNaN(parsed) ? null : parsed;
+    return Number.isNaN(parsed) ? null : parsed;
 }
 

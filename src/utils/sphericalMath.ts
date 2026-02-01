@@ -11,12 +11,15 @@ export interface Vector3 {
 }
 
 // Degree/Radian conversions
+const DEG2RAD = Math.PI / 180;
+const RAD2DEG = 180 / Math.PI;
+
 export function toRad(deg: number): number {
-    return deg * Math.PI / 180;
+    return deg * DEG2RAD;
 }
 
 export function toDeg(rad: number): number {
-    return rad * 180 / Math.PI;
+    return rad * RAD2DEG;
 }
 
 // Convert [lon, lat] to 3D unit vector
@@ -70,9 +73,10 @@ export function dot(a: Vector3, b: Vector3): number {
 
 // Normalize a vector to unit length
 export function normalize(v: Vector3): Vector3 {
-    const len = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-    if (len === 0) return { x: 0, y: 0, z: 0 };
-    return { x: v.x / len, y: v.y / len, z: v.z / len };
+    const lenSq = v.x * v.x + v.y * v.y + v.z * v.z;
+    if (lenSq === 0) return { x: 0, y: 0, z: 0 };
+    const inv = 1 / Math.sqrt(lenSq);
+    return { x: v.x * inv, y: v.y * inv, z: v.z * inv };
 }
 
 // Scale a vector by scalar
@@ -93,8 +97,8 @@ export function calculateSphericalCentroid(points: Coordinate[]): Coordinate {
 
     // Convert all points to 3D vectors and sum
     let sumX = 0, sumY = 0, sumZ = 0;
-    for (const point of points) {
-        const v = latLonToVector(point);
+    for (let i = 0, n = points.length; i < n; i++) {
+        const v = latLonToVector(points[i]);
         sumX += v.x;
         sumY += v.y;
         sumZ += v.z;
