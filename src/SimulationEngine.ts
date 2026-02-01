@@ -649,12 +649,13 @@ export class SimulationEngine {
                 const newFeatures = plate.features.map(f => {
                     if (f.type !== 'flowline') return f;
                     const startTime = f.generatedAt || plate.birthTime;
+                    const origin = f.originalPosition || f.position;
                     const points: Coordinate[] = [];
                     const step = 5;
                     for (let t = startTime; t <= currentTime; t += step) {
-                        points.push(this.getPointPositionAtTime(f.originalPosition || f.position, plate.id, t, plates));
+                        points.push(this.getPointPositionAtTime(origin, plate.id, t, plates));
                     }
-                    points.push(this.getPointPositionAtTime(f.originalPosition || f.position, plate.id, currentTime, plates));
+                    points.push(this.getPointPositionAtTime(origin, plate.id, currentTime, plates));
                     return { ...f, trail: points };
                 });
                 return { ...plate, features: newFeatures };
@@ -691,7 +692,9 @@ export class SimulationEngine {
             const pole = plate.motion?.eulerPole;
             if (pole && pole.rate !== 0) {
                 const elapsed = time - plate.birthTime;
-                currentPos = vectorToLatLon(rotateVector(latLonToVector(point), latLonToVector(pole.position), toRad(pole.rate * elapsed)));
+                const axis = latLonToVector(pole.position);
+                const v = latLonToVector(point);
+                currentPos = vectorToLatLon(rotateVector(v, axis, toRad(pole.rate * elapsed)));
             }
         }
         return currentPos;

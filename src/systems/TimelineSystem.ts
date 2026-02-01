@@ -122,30 +122,30 @@ export class TimelineSystem {
 
         // 3. Split Events (found in events array)
         if (plate.events) {
-            plate.events.filter(e => e.type === 'split').forEach(evt => {
-                list.push({
-                    id: evt.id,
-                    time: evt.time,
-                    type: 'split',
-                    label: 'Plate Split',
-                    details: 'Sub-plates created',
-                    isEditable: true,
-                    isDeletable: true,
-                    originalRef: evt
-                });
-            });
-
-            plate.events.filter(e => e.type === 'fusion').forEach(evt => {
-                list.push({
-                    id: evt.id,
-                    time: evt.time,
-                    type: 'fuse',
-                    label: 'Plate Fusion',
-                    details: 'Plate fused',
-                    isEditable: true,
-                    isDeletable: true,
-                    originalRef: evt
-                });
+            plate.events.forEach(evt => {
+                if (evt.type === 'split') {
+                    list.push({
+                        id: evt.id,
+                        time: evt.time,
+                        type: 'split',
+                        label: 'Plate Split',
+                        details: 'Sub-plates created',
+                        isEditable: true,
+                        isDeletable: true,
+                        originalRef: evt
+                    });
+                } else if (evt.type === 'fusion') {
+                    list.push({
+                        id: evt.id,
+                        time: evt.time,
+                        type: 'fuse',
+                        label: 'Plate Fusion',
+                        details: 'Plate fused',
+                        isEditable: true,
+                        isDeletable: true,
+                        originalRef: evt
+                    });
+                }
             });
         }
 

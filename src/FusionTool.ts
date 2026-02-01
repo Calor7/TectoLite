@@ -135,11 +135,13 @@ export function fusePlates(
     
     for (const plate of sortedPlates) {
         if (plate.paintStrokes) {
+            const [centerLon, centerLat] = plate.center;
             for (const stroke of plate.paintStrokes) {
+                const { id, points, ...strokeMeta } = stroke;
                 // Convert from plate's local coordinates to world coordinates
-                const worldPoints = stroke.points.map(pt => [
-                    plate.center[0] + pt[0],
-                    plate.center[1] + pt[1]
+                const worldPoints = points.map(pt => [
+                    centerLon + pt[0],
+                    centerLat + pt[1]
                 ] as Coordinate);
                 
                 // DESTRUCTIVE FILTER: Only keep points that are actually inside the source plate's polygons
@@ -179,7 +181,7 @@ export function fusePlates(
                     ] as Coordinate);
                     
                     mergedPaintStrokes.push({
-                        ...stroke,
+                        ...strokeMeta,
                         points: fusedLocalPoints,
                         id: generateId()
                     });
