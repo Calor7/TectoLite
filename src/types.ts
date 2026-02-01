@@ -232,6 +232,9 @@ export interface WorldState {
     upliftRate?: number;                    // Uplift rate at collision zones (m/Ma)
     erosionRate?: number;                   // Erosion transport rate (0-1 fraction)
     meshResolution?: number;                // Mesh vertex spacing (km)
+    sedimentConsolidationRate?: number;     // Sediment → crust conversion rate (km/Ma)
+    sedimentConsolidationRatio?: number;    // Compaction ratio (sediment to crust, 0-1)
+    oceanLevel?: number;                    // Sea level elevation in meters (default 0)
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];

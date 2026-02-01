@@ -2507,14 +2507,14 @@ export class CanvasManager {
             if (state.world.currentTime < plate.birthTime) continue;
             if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
             
-            this.renderPlateMesh(plate, mode);
+            this.renderPlateMesh(plate, mode, state);
         }
     }
     
     /**
      * Render elevation mesh for a single plate using Delaunay triangulation
      */
-    private renderPlateMesh(plate: any, mode: ElevationViewMode): void {
+    private renderPlateMesh(plate: any, mode: ElevationViewMode, state?: AppState): void {
         if (!plate.crustMesh || plate.crustMesh.length < 3) return;
         
         // Apply ghost rotation if active (same as renderPlates)
@@ -2614,8 +2614,8 @@ export class CanvasManager {
                 // Calculate average elevation for triangle
                 const avgElevation = (v0.elevation + v1.elevation + v2.elevation) / 3;
                 
-                // Get color for elevation
-                const color = this.elevationToColor(avgElevation);
+                // Get color for elevation (pass state for ocean level)
+                const color = this.elevationToColor(avgElevation, state);
                 
                 // Draw triangle in screen space
                 this.ctx.beginPath();
@@ -2635,29 +2635,34 @@ export class CanvasManager {
     /**
      * Map elevation to topographic color
      */
-    private elevationToColor(elevation: number): string {
-        if (elevation < 0) {
-            // Ocean: Dark blue -> Light blue
-            const depth = Math.abs(elevation);
+    private elevationToColor(elevation: number, state?: AppState): string {
+        // Get ocean level from global options
+        const oceanLevel = state?.world.globalOptions.oceanLevel ?? 0;
+        
+        // Vertices below ocean level render as ocean (deep blue)
+        if (elevation < oceanLevel) {
+            const depth = oceanLevel - elevation;
             const intensity = Math.max(0, 1 - depth / 4000);
-            const blue = Math.floor(100 + intensity * 155);
-            return `rgb(0, 50, ${blue})`;
-        } else if (elevation < 1000) {
-            // Land: Green -> Yellow
-            const t = elevation / 1000;
+            const blue = Math.floor(50 + intensity * 205);
+            return `rgb(0, 40, ${blue})`;
+        }
+        
+        if (elevation < oceanLevel + 1000) {
+            // Land: Green -> Yellow (above ocean level)
+            const t = (elevation - oceanLevel) / 1000;
             const r = Math.floor(34 + t * 186);  // 34 -> 220
             const g = Math.floor(139 + t * 61);  // 139 -> 200
             return `rgb(${r}, ${g}, 34)`;
-        } else if (elevation < 3000) {
+        } else if (elevation < oceanLevel + 3000) {
             // Hills: Brown
-            const t = (elevation - 1000) / 2000;
+            const t = (elevation - (oceanLevel + 1000)) / 2000;
             const r = Math.floor(139 + t * 50);  // Brown -> Grey
             const g = Math.floor(90 + t * 50);
             const b = Math.floor(43 + t * 87);
             return `rgb(${r}, ${g}, ${b})`;
-        } else if (elevation < 5000) {
+        } else if (elevation < oceanLevel + 5000) {
             // Mountains: Grey
-            const t = (elevation - 3000) / 2000;
+            const t = (elevation - (oceanLevel + 3000)) / 2000;
             const intensity = Math.floor(130 + t * 70);
             return `rgb(${intensity}, ${intensity}, ${intensity})`;
         } else {

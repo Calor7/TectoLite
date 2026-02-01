@@ -354,6 +354,20 @@ class TectoLiteApp {
                                         <input type="number" id="elevation-erosion" class="property-input" value="${this.state.world.globalOptions.erosionRate || 0.001}" min="0.0001" max="0.01" step="0.0001" style="width: 70px;">
                                     </div>
                                     
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
+                                        <span style="font-size: 10px; color: var(--text-secondary);">Sediment Rate:</span>
+                                        <input type="number" id="elevation-sediment-rate" class="property-input" value="${this.state.world.globalOptions.sedimentConsolidationRate || 0.001}" min="0.0001" max="0.01" step="0.0001" style="width: 70px;"> km/Ma
+                                    </div>
+                                    
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
+                                        <span style="font-size: 10px; color: var(--text-secondary);">Sediment Ratio:</span>
+                                        <input type="number" id="elevation-sediment-ratio" class="property-input" value="${this.state.world.globalOptions.sedimentConsolidationRatio || 0.25}" min="0.1" max="1" step="0.05" style="width: 70px;">
+                                    </div>
+                                    
+                                    <button id="btn-reset-elevation-defaults" class="btn" style="width: 100%; margin-top: 8px; padding: 4px; font-size: 10px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); color: var(--text-default); cursor: pointer; border-radius: 3px;">
+                                        ↻ Reset to Defaults
+                                    </button>
+                                    
                                     <div style="margin-top: 8px; padding: 6px; background: rgba(37, 99, 235, 0.1); border-radius: 4px; font-size: 9px; color: var(--text-secondary);">
                                         💡 Use the Mesh Edit tool (M) to inspect and manually sculpt terrain
                                     </div>
@@ -379,6 +393,29 @@ class TectoLiteApp {
                         <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; gap: 6px;">
                             <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Radius (km)</label>
                             <input type="number" id="global-planet-radius" class="property-input" value="${this.state.world.globalOptions.customRadiusEnabled ? (this.state.world.globalOptions.customPlanetRadius || 6371) : 6371}" step="100" style="width: 90px;" disabled>
+                        </div>
+                        
+                        <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border-default);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 6px 0;">
+                                <label style="font-size: 10px; color: var(--text-secondary);">Ocean Level Preset:</label>
+                                <select id="global-ocean-level-preset" class="property-input" style="width: 110px; font-size: 10px;">
+                                    <option value="0">Modern Earth (0m)</option>
+                                    <option value="6">Last Interglacial (+6m)</option>
+                                    <option value="25">Pliocene (+25m)</option>
+                                    <option value="65">Eocene Optimum (+65m)</option>
+                                    <option value="250">Cretaceous High (+250m)</option>
+                                    <option value="-60">Early Holocene (-60m)</option>
+                                    <option value="-120">Last Glacial Max (-120m)</option>
+                                    <option value="custom">Custom</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 6px 0;">
+                                <label style="font-size: 10px; color: var(--text-secondary);">Custom Level:</label>
+                                <input type="number" id="global-ocean-level" class="property-input" value="${this.state.world.globalOptions.oceanLevel ?? 0}" min="-6000" max="6000" step="100" style="width: 80px;"> m
+                            </div>
+                            <div style="font-size: 9px; color: var(--text-secondary); padding: 0 8px; margin-top: 4px;">
+                                💧 Elevation mesh above this level = land (colored). Below = ocean (blue)
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1416,6 +1453,38 @@ class TectoLiteApp {
             }
         });
 
+        document.getElementById('elevation-sediment-rate')?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val) && val >= 0) {
+                this.state.world.globalOptions.sedimentConsolidationRate = val;
+            }
+        });
+
+        document.getElementById('elevation-sediment-ratio')?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val) && val >= 0 && val <= 1) {
+                this.state.world.globalOptions.sedimentConsolidationRatio = val;
+            }
+        });
+
+        document.getElementById('btn-reset-elevation-defaults')?.addEventListener('click', () => {
+            // Reset to default values
+            this.state.world.globalOptions.meshResolution = 150;
+            this.state.world.globalOptions.upliftRate = 1000;
+            this.state.world.globalOptions.erosionRate = 0.001;
+            this.state.world.globalOptions.sedimentConsolidationRate = 0.001;
+            this.state.world.globalOptions.sedimentConsolidationRatio = 0.25;
+            
+            // Update UI inputs
+            (document.getElementById('elevation-resolution') as HTMLInputElement).value = '150';
+            (document.getElementById('elevation-uplift') as HTMLInputElement).value = '1000';
+            (document.getElementById('elevation-erosion') as HTMLInputElement).value = '0.001';
+            (document.getElementById('elevation-sediment-rate') as HTMLInputElement).value = '0.001';
+            (document.getElementById('elevation-sediment-ratio') as HTMLInputElement).value = '0.25';
+            
+            this.showToast('Elevation parameters reset to defaults', 1500);
+        });
+
         // Debug: Add Test Plume
         document.getElementById('btn-debug-spawn-plume')?.addEventListener('click', () => {
             // Add a plume at current viewport center? Or just (0,0)?
@@ -1955,6 +2024,34 @@ class TectoLiteApp {
                     this.state.world.globalOptions.planetRadius = val;
                 }
                 this.updateUI(); // Refresh UI to update calculated stats
+            }
+        });
+
+        // Ocean Level
+        const oceanLevelInput = document.getElementById('global-ocean-level') as HTMLInputElement;
+        const oceanLevelPreset = document.getElementById('global-ocean-level-preset') as HTMLSelectElement;
+        
+        oceanLevelPreset?.addEventListener('change', (e) => {
+            const val = (e.target as HTMLSelectElement).value;
+            if (val !== 'custom') {
+                const numVal = parseFloat(val);
+                this.state.world.globalOptions.oceanLevel = numVal;
+                if (oceanLevelInput) {
+                    oceanLevelInput.value = numVal.toString();
+                }
+                this.updateUI();
+            }
+        });
+        
+        oceanLevelInput?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val)) {
+                this.state.world.globalOptions.oceanLevel = val;
+                // Set preset to 'custom' when manually editing
+                if (oceanLevelPreset) {
+                    oceanLevelPreset.value = 'custom';
+                }
+                this.updateUI();
             }
         });
 

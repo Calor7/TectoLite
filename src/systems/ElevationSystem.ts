@@ -168,6 +168,9 @@ export class ElevationSystem {
             // Apply erosion (slope-based, transfers sediment)
             newState = this.applyErosion(newState, deltaT);
             
+            // Consolidate sediment in basins (convert to crustal thickness)
+            newState = this.consolidateSediment(newState, deltaT);
+            
             // Recalculate elevations from thickness (isostasy)
             newState.world.plates = newState.world.plates.map(plate => ({
                 ...plate,
@@ -740,8 +743,71 @@ export class ElevationSystem {
     }
     
     /**
-     * Clear cache for a specific plate (call when mesh changes)
+     * Consolidate sediment in basins (sediment → crustal thickness via compaction)
+     * Realistic approximation: sediment compacts and adds to crustal thickness
+     * This causes basins to self-fill and experience isostatic uplift
      */
+    private consolidateSediment(state: AppState, deltaT: number): AppState {
+        const consolidationRate = 0.001; // km/Ma - how fast sediment becomes rock
+        const sedimentConsolidationRatio = 0.25; // 1km sediment → 0.25km crust (4:1 compaction)
+        const minSedimentThreshold = 0.5; // km - minimum to consolidate
+        const plates = [...state.world.plates];
+        
+        for (let i = 0; i < plates.length; i++) {
+            const plate = plates[i];
+            if (!plate.crustMesh || plate.crustMesh.length < 3) continue;
+            
+            const neighbors = this.getOrBuildNeighborGraph(plate);
+            const consolidations = new Map<string, { thickness: number; sediment: number }>();
+            
+            for (const vertex of plate.crustMesh) {
+                if (vertex.sediment < minSedimentThreshold * 1000) continue; // Convert km to m
+                
+                const neighborIds = neighbors.get(vertex.id);
+                if (!neighborIds || neighborIds.size === 0) continue;
+                
+                // Check if this vertex is in a basin (lower than neighbors)
+                const neighbors_vertices = Array.from(neighborIds)
+                    .map(nId => plate.crustMesh!.find(v => v.id === nId))
+                    .filter((n): n is CrustVertex => n !== undefined);
+                
+                const isLowerThanAllNeighbors = neighbors_vertices.every(n => vertex.elevation <= n.elevation);
+                
+                if (!isLowerThanAllNeighbors) continue; // Not in a basin
+                
+                // Consolidate: sediment → crustal thickness
+                const sedimentKm = vertex.sediment / 1000; // Convert m to km
+                const consolidatedThickness = sedimentKm * sedimentConsolidationRatio * consolidationRate * deltaT;
+                
+                if (consolidatedThickness > 0) {
+                    const consolidation = consolidations.get(vertex.id) || { thickness: 0, sediment: 0 };
+                    consolidation.thickness += consolidatedThickness;
+                    consolidation.sediment -= Math.min(vertex.sediment, consolidatedThickness / sedimentConsolidationRatio * 1000);
+                    consolidations.set(vertex.id, consolidation);
+                }
+            }
+            
+            // Apply consolidations
+            plates[i] = {
+                ...plate,
+                crustMesh: plate.crustMesh.map(vertex => {
+                    const consolidation = consolidations.get(vertex.id);
+                    if (!consolidation) return vertex;
+                    
+                    return {
+                        ...vertex,
+                        crustalThickness: vertex.crustalThickness + consolidation.thickness,
+                        sediment: Math.max(0, vertex.sediment + consolidation.sediment)
+                    };
+                })
+            };
+        }
+        
+        return {
+            ...state,
+            world: { ...state.world, plates }
+        };
+    }
     public clearCache(plateId: string): void {
         this.neighborCache.delete(plateId);
     }
