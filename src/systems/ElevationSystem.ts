@@ -15,6 +15,57 @@ const REFERENCE_THICKNESS_CONT = 35;  // km - standard continental crust
 const REFERENCE_THICKNESS_OCEAN = 7;  // km - standard oceanic crust
 const SEA_LEVEL_OFFSET = 0;           // meters - reference datum
 
+/**
+ * Calculate minimum distance from a point to a polygon (all edges)
+ * This ensures vertices along the entire boundary edge are affected, not just near vertices
+ */
+function distanceToPolygonEdges(point: Coordinate, polygonRings: Coordinate[][]): number {
+    let minDist = Infinity;
+    
+    for (const ring of polygonRings) {
+        if (ring.length < 2) continue;
+        
+        for (let i = 0; i < ring.length - 1; i++) {
+            const a = ring[i];
+            const b = ring[i + 1];
+            const d = distanceToSegment(point, a, b);
+            if (d < minDist) minDist = d;
+        }
+        // Close the ring
+        if (ring.length > 2) {
+            const d = distanceToSegment(point, ring[ring.length - 1], ring[0]);
+            if (d < minDist) minDist = d;
+        }
+    }
+    
+    return minDist;
+}
+
+/**
+ * Calculate distance from a point to a line segment
+ */
+function distanceToSegment(p: Coordinate, a: Coordinate, b: Coordinate): number {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const lengthSq = dx * dx + dy * dy;
+    
+    if (lengthSq === 0) {
+        // Segment is a point
+        return distance(p, a);
+    }
+    
+    // Project point onto line, clamped to segment
+    let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lengthSq;
+    t = Math.max(0, Math.min(1, t));
+    
+    const closest: Coordinate = [
+        a[0] + t * dx,
+        a[1] + t * dy
+    ];
+    
+    return distance(p, closest);
+}
+
 export class ElevationSystem {
     private neighborCache: Map<string, Map<string, Set<string>>> = new Map();
     
@@ -44,48 +95,75 @@ export class ElevationSystem {
      */
     public update(state: AppState, deltaT: number): AppState {
         if (!state.world.globalOptions.enableElevationSimulation) {
+            // When disabled, clear all meshes to save memory
+            const hasAnyMesh = state.world.plates.some(p => p.crustMesh && p.crustMesh.length > 0);
+            if (hasAnyMesh) {
+                return {
+                    ...state,
+                    world: {
+                        ...state.world,
+                        plates: state.world.plates.map(plate => ({
+                            ...plate,
+                            crustMesh: undefined,
+                            elevationSimulatedTime: undefined
+                        }))
+                    }
+                };
+            }
             return state;
         }
         
         const currentTime = state.world.currentTime;
         let newState = { ...state };
         
-        // Step 1: Initialize meshes for plates without them
-        newState.world.plates = newState.world.plates.map(plate => {
-            if (plate.visible && (!plate.crustMesh || plate.crustMesh.length === 0)) {
-                const resolution = state.world.globalOptions.meshResolution || 150;
-                const initializedPlate = this.initializePlateMesh(plate, resolution);
-                return {
-                    ...initializedPlate,
-                    elevationSimulatedTime: plate.birthTime
-                };
-            }
-            return plate;
-        });
-        
-        // Step 2: Handle timeline scrubbing (regenerate mesh if going backward)
-        newState.world.plates = newState.world.plates.map(plate => {
-            if (!plate.crustMesh || plate.crustMesh.length === 0) return plate;
-            
+        // Step 1: Handle backward scrubbing - clear meshes entirely
+        // They will be regenerated fresh on next forward tick with correct boundaries
+        const anyNeedsClear = newState.world.plates.some(plate => {
+            if (!plate.crustMesh || plate.crustMesh.length === 0) return false;
             const lastSimTime = plate.elevationSimulatedTime ?? plate.birthTime;
-            
-            if (currentTime < lastSimTime) {
-                // Regenerate mesh at current plate position
-                const resolution = state.world.globalOptions.meshResolution || 150;
-                const resetPlate = this.initializePlateMesh(plate, resolution);
-                return {
-                    ...resetPlate,
-                    elevationSimulatedTime: currentTime
-                };
-            }
-            
-            return plate;
+            return currentTime < lastSimTime;
         });
         
+        if (anyNeedsClear) {
+            // Clear ALL meshes on backward scrub for consistency
+            // This ensures boundaries and mesh state are in sync
+            newState.world.plates = newState.world.plates.map(plate => ({
+                ...plate,
+                crustMesh: undefined,
+                elevationSimulatedTime: undefined
+            }));
+            this.clearAllCaches();
+            return newState; // Return early - meshes will regenerate on next forward tick
+        }
+        
+        // Step 2: Initialize meshes for plates without them (only if moving forward)
+        if (deltaT > 0) {
+            newState.world.plates = newState.world.plates.map(plate => {
+                if (plate.visible && (!plate.crustMesh || plate.crustMesh.length === 0)) {
+                    // Only create mesh if plate is born
+                    if (currentTime < plate.birthTime) return plate;
+                    if (plate.deathTime !== null && currentTime >= plate.deathTime) return plate;
+                    
+                    const resolution = state.world.globalOptions.meshResolution || 150;
+                    const initializedPlate = this.initializePlateMesh(plate, resolution);
+                    return {
+                        ...initializedPlate,
+                        elevationSimulatedTime: currentTime
+                    };
+                }
+                return plate;
+            });
+        }
         // Step 3: Apply physics if moving forward
         if (deltaT > 0) {
             // Apply collision physics (asymmetric uplift, subduction)
             newState = this.applyCollisionPhysics(newState, deltaT);
+            
+            // Apply rifting physics (crustal thinning at divergent boundaries)
+            newState = this.applyRiftingPhysics(newState, deltaT);
+            
+            // Apply thermal subsidence (oceanic crust deepens with age)
+            newState = this.applyThermalSubsidence(newState, deltaT);
             
             // Apply erosion (slope-based, transfers sediment)
             newState = this.applyErosion(newState, deltaT);
@@ -227,8 +305,10 @@ export class ElevationSystem {
             
             if (!plate1.crustMesh && !plate2.crustMesh) continue;
             
-            const boundaryPoints = boundary.points.flat();
-            if (boundaryPoints.length < 3) continue;
+            // Use boundary rings (polygon edges) for proper distance calculation
+            const boundaryRings = boundary.points;
+            if (!boundaryRings || boundaryRings.length === 0) continue;
+            if (boundaryRings.every(ring => ring.length < 3)) continue;
             
             // Determine collision type and which plate subducts
             const collision = this.classifyCollision(plate1, plate2);
@@ -240,10 +320,10 @@ export class ElevationSystem {
             
             if (collision.type === 'continent-continent') {
                 // Both plates thicken (bilateral orogeny - Himalayas)
-                this.applyBilateralThickening(plates, p1Index, p2Index, boundaryPoints, thickeningAmount);
+                this.applyBilateralThickening(plates, p1Index, p2Index, boundaryRings, thickeningAmount);
             } else if (collision.type === 'ocean-continent' || collision.type === 'ocean-ocean') {
                 // Subduction: overriding plate gets volcanic arc, subducting gets trench
-                this.applySubductionPhysics(plates, p1Index, p2Index, boundaryPoints, thickeningAmount, collision);
+                this.applySubductionPhysics(plates, p1Index, p2Index, boundaryRings, thickeningAmount, collision);
             }
         }
         
@@ -297,7 +377,7 @@ export class ElevationSystem {
         plates: TectonicPlate[],
         p1Index: number,
         p2Index: number,
-        boundaryPoints: Coordinate[],
+        boundaryRings: Coordinate[][],
         thickeningAmount: number
     ): void {
         const proximityThreshold = 5.0 / 111.0; // ~5 degrees
@@ -308,7 +388,8 @@ export class ElevationSystem {
             plates[pIndex] = {
                 ...plates[pIndex],
                 crustMesh: plates[pIndex].crustMesh!.map(vertex => {
-                    const minDist = Math.min(...boundaryPoints.map(bp => distance(vertex.pos, bp)));
+                    // Calculate distance to boundary polygon edges (not just vertices)
+                    const minDist = distanceToPolygonEdges(vertex.pos, boundaryRings);
                     
                     if (minDist < proximityThreshold) {
                         // Gaussian falloff for natural mountain profile
@@ -334,7 +415,7 @@ export class ElevationSystem {
         plates: TectonicPlate[],
         p1Index: number,
         p2Index: number,
-        boundaryPoints: Coordinate[],
+        boundaryRings: Coordinate[][],
         thickeningAmount: number,
         collision: { subductingPlateId: string; overridingPlateId: string }
     ): void {
@@ -351,7 +432,8 @@ export class ElevationSystem {
             plates[pIndex] = {
                 ...plate,
                 crustMesh: plate.crustMesh.map(vertex => {
-                    const minDist = Math.min(...boundaryPoints.map(bp => distance(vertex.pos, bp)));
+                    // Calculate distance to boundary polygon edges
+                    const minDist = distanceToPolygonEdges(vertex.pos, boundaryRings);
                     
                     if (isSubducting) {
                         // Subducting plate: create trench (thin the crust near boundary)
@@ -380,6 +462,129 @@ export class ElevationSystem {
                 })
             };
         }
+    }
+    
+    /**
+     * Apply rifting physics at divergent boundaries
+     * Thins continental crust, creates new thin oceanic crust
+     */
+    private applyRiftingPhysics(state: AppState, deltaT: number): AppState {
+        if (!state.world.boundaries || state.world.boundaries.length === 0) {
+            return state;
+        }
+        
+        const thinningRate = (state.world.globalOptions.upliftRate || 1000) / 2000; // Half of convergent rate
+        const divergentBoundaries = state.world.boundaries.filter(b => b.type === 'divergent');
+        
+        if (divergentBoundaries.length === 0) return state;
+        
+        const plates = [...state.world.plates];
+        
+        for (const boundary of divergentBoundaries) {
+            const boundaryRings = boundary.points;
+            if (!boundaryRings || boundaryRings.length === 0) continue;
+            
+            const velocity = boundary.velocity || 0.001;
+            const intensityFactor = Math.min(velocity / 0.005, 1.0);
+            const thinningAmount = thinningRate * deltaT * intensityFactor;
+            
+            // Affect both plates at the boundary
+            for (const plateId of boundary.plateIds) {
+                const pIndex = plates.findIndex(p => p.id === plateId);
+                if (pIndex === -1 || !plates[pIndex].crustMesh) continue;
+                
+                const plate = plates[pIndex];
+                const riftProximity = 2.0 / 111.0; // ~2 degrees from boundary
+                
+                plates[pIndex] = {
+                    ...plate,
+                    crustMesh: plate.crustMesh!.map(vertex => {
+                        // Calculate distance to boundary polygon edges
+                        const minDist = distanceToPolygonEdges(vertex.pos, boundaryRings);
+                        
+                        if (minDist < riftProximity) {
+                            const falloff = 1 - (minDist / riftProximity);
+                            
+                            if (!vertex.isOceanic) {
+                                // Continental rift: thin the crust (East African Rift model)
+                                const newThickness = vertex.crustalThickness - thinningAmount * falloff;
+                                
+                                // If thinned below ~20km, transition to oceanic crust
+                                if (newThickness < 20) {
+                                    return {
+                                        ...vertex,
+                                        crustalThickness: REFERENCE_THICKNESS_OCEAN,
+                                        isOceanic: true // Continental breakup -> new ocean basin
+                                    };
+                                }
+                                
+                                return {
+                                    ...vertex,
+                                    crustalThickness: Math.max(newThickness, 20)
+                                };
+                            } else {
+                                // Oceanic spreading center: maintain thin new crust
+                                // New oceanic crust is created at ~7km thickness
+                                // Very close to ridge = hotter = slightly elevated
+                                return vertex; // Already at oceanic baseline
+                            }
+                        }
+                        return vertex;
+                    })
+                };
+            }
+        }
+        
+        return {
+            ...state,
+            world: { ...state.world, plates }
+        };
+    }
+    
+    /**
+     * Apply thermal subsidence - oceanic crust deepens as it ages and cools
+     * Based on half-space cooling model: depth ∝ √age
+     */
+    private applyThermalSubsidence(state: AppState, deltaT: number): AppState {
+        const subsidenceRate = 0.001; // km per sqrt(Ma) - tuned for realism
+        const plates = [...state.world.plates];
+        const currentTime = state.world.currentTime;
+        
+        for (let i = 0; i < plates.length; i++) {
+            const plate = plates[i];
+            if (!plate.crustMesh) continue;
+            
+            // Only apply to oceanic plates
+            if (plate.crustType !== 'oceanic') continue;
+            
+            const plateAge = currentTime - plate.birthTime;
+            if (plateAge <= 0) continue;
+            
+            // Thermal subsidence follows √t relationship
+            // Older oceanic crust has cooled more and subsides
+            const subsidenceFactor = Math.sqrt(plateAge) * subsidenceRate * deltaT;
+            
+            plates[i] = {
+                ...plate,
+                crustMesh: plate.crustMesh.map(vertex => {
+                    if (!vertex.isOceanic) return vertex;
+                    
+                    // Slightly thin oceanic crust over time (thermal contraction)
+                    // This indirectly lowers elevation via isostasy
+                    const newThickness = vertex.crustalThickness - subsidenceFactor;
+                    
+                    return {
+                        ...vertex,
+                        crustalThickness: Math.max(newThickness, 5) // Min 5km oceanic crust
+                    };
+                })
+            };
+        }
+        
+        return {
+            ...state,
+            world: { ...state.world, plates }
+        };
     }
     
     /**

@@ -1368,23 +1368,22 @@ class TectoLiteApp {
 
         // Elevation System controls
         document.getElementById('check-enable-elevation')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.enableElevationSimulation = (e.target as HTMLInputElement).checked;
+            const enabled = (e.target as HTMLInputElement).checked;
+            this.state.world.globalOptions.enableElevationSimulation = enabled;
             const optionsDiv = document.getElementById('elevation-options');
-            if (optionsDiv) optionsDiv.style.display = (e.target as HTMLInputElement).checked ? 'block' : 'none';
+            if (optionsDiv) optionsDiv.style.display = enabled ? 'block' : 'none';
             updateAutomationBtn();
             
-            // TEMP/TODO: Performance optimization needed
-            // When enabling elevation, enforce speed limit and warn user
-            if ((e.target as HTMLInputElement).checked) {
-                const speedSelect = document.getElementById('speed-select') as HTMLSelectElement;
-                if (speedSelect) {
-                    const currentSpeed = parseFloat(speedSelect.value);
-                    if (currentSpeed > 5) {
-                        speedSelect.value = '5';
-                        this.simulation?.setTimeScale(5);
-                        console.warn('Elevation system enabled: speed capped at 5x. Manual scrubbing disabled.');
-                    }
-                }
+            if (!enabled) {
+                // Clear all meshes immediately when disabling to save memory
+                this.state.world.plates = this.state.world.plates.map(plate => ({
+                    ...plate,
+                    crustMesh: undefined,
+                    elevationSimulatedTime: undefined
+                }));
+                this.showToast('Elevation meshes cleared', 1500);
+            } else {
+                this.showToast('Elevation simulation enabled - meshes will generate as time advances', 2500);
             }
             
             this.updateTimeDisplay();
@@ -2031,33 +2030,23 @@ class TectoLiteApp {
         });
 
         document.getElementById('speed-select')?.addEventListener('change', (e) => {
-            let speed = parseFloat((e.target as HTMLSelectElement).value);
-            
-            // TEMP/TODO: Performance optimization needed
-            // When elevation simulation is active, cap speed at 5 to prevent
-            // mesh update lag and desync issues
-            if (this.state.world.globalOptions.enableElevationSimulation && speed > 5) {
-                speed = 5;
-                (e.target as HTMLSelectElement).value = '5';
-                console.warn('Elevation system active: speed capped at 5x');
-            }
-            
+            const speed = parseFloat((e.target as HTMLSelectElement).value);
             this.simulation?.setTimeScale(speed);
         });
 
         document.getElementById('time-slider')?.addEventListener('input', (e) => {
-            // TEMP/TODO: Performance optimization needed
-            // When elevation simulation is active, disable manual scrubbing
-            // to prevent mesh recalculation lag. Only reset button allowed.
-            if (this.state.world.globalOptions.enableElevationSimulation) {
-                // Revert slider to current time
-                (e.target as HTMLInputElement).value = this.state.world.currentTime.toString();
-                console.warn('Elevation system active: manual scrubbing disabled. Use Reset button.');
-                return;
+            const newTime = parseFloat((e.target as HTMLInputElement).value);
+            const currentTime = this.state.world.currentTime;
+            
+            // Show feedback when scrubbing backward with elevation enabled
+            if (this.state.world.globalOptions.enableElevationSimulation && newTime < currentTime) {
+                const hasAnyMesh = this.state.world.plates.some(p => p.crustMesh && p.crustMesh.length > 0);
+                if (hasAnyMesh) {
+                    this.showToast('Resetting elevation meshes...', 1500);
+                }
             }
             
-            const time = parseFloat((e.target as HTMLInputElement).value);
-            this.simulation?.setTime(time);
+            this.simulation?.setTime(newTime);
             this.updateTimeDisplay();
         });
 
@@ -4526,6 +4515,59 @@ class TectoLiteApp {
         if (btn) btn.textContent = this.state.world.isPlaying ? '⏸️' : '▶️';
     }
 
+    /**
+     * Show a brief toast notification
+     */
+    private showToast(message: string, duration: number = 2000): void {
+        // Remove existing toast if any
+        const existing = document.getElementById('toast-notification');
+        if (existing) existing.remove();
+        
+        const toast = document.createElement('div');
+        toast.id = 'toast-notification';
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(30, 30, 46, 0.95);
+            color: #cdd6f4;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 10000;
+            pointer-events: none;
+            animation: toastFadeIn 0.2s ease-out;
+            border: 1px solid rgba(137, 180, 250, 0.3);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        `;
+        toast.textContent = message;
+        
+        // Add animation keyframes if not present
+        if (!document.getElementById('toast-styles')) {
+            const style = document.createElement('style');
+            style.id = 'toast-styles';
+            style.textContent = `
+                @keyframes toastFadeIn {
+                    from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+                    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+                }
+                @keyframes toastFadeOut {
+                    from { opacity: 1; transform: translateX(-50%) translateY(0); }
+                    to { opacity: 0; transform: translateX(-50%) translateY(10px); }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+        
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.style.animation = 'toastFadeOut 0.2s ease-in forwards';
+            setTimeout(() => toast.remove(), 200);
+        }, duration);
+    }
+
     private updateTimeDisplay(): void {
         const display = document.getElementById('current-time');
         const slider = document.getElementById('time-slider') as HTMLInputElement;
@@ -4573,15 +4615,6 @@ class TectoLiteApp {
             maxTime: maxTime,
             mode: this.state.world.timeMode
         });
-        
-        // TEMP/TODO: Performance optimization needed
-        // When elevation simulation is active, only allow reset (time=0)
-        // to prevent expensive mesh recalculation on arbitrary scrubs
-        if (this.state.world.globalOptions.enableElevationSimulation && internalTime !== 0) {
-            console.warn('Elevation system active: only reset (time=0) allowed. Use Reset button.');
-            modal.style.display = 'none';
-            return;
-        }
         
         // Set the time
         this.simulation?.setTime(internalTime);
