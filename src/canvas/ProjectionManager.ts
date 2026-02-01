@@ -11,17 +11,22 @@ import {
     geoRobinson
 } from 'd3-geo-projection';
 import { ProjectionType, Viewport, Coordinate } from '../types';
+import { latLonToVector, dot } from '../utils/sphericalMath';
 
 export class ProjectionManager {
     private projection: GeoProjection;
     private pathGenerator: GeoPath;
+    private currentProjectionType: ProjectionType = 'orthographic';
 
     constructor(context: CanvasRenderingContext2D) {
-        this.projection = geoOrthographic();
+        this.projection = geoOrthographic()
+            .clipAngle(90); // Clip features on back side of globe
         this.pathGenerator = geoPath(this.projection, context);
     }
 
     public update(type: ProjectionType, viewport: Viewport): void {
+        this.currentProjectionType = type;
+        
         // 1. Select Projection
         switch (type) {
             case 'orthographic':
@@ -59,6 +64,11 @@ export class ProjectionManager {
             .translate(viewport.translate)
             .rotate(viewport.rotate);
 
+        // Set clip angle AFTER scale/translate/rotate for orthographic
+        if (type === 'orthographic') {
+            this.projection.clipAngle(90);
+        }
+
         // Update the path generator to use this new projection instance
         this.pathGenerator.projection(this.projection);
     }
@@ -72,8 +82,33 @@ export class ProjectionManager {
     }
 
     // Project [lon, lat] -> [x, y]
+    // For orthographic, also checks if point is visible (not on back of globe)
     public project(coord: Coordinate): [number, number] | null {
+        // For orthographic projection, manually check visibility
+        if (this.currentProjectionType === 'orthographic') {
+            if (!this.isVisibleOnGlobe(coord)) {
+                return null;
+            }
+        }
         return this.projection(coord);
+    }
+
+    // Check if a coordinate is visible on the front side of an orthographic globe
+    private isVisibleOnGlobe(coord: Coordinate): boolean {
+        // Get the current rotation
+        const rotation = this.projection.rotate ? this.projection.rotate() : [0, 0, 0];
+        
+        // Convert the view center to a vector (opposite of rotation)
+        const viewLon = -rotation[0];
+        const viewLat = -rotation[1];
+        const viewCenter: Coordinate = [viewLon, viewLat];
+        const viewVector = latLonToVector(viewCenter);
+        
+        // Convert the point to a vector
+        const pointVector = latLonToVector(coord);
+        
+        // Check if the dot product is positive (point faces the viewer)
+        return dot(viewVector, pointVector) > 0;
     }
 
     // Invert [x, y] -> [lon, lat]
