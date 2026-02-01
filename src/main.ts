@@ -515,6 +515,29 @@ class TectoLiteApp {
                      </div>
                      
                      <button id="paint-clear-plate" class="btn btn-secondary" style="margin-top: 4px;">Clear Plate Paint</button>
+
+                     <!-- Paint Ageing (Fading) Options -->
+                     <hr class="property-divider" style="margin: 8px 0;">
+                     <div style="display: flex; flex-direction: column; gap: 4px;">
+                         <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer;">
+                             <input type="checkbox" id="paint-ageing-enabled"> Ageing Lines (Fade)
+                         </label>
+                         
+                         <div id="paint-ageing-options" style="display: flex; flex-direction: column; gap: 6px; margin-left: 18px;">
+                             <div style="display: flex; flex-direction: column; gap: 2px;">
+                                 <label style="font-size: 10px; color: var(--text-secondary);">Fade Duration (Ma):</label>
+                                 <input type="number" id="paint-ageing-duration" class="property-input" min="1" step="10">
+                             </div>
+                             
+                             <div style="display: flex; flex-direction: column; gap: 2px;">
+                                 <label style="font-size: 10px; color: var(--text-secondary);">Max Transparency (%):</label>
+                                 <div style="display:flex; gap: 4px;">
+                                    <input type="number" id="paint-ageing-max-trans" class="property-input" min="0" max="100" step="5" style="flex:1;">
+                                    <button id="paint-ageing-reset" class="btn btn-secondary" style="padding: 2px 6px;" title="Reset to Defaults">↺</button>
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
                  </div>
 
                  <!-- Motion Mode Specifics -->
@@ -539,11 +562,11 @@ class TectoLiteApp {
                     <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Speed</div>
                     <div style="display:flex; flex-direction:column; gap:6px;">
                         <div style="display:flex; align-items:center; gap:6px;">
-                            <input type="number" id="speed-input-cm" class="property-input" step="0.05" style="width:70px;">
+                            <input type="number" id="speed-input-cm" class="property-input" step="0.05" style="width:70px;" disabled>
                             <span style="font-size:10px; color:var(--text-secondary);">cm/yr</span>
                         </div>
                         <div style="display:flex; align-items:center; gap:6px;">
-                            <input type="number" id="speed-input-deg" class="property-input" step="0.05" style="width:70px;">
+                            <input type="number" id="speed-input-deg" class="property-input" step="0.05" style="width:70px;" disabled>
                             <span style="font-size:10px; color:var(--text-secondary);">deg/Ma</span>
                         </div>
                     </div>
@@ -1349,6 +1372,43 @@ class TectoLiteApp {
             const opacity = (e.target as HTMLInputElement).value;
             document.getElementById('paint-opacity-value')!.textContent = opacity;
             this.canvasManager?.setPaintOpacity(parseInt(opacity) / 100);
+        });
+
+        // Paint Ageing Controls
+        document.getElementById('paint-ageing-enabled')?.addEventListener('change', (e) => {
+             const enabled = (e.target as HTMLInputElement).checked;
+             if (!this.state.world.globalOptions) return;
+             this.state.world.globalOptions.paintAgeingEnabled = enabled;
+             const optionsDiv = document.getElementById('paint-ageing-options');
+             if (optionsDiv) optionsDiv.style.opacity = enabled ? '1' : '0.5';
+             if (optionsDiv) optionsDiv.style.pointerEvents = enabled ? 'auto' : 'none';
+             this.canvasManager?.render();
+        });
+
+        document.getElementById('paint-ageing-duration')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val > 0) {
+                 this.state.world.globalOptions.paintAgeingDuration = val;
+                 this.canvasManager?.render();
+             }
+        });
+
+        document.getElementById('paint-ageing-max-trans')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val >= 0 && val <= 100) {
+                 // Convert % transparency to min opacity
+                 // 95% transparency = 0.05 opacity
+                 const opacity = 1.0 - (val / 100.0);
+                 this.state.world.globalOptions.paintMaxWaitOpacity = opacity;
+                 this.canvasManager?.render();
+             }
+        });
+
+        document.getElementById('paint-ageing-reset')?.addEventListener('click', () => {
+             this.state.world.globalOptions.paintAgeingDuration = 100;
+             this.state.world.globalOptions.paintMaxWaitOpacity = 0.05; // 95% trans
+             this.syncUIToState();
+             this.canvasManager?.render();
         });
 
         document.getElementById('paint-mode-brush')?.addEventListener('click', () => {
@@ -2416,6 +2476,29 @@ class TectoLiteApp {
         // Projection Select
         const projSelect = document.getElementById('projection-select') as HTMLSelectElement;
         if (projSelect) projSelect.value = w.projection;
+
+        // Sync Paint Ageing Options
+        const paintAgeingEnabled = g.paintAgeingEnabled !== false; // Default true
+        const cbAgeing = document.getElementById('paint-ageing-enabled') as HTMLInputElement;
+        if (cbAgeing) {
+            cbAgeing.checked = paintAgeingEnabled;
+            const optionsDiv = document.getElementById('paint-ageing-options');
+            if (optionsDiv) optionsDiv.style.opacity = paintAgeingEnabled ? '1' : '0.5';
+            if (optionsDiv) optionsDiv.style.pointerEvents = paintAgeingEnabled ? 'auto' : 'none';
+        }
+
+        const inputAgeingDuration = document.getElementById('paint-ageing-duration') as HTMLInputElement;
+        if (inputAgeingDuration) {
+             inputAgeingDuration.value = (g.paintAgeingDuration || 100).toString();
+        }
+
+        const inputAgeingTrans = document.getElementById('paint-ageing-max-trans') as HTMLInputElement;
+        if (inputAgeingTrans) {
+             // Convert opacity to transparency %
+             const opacity = g.paintMaxWaitOpacity !== undefined ? g.paintMaxWaitOpacity : 0.05;
+             const trans = Math.round((1.0 - opacity) * 100);
+             inputAgeingTrans.value = trans.toString();
+        }
     }
 
     private updateUI(): void {

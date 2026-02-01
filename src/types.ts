@@ -188,6 +188,10 @@ export interface WorldState {
     orogenyPaintConvergent?: string;     // Color for convergent boundaries (default brown)
     orogenyPaintDivergent?: string;      // Color for divergent boundaries (default red)
     showHints?: boolean;
+    // Paint Ageing
+    paintAgeingEnabled?: boolean;        // Whether paint strokes fade over time
+    paintAgeingDuration?: number;        // Time (Ma) to reach max transparency
+    paintMaxWaitOpacity?: number;        // Minimum opacity (max transparency target) [0.0 - 1.0]
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
@@ -283,7 +287,10 @@ export function createDefaultWorldState(): WorldState {
       enableHotspots: false,
       hotspotSpawnRate: 1.0,
       enableOrogeny: false,
-      showHints: true
+      showHints: true,
+      paintAgeingEnabled: true,
+      paintAgeingDuration: 100, // Ma
+      paintMaxWaitOpacity: 0.05 // 95% transparency
     }
   };
 }

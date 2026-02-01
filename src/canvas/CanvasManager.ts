@@ -1930,7 +1930,23 @@ export class CanvasManager {
 
             // Ghost strokes from the future (similar to features)
             const isFromFuture = stroke.birthTime !== undefined && stroke.birthTime > currentTime;
-            const baseOpacity = isFromFuture ? stroke.opacity * 0.3 : stroke.opacity;
+            let baseOpacity = isFromFuture ? stroke.opacity * 0.3 : stroke.opacity;
+
+            // Paint Ageing (Fading) Logic
+            const g = state.world.globalOptions;
+            if (g.paintAgeingEnabled !== false && stroke.source === 'orogeny' && stroke.birthTime !== undefined && !isFromFuture) {
+                 const age = currentTime - stroke.birthTime;
+                 const duration = g.paintAgeingDuration || 100;
+                 const minOpacity = g.paintMaxWaitOpacity !== undefined ? g.paintMaxWaitOpacity : 0.05;
+                 
+                 if (age > 0) {
+                     const progress = Math.min(age / duration, 1.0);
+                     // Interpolate from current opacity down to minOpacity
+                     // Ensure we don't accidentally increase opacity if it started lower
+                     const target = Math.min(baseOpacity, minOpacity);
+                     baseOpacity = baseOpacity * (1 - progress) + target * progress;
+                 }
+            }
 
             this.ctx.globalAlpha = baseOpacity;
 
