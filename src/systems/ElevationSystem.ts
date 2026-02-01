@@ -133,11 +133,13 @@ export class ElevationSystem {
                 elevationSimulatedTime: undefined
             }));
             this.clearAllCaches();
-            return newState; // Return early - meshes will regenerate on next forward tick
+            // DON'T return early - continue to Step 2 to re-initialize if deltaT >= 0
+            // This fixes the bug where meshes weren't re-initialized after time reset
         }
         
-        // Step 2: Initialize meshes for plates without them (only if moving forward)
-        if (deltaT > 0) {
+        // Step 2: Initialize meshes for plates without them (when moving forward OR at reset)
+        // Also initialize when deltaT == 0 and meshes were just cleared (reset case)
+        if (deltaT >= 0) {
             newState.world.plates = newState.world.plates.map(plate => {
                 if (plate.visible && (!plate.crustMesh || plate.crustMesh.length === 0)) {
                     // Only create mesh if plate is born

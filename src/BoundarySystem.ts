@@ -5,9 +5,15 @@ import { latLonToVector, scaleVector, subtractVectors, cross, normalize, dot } f
 export class BoundarySystem {
 
     // Detect boundaries between plates based on overlap and movement
-    public static detectBoundaries(plates: TectonicPlate[]): Boundary[] {
+    public static detectBoundaries(plates: TectonicPlate[], currentTime: number = 0): Boundary[] {
         const boundaries: Boundary[] = [];
-        const activePlates = plates.filter(p => !p.deathTime); // Only check active plates
+        // Filter plates that are alive at the current time:
+        // - Must be born (birthTime <= currentTime)
+        // - Must not be dead yet (deathTime is null OR deathTime > currentTime)
+        const activePlates = plates.filter(p => 
+            p.birthTime <= currentTime && 
+            (p.deathTime === null || p.deathTime > currentTime)
+        );
 
         // FRAME BUDGET: Prevent boundary detection from blocking UI
         const startTime = performance.now();
@@ -47,7 +53,9 @@ export class BoundarySystem {
                         type: type.type,
                         plateIds: [p1.id, p2.id],
                         points: overlap.rings,
-                        velocity: type.velocity
+                        velocity: type.velocity,
+                        overlapArea: overlap.area,
+                        crustTypes: [p1.crustType, p2.crustType]
                     });
                 }
 
@@ -62,7 +70,7 @@ export class BoundarySystem {
     }
 
 
-    private static checkOverlap(p1: TectonicPlate, p2: TectonicPlate): { rings: Coordinate[][], center: Coordinate } | null {
+    private static checkOverlap(p1: TectonicPlate, p2: TectonicPlate): { rings: Coordinate[][], center: Coordinate, area: number } | null {
         // Convert, Round, and Unwrap Coordinates
         // This solves the "Ghost Overlap" bug where a plate wrapping the dateline (179 to -179) 
         // was seen as crossing the map at 0 by the 2D clipping library.
@@ -103,7 +111,9 @@ export class BoundarySystem {
         if (intersection.length > 0) {
             // Store as list of rings for proper rendering
             let rings: Coordinate[][] = [];
-            intersection.forEach(multi => multi.forEach(ring => {
+            let totalArea = 0; // Sum of all ring areas
+
+            intersection.forEach((multi: [number, number][][]) => multi.forEach((ring: [number, number][]) => {
                 // Filter "Dust": Remove tiny artifacts from clipping
                 // Minimum 4 points (triangle + closing point)
                 if (ring.length < 4) return;
@@ -121,11 +131,13 @@ export class BoundarySystem {
                 }
                 area = Math.abs(area / 2);
                 
-                // Threshold: 0.2 deg^2 (approx 2500 km^2)
+                // Threshold: 0.2 deg² (approx 2500 km²)
                 if (area < 0.2) return;
 
+                totalArea += area;
+
                 // Normalize result back to [-180, 180] for rendering
-                rings.push(ring.map(pt => {
+                rings.push(ring.map((pt: [number, number]) => {
                     let lon = pt[0];
                     // Normalize lon
                     while(lon > 180) lon -= 360;
@@ -144,7 +156,7 @@ export class BoundarySystem {
             if (rings.length === 0 || rings[0].length === 0) return null;
             const center = rings[0][Math.floor(rings[0].length/2)]; // Use a vertex as center approx
 
-            return { rings, center };
+            return { rings, center, area: totalArea };
         }
         return null;
     }

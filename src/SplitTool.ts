@@ -542,10 +542,12 @@ export function splitPlate(
         elevationSimulatedTime: currentTime
     };
 
-    // Mark old plate as dead
+    // Mark old plate as dead and clear its mesh to prevent ghost interactions
     const updatedOldPlate = {
         ...plateToSplit,
         deathTime: state.world.currentTime,
+        crustMesh: undefined, // Clear mesh to prevent ghost interactions on replay
+        elevationSimulatedTime: undefined,
         events: [
             ...(plateToSplit.events || []),
             {

@@ -14,7 +14,7 @@ export class HeightmapGenerator {
     public static async generate(state: AppState, options: HeightmapOptions): Promise<string> {
         // Create offscreen canvas
         const canvas = document.createElement('canvas');
-        const { width, height, projection: projectionType } = options;
+        const { width, height, projection: _projectionType } = options;
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');

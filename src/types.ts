@@ -235,6 +235,7 @@ export interface WorldState {
     ratePresets?: number[]; // User-defined rate presets (e.g. [0.5, 1.0, 2.0, 5.0])
     enableBoundaryVisualization?: boolean;
     enableDynamicFeatures?: boolean;
+    pauseOnFusionSuggestion?: boolean;
     // Granular Automation Options
     enableHotspots?: boolean;
     hotspotSpawnRate?: number; // Ma per feature (default 1.0)
@@ -278,6 +279,8 @@ export interface Boundary {
   points: Coordinate[][]; // Line segments or polygon rings
   plateIds: [string, string];
   velocity?: number; // Relative velocity magnitude
+  overlapArea?: number; // Approximate overlap area in deg² (for fusion heuristics)
+  crustTypes?: [CrustType | undefined, CrustType | undefined]; // Crust types of each plate
 }
 
 export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit' | 'paint' | 'mesh_edit';
@@ -360,6 +363,7 @@ export function createDefaultWorldState(): WorldState {
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,
       enableDynamicFeatures: false,
+      pauseOnFusionSuggestion: false,
       enableHotspots: false,
       hotspotSpawnRate: 1.0,
       enableOrogeny: false, // DEPRECATED: Use elevation system

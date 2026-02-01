@@ -109,8 +109,9 @@ export class SimulationEngine {
             // If none are on, clear boundaries to prevent stale artifacts.
             const boundaries = (globalOptions.enableBoundaryVisualization || 
                 globalOptions.enableOrogeny || 
-                globalOptions.enableElevationSimulation)
-                ? BoundarySystem.detectBoundaries(newPlates)
+                globalOptions.enableElevationSimulation ||
+                globalOptions.pauseOnFusionSuggestion)
+                ? BoundarySystem.detectBoundaries(newPlates, time)
                 : [];
 
             // Phase 4: Geological Automation
@@ -191,8 +192,9 @@ export class SimulationEngine {
             // If none are on, clear boundaries to prevent stale artifacts.
             const boundaries = (globalOptions.enableBoundaryVisualization || 
                 globalOptions.enableOrogeny || 
-                globalOptions.enableElevationSimulation)
-                ? BoundarySystem.detectBoundaries(newPlates)
+                globalOptions.enableElevationSimulation ||
+                globalOptions.pauseOnFusionSuggestion)
+                ? BoundarySystem.detectBoundaries(newPlates, newTime)
                 : [];
             
             // Phase 3: Geological Automation (during tick)
@@ -208,8 +210,7 @@ export class SimulationEngine {
             const postAutomationState = this.geologicalAutomation.update(tempState);
             
             // Phase 4: Elevation System
-            const deltaT = state.world.timeScale;
-            const finalState = this.elevationSystem.update(postAutomationState, deltaT);
+            const finalState = this.elevationSystem.update(postAutomationState, deltaMa);
 
             return finalState;
         });

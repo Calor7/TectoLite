@@ -44,6 +44,8 @@ class TectoLiteApp {
     private activeLinkSourceId: string | null = null; // Track first plate for linking
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
     private timelineSystem: TimelineSystem | null = null;
+    private lastFusionSuggestionKey: string | null = null;
+    private fusionSuggestionCooldownUntil: number = 0; // Time until we stop blocking suggestions after reject
 
     // UI State for Explorer Sidebar
     private explorerState: { 
@@ -329,6 +331,9 @@ class TectoLiteApp {
                             <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dotted var(--border-default);">
                                 <label class="view-dropdown-item">
                                     <input type="checkbox" id="check-boundary-vis"> Visualize Boundaries <span class="info-icon" data-tooltip="Show Convergent (Red) and Divergent (Blue) lines">(i)</span>
+                                </label>
+                                <label class="view-dropdown-item" style="margin-top: 4px;">
+                                    <input type="checkbox" id="check-fuse-recommend"> Pause on Fusion Suggestion <span class="info-icon" data-tooltip="Pause and suggest likely real-world fusion candidates based on convergent motion">(i)</span>
                                 </label>
                             </div>
                             
@@ -1385,7 +1390,9 @@ class TectoLiteApp {
         const updateAutomationBtn = () => {
              const btn = document.getElementById('btn-automation-menu');
              if (btn) {
-                 const anyActive = this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableElevationSimulation;
+                 const anyActive = this.state.world.globalOptions.enableHotspots ||
+                     this.state.world.globalOptions.enableElevationSimulation ||
+                     this.state.world.globalOptions.pauseOnFusionSuggestion;
                  if (anyActive) {
                      btn.style.backgroundColor = 'var(--color-success)';
                      btn.style.color = 'white';
@@ -1943,6 +1950,11 @@ class TectoLiteApp {
             this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
         });
 
+        document.getElementById('check-fuse-recommend')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.pauseOnFusionSuggestion = (e.target as HTMLInputElement).checked;
+            updateAutomationBtn();
+        });
+
         // Image Overlay Controls
         document.getElementById('check-show-overlay')?.addEventListener('change', (e) => {
             if (this.state.world.imageOverlay) {
@@ -2214,6 +2226,9 @@ class TectoLiteApp {
 
         document.getElementById('btn-reset-time')?.addEventListener('click', () => {
             this.simulation?.setTime(0);
+            // Reset fusion suggestion tracking on time reset
+            this.lastFusionSuggestionKey = null;
+            this.fusionSuggestionCooldownUntil = 0;
             this.updateTimeDisplay();
         });
 
@@ -2797,6 +2812,7 @@ class TectoLiteApp {
         }
 
         (document.getElementById('check-boundary-vis') as HTMLInputElement).checked = !!g.enableBoundaryVisualization;
+        (document.getElementById('check-fuse-recommend') as HTMLInputElement).checked = !!g.pauseOnFusionSuggestion;
 
         // Rate Presets (Custom)
         if (g.ratePresets && g.ratePresets.length === 4) {
@@ -5179,6 +5195,129 @@ class TectoLiteApp {
         // Update label
         const label = this.state.world.timeMode === 'negative' ? 'years ago' : 'Ma';
         if (modeLabel) modeLabel.textContent = label;
+
+        this.maybePauseOnFusionSuggestion();
+    }
+
+    private maybePauseOnFusionSuggestion(): void {
+        if (!this.state.world.globalOptions.pauseOnFusionSuggestion) return;
+        if (!this.state.world.isPlaying) return;
+
+        const currentTime = this.state.world.currentTime;
+        
+        // Skip if in cooldown period (user rejected suggestions recently)
+        if (currentTime < this.fusionSuggestionCooldownUntil) return;
+
+        const boundaries = this.state.world.boundaries || [];
+        if (boundaries.length === 0) return;
+
+        const velocityThreshold = 0.0008; // rad/Ma (~0.5 cm/yr) heuristic
+        const planetRadius = this.state.world.globalOptions.planetRadius || 6371;
+
+        // Collect candidate pairs with extended info
+        interface FusionCandidate {
+            ids: [string, string];
+            velocity: number;
+            overlapArea: number;
+            crustTypes: [string, string];
+        }
+        const candidatePairs = new Map<string, FusionCandidate>();
+
+        for (const boundary of boundaries) {
+            if (boundary.type !== 'convergent') continue;
+            if (boundary.velocity === undefined || boundary.velocity < velocityThreshold) continue;
+
+            const [a, b] = boundary.plateIds;
+            const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+            const current = candidatePairs.get(key);
+            if (!current || boundary.velocity > current.velocity) {
+                candidatePairs.set(key, { 
+                    ids: a < b ? [a, b] : [b, a], 
+                    velocity: boundary.velocity,
+                    overlapArea: boundary.overlapArea ?? 0,
+                    crustTypes: [
+                        boundary.crustTypes?.[0] ?? 'unknown',
+                        boundary.crustTypes?.[1] ?? 'unknown'
+                    ]
+                });
+            }
+        }
+
+        if (candidatePairs.size === 0) return;
+
+        const timeKey = `${Math.round(currentTime * 10)}|${Array.from(candidatePairs.keys()).sort().join(',')}`;
+        if (this.lastFusionSuggestionKey === timeKey) return;
+        this.lastFusionSuggestionKey = timeKey;
+
+        this.simulation?.stop();
+        this.state.world.isPlaying = false;
+        this.updatePlayButton();
+
+        const plates = this.state.world.plates;
+        const items = Array.from(candidatePairs.values()).map(pair => {
+            const p1 = plates.find(p => p.id === pair.ids[0]);
+            const p2 = plates.find(p => p.id === pair.ids[1]);
+            const name1 = p1?.name || pair.ids[0];
+            const name2 = p2?.name || pair.ids[1];
+            const cmYr = (pair.velocity * planetRadius * 100000) / 1e6; // rad/Ma -> cm/yr
+            
+            // Determine collision type label
+            const ct0 = pair.crustTypes[0];
+            const ct1 = pair.crustTypes[1];
+            let collisionType = 'Mixed';
+            if (ct0 === 'oceanic' && ct1 === 'oceanic') collisionType = 'Oceanic-Oceanic';
+            else if (ct0 === 'continental' && ct1 === 'continental') collisionType = 'Continental-Continental';
+            else if ((ct0 === 'oceanic' && ct1 === 'continental') || (ct0 === 'continental' && ct1 === 'oceanic')) collisionType = 'Ocean-Continent';
+            
+            // Convert overlap area (deg²) to km² (rough approximation: 1 deg² ≈ 12300 km² at equator)
+            const overlapKm2 = pair.overlapArea * 12300;
+            
+            return `<div style="margin-bottom: 10px; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px;">
+                <b>${name1}</b> ↔ <b>${name2}</b><br>
+                <span style="font-size: 11px; color: #aaa;">
+                    Type: ${collisionType} | Speed: ~${cmYr.toFixed(2)} cm/yr | Overlap: ~${overlapKm2.toFixed(0)} km²
+                </span>
+            </div>`;
+        });
+
+        // Build factors explanation
+        const factorsHtml = `
+            <div style="margin-top: 12px; padding: 10px; background: rgba(100,150,255,0.1); border-radius: 4px; font-size: 11px;">
+                <b>Factors that INCREASE fusion likelihood:</b><br>
+                • Higher closing speed (> 2 cm/yr typical for collision)<br>
+                • Larger overlap area (more sustained contact)<br>
+                • Continental-Continental (orogenic welding)<br>
+                • Matching plate densities<br><br>
+                <b>Factors that DECREASE likelihood:</b><br>
+                • Low closing speed (may just slide)<br>
+                • Small overlap (transient contact)<br>
+                • Ocean-Ocean (one may subduct instead)<br>
+                • Ocean-Continent (subduction more likely)
+            </div>
+        `;
+
+        const content = `Heuristic fusion candidates detected at <b>${currentTime.toFixed(1)} Ma</b>:<br><br>${items.join('')}${factorsHtml}<br><span style="font-size: 10px; opacity: 0.6;">This is a heuristic approximation. You can fuse manually using the Fuse tool or reject to continue.</span>`;
+
+        if (this.showModal) {
+            this.showModal({
+                title: 'Fusion Suggestion (Heuristic)',
+                content,
+                width: '480px',
+                buttons: [
+                    { 
+                        text: 'Skip (5 Ma cooldown)', 
+                        isSecondary: true,
+                        onClick: () => {
+                            // Set cooldown to block suggestions for next 5 Ma
+                            this.fusionSuggestionCooldownUntil = currentTime + 5;
+                        }
+                    },
+                    { text: 'OK', onClick: () => {} }
+                ]
+            });
+        } else {
+            alert(content.replace(/<br>/g, '\n').replace(/<[^>]*>/g, ''));
+        }
     }
 
     private confirmTimeInput(): void {
