@@ -284,6 +284,15 @@ class TectoLiteApp {
                         <label class="view-dropdown-item">
                              <input type="checkbox" id="check-show-paint"> Show Paint <span class="info-icon" data-tooltip="Show brush strokes on plates">(i)</span>
                         </label>
+                        
+                        <div style="padding: 4px 8px; border-top: 1px dotted var(--border-default); margin-top: 4px;">
+                             <label style="font-size: 11px; white-space: nowrap; font-weight: 600;">Erosion Rate <span class="info-icon" data-tooltip="Global multiplier for paint fading/deletion (1.0 = Normal, 2.0 = 2x Fading Speed)">(i)</span></label>
+                             <div style="display: flex; align-items: center; gap: 4px;">
+                                 <input type="number" id="erosion-multiplier" class="property-input" value="1.0" min="0.1" step="0.1" style="flex: 1;">
+                                 <button id="btn-reset-erosion" class="btn btn-secondary" style="font-size: 10px; padding: 2px 4px;" title="Reset to 1.0">Reset</button>
+                             </div>
+                        </div>
+                    </div>
                     </div>
                 </div>
 
@@ -320,8 +329,9 @@ class TectoLiteApp {
                                     </div>
                                 </div>
                                 <div id="orogeny-ageing-options" style="display: ${this.state.world.globalOptions.orogenyMode === 'paint' ? 'block' : 'none'}; margin-top: 8px; font-size: 11px;">
+                                     <!-- Ageing Block -->
                                      <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">Ageing Fade Effect</div>
-                                     <div style="display: flex; flex-direction: column; gap: 4px;">
+                                     <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;">
                                          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
                                              <input type="checkbox" id="orogeny-ageing-enabled" ${this.state.world.globalOptions.paintAgeingEnabled !== false ? 'checked' : ''}> Enable Fade
                                          </label>
@@ -347,11 +357,40 @@ class TectoLiteApp {
                                                  </div>
                                              </div>
 
-                                             <button id="orogeny-ageing-reset" class="btn btn-secondary" style="width: 100%; margin-top: 4px; font-size: 10px;">Revert to Default</button>
+                                             <button id="orogeny-ageing-reset" class="btn btn-secondary" style="width: 100%; margin-top: 4px; font-size: 10px;">Revert Ageing</button>
                                          </div>
                                      </div>
+
+                                     <!-- Velocity Transparency Block -->
+                                     <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; padding-top: 4px; border-top: 1px solid var(--border-default);">Velocity Visualization</div>
+                                     <div style="display: flex; flex-direction: column; gap: 4px;">
+                                          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                             <input type="checkbox" id="orogeny-velocity-enabled" ${this.state.world.globalOptions.orogenyVelocityTransparency ? 'checked' : ''}> Opacity by Speed
+                                             <span class="info-icon" data-tooltip="Helper lines are darker when plate collision is faster (15cm/yr = 100%)">(i)</span>
+                                          </label>
+
+                                          <div id="orogeny-velocity-controls" style="display: flex; flex-direction: column; gap: 4px; margin-left: 18px; opacity: ${this.state.world.globalOptions.orogenyVelocityTransparency ? '1' : '0.5'}; pointer-events: ${this.state.world.globalOptions.orogenyVelocityTransparency ? 'auto' : 'none'};">
+                                                <!-- High Speed (100% Opacity) -->
+                                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                    <span title="Speed for Max Opacity">Fast (cm/yr):</span>
+                                                    <input type="number" id="orogeny-vel-high" class="property-input" value="${Math.round((this.state.world.globalOptions.orogenySpeedThresholdHigh || 0.025) * 600)}" min="1" step="1" style="flex: 1; margin-left: 8px;">
+                                                </div>
+                                                <!-- Low Speed (Low Opacity) -->
+                                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                    <span title="Speed for Min Opacity">Slow (cm/yr):</span>
+                                                    <input type="number" id="orogeny-vel-low" class="property-input" value="${Math.round((this.state.world.globalOptions.orogenySpeedThresholdLow || 0.002) * 600)}" min="0.1" step="0.5" style="flex: 1; margin-left: 8px;">
+                                                </div>
+                                                <!-- Opacity Levels -->
+                                                <div style="display: flex; justify-content: space-between; align-items: center; margin-top:2px;">
+                                                    <span>Min Opacity:</span>
+                                                    <input type="number" id="orogeny-opacity-low" class="property-input" value="${this.state.world.globalOptions.orogenyOpacityLow || 0.2}" min="0.1" max="1.0" step="0.1" style="flex: 1; margin-left: 8px;">
+                                                </div>
+
+                                                <button id="orogeny-velocity-reset" class="btn btn-secondary" style="width: 100%; margin-top: 4px; font-size: 10px;">Revert Velocity</button>
+                                          </div>
+                                     </div>
+
                                 </div>
-                            </div>
 
                             <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dotted var(--border-default);">
                                 <label class="view-dropdown-item">
@@ -1299,6 +1338,23 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
+        // Erosion Multiplier
+        document.getElementById('erosion-multiplier')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val > 0) {
+                 this.state.world.globalOptions.erosionMultiplier = val;
+                 this.canvasManager?.render();
+             }
+        });
+
+        document.getElementById('btn-reset-erosion')?.addEventListener('click', () => {
+             this.state.world.globalOptions.erosionMultiplier = 1.0;
+             const input = document.getElementById('erosion-multiplier') as HTMLInputElement;
+             if (input) input.value = "1.0";
+             this.canvasManager?.render();
+        });
+
+
         // Automation Settings
         const updateAutomationBtn = () => {
              const btn = document.getElementById('btn-automation-menu');
@@ -1468,6 +1524,30 @@ class TectoLiteApp {
              this.canvasManager?.render();
         };
 
+        const syncVelocityUI = () => {
+             const g = this.state.world.globalOptions;
+             const enabled = g.orogenyVelocityTransparency === true;
+             
+             const cbVel = document.getElementById('orogeny-velocity-enabled') as HTMLInputElement;
+             if (cbVel) cbVel.checked = enabled;
+             
+             const divVel = document.getElementById('orogeny-velocity-controls');
+             if (divVel) {
+                 divVel.style.opacity = enabled ? '1' : '0.5';
+                 divVel.style.pointerEvents = enabled ? 'auto' : 'none';
+             }
+
+             const inHigh = document.getElementById('orogeny-vel-high') as HTMLInputElement;
+             // store as cm/yr ~ rad/Ma * 600
+             if(inHigh) inHigh.value = Math.round((g.orogenySpeedThresholdHigh || 0.025) * 600).toString();
+
+             const inLow = document.getElementById('orogeny-vel-low') as HTMLInputElement;
+             if(inLow) inLow.value = Math.round((g.orogenySpeedThresholdLow || 0.002) * 600).toString();
+
+             const inOpLow = document.getElementById('orogeny-opacity-low') as HTMLInputElement;
+             if(inOpLow) inOpLow.value = (g.orogenyOpacityLow !== undefined ? g.orogenyOpacityLow : 0.2).toString();
+        };
+
         // Orogeny Menu Listeners
         document.getElementById('orogeny-ageing-enabled')?.addEventListener('change', (e) => {
              if (!this.state.world.globalOptions) return;
@@ -1505,8 +1585,46 @@ class TectoLiteApp {
         document.getElementById('orogeny-ageing-reset')?.addEventListener('click', () => {
              this.state.world.globalOptions.paintAgeingDuration = 100;
              this.state.world.globalOptions.paintMaxWaitOpacity = 0.05; // 95% trans
+             this.state.world.globalOptions.paintAutoDelete = false;
+             this.state.world.globalOptions.paintDeleteDelay = 50;
              syncAgeingUI();
         });
+
+        // --- Velocity Transparency Listeners ---
+        document.getElementById('orogeny-velocity-enabled')?.addEventListener('change', (e) => {
+             const enabled = (e.target as HTMLInputElement).checked;
+             if (!this.state.world.globalOptions) return;
+             this.state.world.globalOptions.orogenyVelocityTransparency = enabled;
+             syncVelocityUI();
+        });
+        document.getElementById('orogeny-vel-high')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val > 0) {
+                 // Convert cm/yr back to rad/Ma (val / 600)
+                 this.state.world.globalOptions.orogenySpeedThresholdHigh = val / 600;
+             }
+        });
+        document.getElementById('orogeny-vel-low')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val >= 0) {
+                 this.state.world.globalOptions.orogenySpeedThresholdLow = val / 600;
+             }
+        });
+        document.getElementById('orogeny-opacity-low')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val >= 0 && val <= 1.0) {
+                 this.state.world.globalOptions.orogenyOpacityLow = val;
+             }
+        });
+        document.getElementById('orogeny-velocity-reset')?.addEventListener('click', () => {
+             this.state.world.globalOptions.orogenySpeedThresholdHigh = 0.025; // 15 cm/yr
+             this.state.world.globalOptions.orogenySpeedThresholdLow = 0.002;  // 1.2 cm/yr
+             this.state.world.globalOptions.orogenyOpacityLow = 0.2;
+             syncVelocityUI();
+        });
+
+        // Initialize Velocity UI state
+        syncVelocityUI();
 
         // Paint Tool Listeners (Synchronized)
         document.getElementById('paint-ageing-enabled')?.addEventListener('change', (e) => {
@@ -4418,6 +4536,9 @@ class TectoLiteApp {
         // AND adding to keyframes array if we support it.
 
         const plates = this.state.world.plates.map(p => {
+            let processedPlate = p;
+
+            // 1. Apply Motion Change if this is the target plate
             if (p.id === plateId) {
                 const updated = { ...p };
 
@@ -4444,9 +4565,54 @@ class TectoLiteApp {
                 const otherKeyframes = (p.motionKeyframes || []).filter(k => Math.abs(k.time - currentTime) > 0.001);
                 updated.motionKeyframes = [...otherKeyframes, newKeyframe].sort((a, b) => a.time - b.time);
 
-                return updated;
+                processedPlate = updated;
             }
-            return p;
+
+            // 2. TIMELINE INTEGRITY: Prune "Future" Orogeny strokes
+            // When history is changed (motion keyframe added/modified), any Orogeny strokes 
+            // generated in the future of the current time are now invalid results of a previous timeline.
+            // We must prune them to avoid "ghosts" of interactions that may no longer happen.
+            if (processedPlate.paintStrokes && processedPlate.paintStrokes.length > 0) {
+                const prunedStrokes = processedPlate.paintStrokes.filter(s => {
+                    // Keep manual strokes (user drawing)
+                    if (s.source !== 'orogeny') return true;
+                    
+                    // Keep strokes from the past (birthTime < currentTime)
+                    // We treat stroke at Exactly currentTime as "past" (keep it) or "future" (discard)?
+                    // Since we are changing motion AT currentTime, the stroke generated AT currentTime 
+                    // is based on the OLD motion. It should probably be discarded so it can be regenerated this frame.
+                    // So: discard if birthTime >= currentTime.
+                    if (s.birthTime !== undefined && s.birthTime >= currentTime) return false;
+                    
+                    return true;
+                });
+
+                if (prunedStrokes.length !== processedPlate.paintStrokes.length) {
+                    processedPlate = {
+                        ...processedPlate,
+                        paintStrokes: prunedStrokes
+                    };
+                    
+                    // If we just modified the target plate's keyframe above, we should update the snapshot too,
+                    // otherwise the keyframe snapshot contains invalid future strokes.
+                    // However, snapshots represent the state "at that time".
+                    // If we are at T=50, the "future" strokes shouldn't exist in reality.
+                    // So cleaning them is correct.
+                    if (processedPlate.id === plateId && processedPlate.motionKeyframes) {
+                        // Find the keyframe we just added/updated (it's at currentTime)
+                        const keyframeIndex = processedPlate.motionKeyframes.findIndex(k => Math.abs(k.time - currentTime) < 0.001);
+                        if (keyframeIndex !== -1) {
+                            const kf = processedPlate.motionKeyframes[keyframeIndex];
+                            processedPlate.motionKeyframes[keyframeIndex] = {
+                                ...kf,
+                                snapshotPaintStrokes: prunedStrokes
+                            };
+                        }
+                    }
+                }
+            }
+
+            return processedPlate;
         });
 
         this.state = {
@@ -4630,11 +4796,30 @@ class TectoLiteApp {
     }
 
     // Helper for TimelineSystem to replace a plate (updating state)
-    public replacePlate(plate: TectonicPlate): void {
+    public replacePlate(plate: TectonicPlate, invalidationTime?: number): void {
         const index = this.state.world.plates.findIndex(p => p.id === plate.id);
         if (index !== -1) {
-            const newPlates = [...this.state.world.plates];
+            let newPlates = [...this.state.world.plates];
             newPlates[index] = plate;
+
+            // Prune Future Orogeny Strokes if time provided
+            if (invalidationTime !== undefined) {
+                newPlates = newPlates.map(p => {
+                    if (!p.paintStrokes) return p;
+                    const pruned = p.paintStrokes.filter(s => {
+                        // Keep manual strokes (user drawing)
+                        if (s.source !== 'orogeny') return true;
+                        // Prune if birthTime is after invalidation time
+                        if (s.birthTime !== undefined && s.birthTime >= invalidationTime) return false;
+                        return true;
+                    });
+                    
+                    if (pruned.length !== p.paintStrokes.length) {
+                        return { ...p, paintStrokes: pruned };
+                    }
+                    return p;
+                });
+            }
 
             this.state = {
                 ...this.state,

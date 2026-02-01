@@ -512,6 +512,24 @@ export class GeologicalAutomationSystem {
             // Color based on boundary type
             const color = boundary.type === 'convergent' ? convergentColor : divergentColor;
 
+            // Opacity Calculation
+            let opacity = 0.7; // Default
+            if (state.world.globalOptions.orogenyVelocityTransparency) {
+                const g = state.world.globalOptions;
+                const vHigh = g.orogenySpeedThresholdHigh !== undefined ? g.orogenySpeedThresholdHigh : 0.025;
+                const vLow = g.orogenySpeedThresholdLow !== undefined ? g.orogenySpeedThresholdLow : 0.002;
+                const oHigh = g.orogenyOpacityHigh !== undefined ? g.orogenyOpacityHigh : 1.0;
+                const oLow = g.orogenyOpacityLow !== undefined ? g.orogenyOpacityLow : 0.2;
+
+                if (velocity >= vHigh) opacity = oHigh;
+                else if (velocity <= vLow) opacity = oLow;
+                else {
+                    // Linear interpolate
+                    const t = (velocity - vLow) / (vHigh - vLow);
+                    opacity = oLow + t * (oHigh - oLow);
+                }
+            }
+
             // Get the two plates involved
             const [id1, id2] = boundary.plateIds;
             const p1Index = plates.findIndex(p => p.id === id1);
@@ -706,7 +724,7 @@ export class GeologicalAutomationSystem {
                             id: generateId(),
                             color: color,
                             width: strokeWidth,
-                            opacity: 0.7,
+                            opacity: opacity,
                             points: barPoints,         // World Coordinates
                             originalPoints: barPoints, // World Coordinates (Reference)
                             timestamp: Date.now(),
@@ -728,7 +746,7 @@ export class GeologicalAutomationSystem {
                             id: generateId(),
                             color: color,
                             width: strokeWidth,
-                            opacity: 0.7,
+                            opacity: opacity,
                             points: barPoints,
                             originalPoints: barPoints,
                             timestamp: Date.now(),

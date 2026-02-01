@@ -177,6 +177,8 @@ export interface WorldState {
     planetRadius: number; // km, default 6371 (Earth)
     customPlanetRadius?: number; // User-defined radius
     customRadiusEnabled?: boolean; // Whether custom radius is active
+    
+    erosionMultiplier?: number; // Global erosion rate multiplier (default 1.0)
 
     // Timeline
     timelineMaxTime?: number; // Max timeline duration (Ma)
@@ -193,6 +195,14 @@ export interface WorldState {
     orogenyMode?: 'features' | 'paint';  // Spawn features or paint boundaries
     orogenyPaintConvergent?: string;     // Color for convergent boundaries (default brown)
     orogenyPaintDivergent?: string;      // Color for divergent boundaries (default red)
+    
+    // Orogeny Transparency Settings
+    orogenyVelocityTransparency?: boolean; // Enable velocity-based transparency
+    orogenySpeedThresholdHigh?: number;    // Velocity (rad/Ma) for max opacity (Default ~15cm/yr)
+    orogenySpeedThresholdLow?: number;     // Velocity (rad/Ma) for min opacity
+    orogenyOpacityHigh?: number;           // Max opacity (0-1)
+    orogenyOpacityLow?: number;            // Min opacity (0-1)
+
     showHints?: boolean;
     // Paint Ageing
     paintAgeingEnabled?: boolean;        // Whether paint strokes fade over time
@@ -287,6 +297,7 @@ export function createDefaultWorldState(): WorldState {
       planetRadius: 6371, // Earth radius in km
       customPlanetRadius: 6371,
       customRadiusEnabled: false,
+      erosionMultiplier: 1.0, // Global multiplier for fading/death times (1.0 = normal, >1 = faster erosion)
       timelineMaxTime: 500,
       gridThickness: 1.0,
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
@@ -296,6 +307,14 @@ export function createDefaultWorldState(): WorldState {
       hotspotSpawnRate: 1.0,
       enableOrogeny: false,
       orogenyMode: 'paint', // Default to paint mode
+      
+      // Default Orogeny Transparency
+      orogenyVelocityTransparency: false,
+      orogenySpeedThresholdHigh: 0.025, // ~15 cm/yr (0.00166 * 15)
+      orogenySpeedThresholdLow: 0.002,  // ~1.2 cm/yr
+      orogenyOpacityHigh: 1.0,
+      orogenyOpacityLow: 0.2,
+
       showHints: true,
       paintAgeingEnabled: true,
       paintAgeingDuration: 100, // Ma

@@ -321,7 +321,9 @@ export class TimelineSystem {
 
         this.pushHistory();
 
+        let oldInternalTime = internalTime;
         if (event.type === 'birth') {
+            oldInternalTime = (event.originalRef as TectonicPlate).birthTime;
             const delta = internalTime - (this.plate?.birthTime || 0);
             this.plate!.birthTime = internalTime;
 
@@ -361,12 +363,14 @@ export class TimelineSystem {
         }
         else if (event.type === 'motion') {
             const kf = event.originalRef as MotionKeyframe;
+            oldInternalTime = kf.time;
             kf.time = newTime;
             // Sort keyframes after time change
             this.plate!.motionKeyframes.sort((a, b) => a.time - b.time);
         }
         else if (event.type === 'split') {
             const evt = event.originalRef as PlateEvent;
+            oldInternalTime = evt.time;
             const delta = newTime - evt.time;
             evt.time = newTime;
 
@@ -392,10 +396,13 @@ export class TimelineSystem {
 
         else if (event.type === 'fuse') {
             const evt = event.originalRef as PlateEvent;
+            oldInternalTime = evt.time;
             evt.time = newTime;
         }
 
-        this.triggerUpdate();
+        // Invalidate history from the earlier of the two times (old or new)
+        const invalidationTime = Math.min(oldInternalTime, internalTime);
+        this.triggerUpdate(invalidationTime);
     }
 
     private updateKeyframe(kf: MotionKeyframe, changes: Partial<{ rate: number, position: Coordinate }>) {
@@ -404,7 +411,7 @@ export class TimelineSystem {
         if (changes.rate !== undefined) kf.eulerPole.rate = changes.rate;
         if (changes.position !== undefined) kf.eulerPole.position = changes.position;
 
-        this.triggerUpdate();
+        this.triggerUpdate(kf.time);
     }
 
     private deleteEvent(event: TimelineEventItem) {
@@ -468,10 +475,10 @@ export class TimelineSystem {
             }
         }
 
-        this.triggerUpdate();
+        this.triggerUpdate(event.time);
     }
 
-    private triggerUpdate() {
+    private triggerUpdate(invalidationTime: number = 0) {
         if (this.plate && this.simulationEngine && this.app && this.app.state) {
             const plates = this.app.state.world.plates as TectonicPlate[];
             const affectedPlates: TectonicPlate[] = [this.plate];
@@ -493,8 +500,9 @@ export class TimelineSystem {
             affectedPlates.forEach(p => {
                 const updated = this.simulationEngine!.recalculateMotionHistory(p);
                 // 2. Update Main State (replace plate)
+                // Also pass invalidationTime to prune future orogeny strokes from this point onward
                 if (this.app.replacePlate) {
-                    this.app.replacePlate(updated);
+                    this.app.replacePlate(updated, invalidationTime);
                 }
             });
 

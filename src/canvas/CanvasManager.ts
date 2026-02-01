@@ -1913,6 +1913,9 @@ export class CanvasManager {
             // Checks explicit override or global setting for Orogeny strokes
             const g = state.world.globalOptions;
             let effectiveAutoDelete = false;
+
+            // Apply Erosion Multiplier (Default 1.0)
+            const erosionMult = g.erosionMultiplier || 1.0;
             
             if (stroke.autoDelete !== undefined) {
                 effectiveAutoDelete = stroke.autoDelete;
@@ -1922,8 +1925,12 @@ export class CanvasManager {
 
             if (effectiveAutoDelete && stroke.birthTime !== undefined) {
                  const age = currentTime - stroke.birthTime;
-                 const duration = stroke.ageingDuration || g.paintAgeingDuration || 100;
-                 const delay = stroke.deleteDelay !== undefined ? stroke.deleteDelay : (g.paintDeleteDelay || 50);
+                 const rawDuration = stroke.ageingDuration || g.paintAgeingDuration || 100;
+                 const rawDelay = stroke.deleteDelay !== undefined ? stroke.deleteDelay : (g.paintDeleteDelay || 50);
+                 
+                 // Apply erosion multiplier: higher erosion = faster time (shorter duration/delay)
+                 const duration = rawDuration / erosionMult;
+                 const delay = rawDelay / erosionMult;
                  
                  if (age > (duration + delay)) {
                      continue; // Effectively deleted
@@ -1940,16 +1947,15 @@ export class CanvasManager {
             // Paint Ageing (Fading) Logic
             // Apply if global enabled OR stroke has explicit overrides
             // Only strictly apply to 'orogeny' source unless stroke overrides exist
-            // Requirement update: allow manual lines to use fading if overridden or potentially if desired, 
-            // but prompt said "orogeny responsible for orogeny lines".
-            // However, adding properties for override suggests user might want to fade manual lines too.
-            // Let's implement robust check:
             const hasOverride = stroke.ageingDuration !== undefined || stroke.maxAgeingOpacity !== undefined;
             const globalEnabled = g.paintAgeingEnabled !== false && stroke.source === 'orogeny';
             
             if ((globalEnabled || hasOverride) && stroke.birthTime !== undefined && !isFromFuture) {
                  const age = currentTime - stroke.birthTime;
-                 const duration = stroke.ageingDuration || g.paintAgeingDuration || 100;
+                 const rawDuration = stroke.ageingDuration || g.paintAgeingDuration || 100;
+                 // Apply erosion multiplier
+                 const duration = rawDuration / erosionMult;
+
                  const minOpacity = stroke.maxAgeingOpacity !== undefined 
                     ? stroke.maxAgeingOpacity 
                     : (g.paintMaxWaitOpacity !== undefined ? g.paintMaxWaitOpacity : 0.05);
