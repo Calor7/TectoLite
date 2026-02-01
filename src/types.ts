@@ -33,9 +33,10 @@ export interface CrustSegment {
 
 export interface CrustVertex {
     id: string;
-    pos: Coordinate;      // [lon, lat] in degrees
-    elevation: number;    // meters above sea level
-    sediment: number;     // sediment thickness (future use)
+    pos: Coordinate;          // Current position [lon, lat] in degrees
+    originalPos?: Coordinate; // Source of truth: position at mesh creation
+    elevation: number;        // meters above sea level
+    sediment: number;         // sediment thickness (future use)
 }
 
 export type ElevationViewMode = 'off' | 'overlay' | 'absolute';

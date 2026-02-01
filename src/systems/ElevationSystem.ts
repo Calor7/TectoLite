@@ -91,6 +91,7 @@ export class ElevationSystem {
                     vertices.push({
                         id: generateId(),
                         pos: pos,
+                        originalPos: pos, // Store original position
                         elevation: 0, // Start at sea level
                         sediment: 0
                     });
@@ -106,6 +107,7 @@ export class ElevationSystem {
                 vertices.push({
                     id: generateId(),
                     pos: allPoints[i],
+                    originalPos: allPoints[i], // Store original position
                     elevation: 0,
                     sediment: 0
                 });

@@ -360,6 +360,39 @@ export function splitPlate(
         }
     }
 
+    // Assign Mesh Vertices based on polygon containment
+    const leftMeshVertices = [];
+    const rightMeshVertices = [];
+
+    if (plateToSplit.crustMesh) {
+        for (const vertex of plateToSplit.crustMesh) {
+            const inLeft = leftPolygons.some(poly => isPointInPolygon(vertex.pos, poly.points));
+            const inRight = rightPolygons.some(poly => isPointInPolygon(vertex.pos, poly.points));
+
+            if (inLeft && !inRight) {
+                leftMeshVertices.push({ ...vertex });
+            } else if (inRight && !inLeft) {
+                rightMeshVertices.push({ ...vertex });
+            } else if (inLeft && inRight) {
+                // Vertex on boundary - use dot product as tiebreaker
+                const v = latLonToVector(vertex.pos);
+                if (dot(v, overallNormal) > 0) {
+                    leftMeshVertices.push({ ...vertex });
+                } else {
+                    rightMeshVertices.push({ ...vertex });
+                }
+            } else {
+                // Not in either polygon - use dot product fallback
+                const v = latLonToVector(vertex.pos);
+                if (dot(v, overallNormal) > 0) {
+                    leftMeshVertices.push({ ...vertex });
+                } else {
+                    rightMeshVertices.push({ ...vertex });
+                }
+            }
+        }
+    }
+
 
     // Create two new plates with default motion (0) OR inherited
     const currentTime = state.world.currentTime;
@@ -401,7 +434,8 @@ export function splitPlate(
         parentPlateId: plateToSplit.id, // Track parent for feature propagation
         parentPlateIds: [plateToSplit.id],
         initialPolygons: leftPolygons,
-        initialFeatures: leftFeatures
+        initialFeatures: leftFeatures,
+        crustMesh: leftMeshVertices.length > 0 ? leftMeshVertices : undefined
     };
 
     const rightPlate: TectonicPlate = {
@@ -424,7 +458,8 @@ export function splitPlate(
         parentPlateId: plateToSplit.id, // Track parent for feature propagation
         parentPlateIds: [plateToSplit.id],
         initialPolygons: rightPolygons,
-        initialFeatures: rightFeatures
+        initialFeatures: rightFeatures,
+        crustMesh: rightMeshVertices.length > 0 ? rightMeshVertices : undefined
     };
 
     // Mark old plate as dead

@@ -423,6 +423,7 @@ export class SimulationEngine {
 
         // --- Mesh Vertex Transformation ---
         // Transform mesh vertices to follow plate rotation
+        // CRITICAL: Transform from originalPos to avoid compounding rotation
         let newCrustMesh = plate.crustMesh;
         if (plate.crustMesh && plate.crustMesh.length > 0) {
             const meshElapsed = Math.max(0, time - plate.birthTime);
@@ -430,7 +431,9 @@ export class SimulationEngine {
             
             if (meshAngle !== 0) {
                 newCrustMesh = plate.crustMesh.map(vertex => {
-                    const v = latLonToVector(vertex.pos);
+                    // Use originalPos as source of truth, fallback to pos for legacy data
+                    const sourcePos = vertex.originalPos || vertex.pos;
+                    const v = latLonToVector(sourcePos);
                     const vRot = rotateVector(v, axis, meshAngle);
                     return {
                         ...vertex,
@@ -521,6 +524,21 @@ export class SimulationEngine {
 
         const newFeatures = [...transformedPlateFeatures, ...transformedInheritedFeatures];
 
+        // Transform mesh vertices from originalPos to avoid compounding
+        let newCrustMesh = plate.crustMesh;
+        if (plate.crustMesh && plate.crustMesh.length > 0 && angle !== 0) {
+            newCrustMesh = plate.crustMesh.map(vertex => {
+                // Use originalPos as source of truth, fallback to pos for legacy data
+                const sourcePos = vertex.originalPos || vertex.pos;
+                const v = latLonToVector(sourcePos);
+                const vRot = rotateVector(v, axis, angle);
+                return {
+                    ...vertex,
+                    pos: vectorToLatLon(vRot)
+                };
+            });
+        }
+
         const allPoints = newPolygons.flatMap(poly => poly.points);
         const newCenter = calculateSphericalCentroid(allPoints);
 
@@ -528,6 +546,7 @@ export class SimulationEngine {
             ...plate,
             polygons: newPolygons,
             features: newFeatures,
+            crustMesh: newCrustMesh,
             center: newCenter
         };
 
