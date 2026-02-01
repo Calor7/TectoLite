@@ -3,7 +3,7 @@
 
 import { AppState, Feature, generateId, TectonicPlate, FeatureType, Coordinate, PaintStroke, EulerPole } from '../types';
 import { isPointInPolygon } from '../SplitTool';
-import { distance, latLonToVector, toRad, Vector3 } from '../utils/sphericalMath';
+import { distance, latLonToVector, toRad, Vector3, rotateVector, vectorToLatLon } from '../utils/sphericalMath';
 
 export class GeologicalAutomationSystem {
     private boundaryCooldowns: Map<string, number> = new Map();
@@ -491,24 +491,6 @@ export class GeologicalAutomationSystem {
             // Velocity in rad/Ma: 0.001 ~= 0.6 cm/yr
             const velocity = boundary.velocity || 0.001;
             
-            // Paint cooldown based on velocity:
-            // OPTIMIZATION v2: Aggressive reduction for "Helper Line" usage
-            // Fast (>0.005): paint every 0.25 Ma (was 0.06)
-            // Medium (0.002-0.005): paint every 0.6 Ma (was 0.15)
-            // Slow (<0.002): paint every 1.5 Ma (was 0.3)
-            let paintInterval = 1.5;
-            if (velocity > 0.005) paintInterval = 0.25;
-            else if (velocity > 0.002) paintInterval = 0.6;
-
-            // Check cooldown
-            const cooldownKey = boundary.id;
-            const lastPaint = this.paintCooldowns.get(cooldownKey) || -9999;
-            if (currentTime - lastPaint < paintInterval) continue;
-
-            // Stroke width based on velocity (Way thicker for helper lines)
-            // Range: 10-30 pixels (was 3-8)
-            const strokeWidth = Math.min(30, Math.max(10, Math.floor(velocity * 4000)));
-            
             // Color based on boundary type
             const color = boundary.type === 'convergent' ? convergentColor : divergentColor;
 
@@ -528,6 +510,8 @@ export class GeologicalAutomationSystem {
                     const t = (velocity - vLow) / (vHigh - vLow);
                     opacity = oLow + t * (oHigh - oLow);
                 }
+            } else {
+                 opacity = velocity > 0.005 ? 0.8 : (velocity > 0.002 ? 0.5 : 0.3);
             }
 
             // Get the two plates involved
@@ -714,19 +698,86 @@ export class GeologicalAutomationSystem {
                 }
 
                 // Process all bar strokes created from this ring
+                // Using "Swept Area Polygon" approach for 100% coverage
                 for (const barPoints of barStrokes) {
-                    // Create paint stroke for plate 1
+                    if (barPoints.length < 2) continue;
+
+                    // Calculate average velocity for this segment to determine sweep distance
+                    // Use midpoint of first and last point
+                    const midStart = barPoints[0];
+                    const midEnd = barPoints[barPoints.length - 1];
+                    const centerPoint: Coordinate = [(midStart[0] + midEnd[0])/2, (midStart[1] + midEnd[1])/2];
+                    
+                    const pole1 = p1Index !== -1 ? getPole(plates[p1Index]) : undefined;
+                     // Only computing for P1 here for simplicity as "Source"
+                     // If P2 is moving towards P1, we should sum magnitudes?
+                     // Currently visualizing motion of the Plate carrying the paint.
+                     // The paint is "on" P1.
+                    const vVec = getVelocity(centerPoint, pole1); 
+                    const speedRadMa = Math.sqrt(vVec.x*vVec.x + vVec.y*vVec.y + vVec.z*vVec.z);
+                    const speedDegMa = speedRadMa * (180 / Math.PI);
+
+                    // Skip if stationary
+                    if (speedDegMa < 0.0001) continue;
+
+                    // Determine Time Delta for "Frequency Check"
+                    // Get Last Paint Time for this specific boundary segment (Using center point hash as ID approximation)
+                    // Better: Use boundary.id. But boundary.id is for the WHOLE collision.
+                    // We want to paint the whole collision at once.
+                    // Logic:
+                    // 1. Check if Boundary has painted recently.
+                    const cooldownKey = `paint_${boundary.id}`;
+                    const lastTime = this.paintCooldowns.get(cooldownKey) || -9999;
+                    const timeDelta = currentTime - lastTime;
+
+                    // Desired "Width/Interval"
+                    // Let's aim for a resolution of roughly 0.25 degrees (~27km)
+                    const targetIntervalDeg = 0.25; 
+                    const distanceDeg = speedDegMa * timeDelta;
+
+                    // Only paint if we have traveled enough distance to form a "brick"
+                    if (distanceDeg < targetIntervalDeg && lastTime !== -9999) {
+                        continue; // Not yet time to paint
+                    }
+
+                    // GENERATE POLYGON
+                    // Front Edge = current barPoints
+                    // Back Edge = barPoints projected backwards in time by timeDelta
+                    // BackPos = Rotate(Pos, Pole, -Angle)
+                    // Angle = rate * timeDelta
+                    
+                    // Cap max sweep for first frame if timeDelta is huge (e.g. init)
+                    let effectiveDelta = timeDelta;
+                    if (lastTime === -9999 || timeDelta > 50) {
+                        // First paint or huge jump - just paint one standard brick
+                        effectiveDelta = targetIntervalDeg / speedDegMa;
+                    }
+                    
+                    const rate = pole1 ? pole1.rate : 0;
+                    const angle = -1 * rate * effectiveDelta; // Negative for backwards in time
+
+                    // Generate Back Edge Points
+                    const backPoints: Coordinate[] = barPoints.map(p => {
+                         if (!pole1) return p;
+                         const vec = latLonToVector(p);
+                         const poleVec = latLonToVector(pole1.position);
+                         const rotated = rotateVector(vec, poleVec, angle);
+                         return vectorToLatLon(rotated);
+                    }).reverse(); // Reverse for winding order
+
+                    // Construct Closed Polygon
+                    const polygonPoints = [...barPoints, ...backPoints, barPoints[0]];
+
+                    // Apply to involved plates
                     if (p1Index !== -1) {
-                         // We likely want to associate these with the boundary so we don't spam 1000s of strokes too aggressively
-                         // The paint interval already throttles this function call
-                         
                         const stroke1: PaintStroke = {
                             id: generateId(),
                             color: color,
-                            width: strokeWidth,
+                            width: 1, // Ignored for filled polygons, but placeholder
+                            isFilled: true, // Render as Polygon
                             opacity: opacity,
-                            points: barPoints,         // World Coordinates
-                            originalPoints: barPoints, // World Coordinates (Reference)
+                            points: polygonPoints,
+                            originalPoints: polygonPoints,
                             timestamp: Date.now(),
                             source: 'orogeny',
                             birthTime: currentTime,  
@@ -735,20 +786,37 @@ export class GeologicalAutomationSystem {
                         };
 
                         if (!plates[p1Index].paintStrokes) plates[p1Index] = { ...plates[p1Index], paintStrokes: [] };
-                        // Optimize: append to array instead of spread
                         plates[p1Index].paintStrokes!.push(stroke1);
                         modified = true;
                     }
 
-                    // Create paint stroke for plate 2
+                    // ToDo: Handle symmetry for P2 correctly (needs P2 pole rotation)
+                    // For now, mirroring the geometry assumes symmetric spread which isn't always true.
+                    // But for Divergent boundaries, P2 moves opposite.
                     if (p2Index !== -1) {
+                         // Calculate P2 Back Points
+                         const pole2 = getPole(plates[p2Index]);
+                         const rate2 = pole2 ? pole2.rate : 0;
+                         const angle2 = -1 * rate2 * effectiveDelta;
+                         
+                         const backPoints2 = barPoints.map(p => {
+                             if (!pole2) return p;
+                             const vec = latLonToVector(p);
+                             const poleVec = latLonToVector(pole2.position);
+                             const rotated = rotateVector(vec, poleVec, angle2);
+                             return vectorToLatLon(rotated);
+                         }).reverse();
+
+                         const polygonPoints2 = [...barPoints, ...backPoints2, barPoints[0]];
+
                         const stroke2: PaintStroke = {
                             id: generateId(),
                             color: color,
-                            width: strokeWidth,
+                            width: 1,
+                            isFilled: true,
                             opacity: opacity,
-                            points: barPoints,
-                            originalPoints: barPoints,
+                            points: polygonPoints2,
+                            originalPoints: polygonPoints2,
                             timestamp: Date.now(),
                             source: 'orogeny',
                             birthTime: currentTime, 
@@ -763,8 +831,21 @@ export class GeologicalAutomationSystem {
                 }
             }
 
-            // Update cooldown
-            this.paintCooldowns.set(cooldownKey, currentTime);
+            // Update cooldown to NOW
+            // We use the same cooldown key, but now it represents "Time of Last Paint Block"
+            // If we skipped painting above (distance < target), we DO NOT update this.
+            // But we can't easily know if we skipped INSIDE the loop for all segments.
+            // Assumption: If the boundary is active, we paint or skip as a whole.
+            // We need to verify if we actually painted.
+            if (modified) {
+                 this.paintCooldowns.set(`paint_${boundary.id}`, currentTime);
+            } else {
+                 // If we didn't paint, we don't update timestamp (so delta grows for next frame)
+                 // Unless it's the very first frame to init
+                 if (!this.paintCooldowns.has(`paint_${boundary.id}`)) {
+                     this.paintCooldowns.set(`paint_${boundary.id}`, currentTime);
+                 }
+            }
         }
 
         if (!modified) return state;
