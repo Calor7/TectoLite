@@ -1,4 +1,4 @@
-import { AppState, TectonicPlate, Polygon, Coordinate, CrustVertex, generateId, createDefaultMotion } from './types';
+import { AppState, TectonicPlate, Polygon, Coordinate, CrustVertex, Landmass, generateId, createDefaultMotion } from './types';
 import {
     Vector3,
     latLonToVector,
@@ -414,6 +414,34 @@ export function splitPlate(
         }
     }
 
+    // Split Landmasses using polygon clipping (geometric split)
+    const leftLandmasses: Landmass[] = [];
+    const rightLandmasses: Landmass[] = [];
+
+    if (plateToSplit.landmasses) {
+        for (const landmass of plateToSplit.landmasses) {
+            // Split landmass polygon using the same polyline
+            const [leftPoly, rightPoly] = splitPolygonWithPolyline(landmass.polygon, polylinePoints);
+
+            if (leftPoly.length >= 3) {
+                leftLandmasses.push({
+                    ...landmass,
+                    id: generateId(),
+                    polygon: leftPoly,
+                    originalPolygon: leftPoly // Reset original for new plate
+                });
+            }
+            if (rightPoly.length >= 3) {
+                rightLandmasses.push({
+                    ...landmass,
+                    id: generateId(),
+                    polygon: rightPoly,
+                    originalPolygon: rightPoly // Reset original for new plate
+                });
+            }
+        }
+    }
+
     // Rebuild Mesh for children (if parent had mesh) and transfer attributes
     let leftMeshVertices: CrustVertex[] | undefined;
     let rightMeshVertices: CrustVertex[] | undefined;
@@ -441,14 +469,16 @@ export function splitPlate(
         time: currentTime,
         eulerPole: { ...newMotion.eulerPole },
         snapshotPolygons: leftPolygons,
-        snapshotFeatures: leftFeatures
+        snapshotFeatures: leftFeatures,
+        snapshotLandmasses: leftLandmasses
     };
 
     const rightKeyframe = {
         time: currentTime,
         eulerPole: { ...newMotion.eulerPole },
         snapshotPolygons: rightPolygons,
-        snapshotFeatures: rightFeatures
+        snapshotFeatures: rightFeatures,
+        snapshotLandmasses: rightLandmasses
     };
 
     const inheritedDescription = plateToSplit.inheritDescription ? plateToSplit.description : undefined;
@@ -461,6 +491,7 @@ export function splitPlate(
         polygons: leftPolygons,
         features: leftFeatures,
         paintStrokes: leftPaintStrokes,
+        landmasses: leftLandmasses.length > 0 ? leftLandmasses : undefined,
         motion: newMotion,
         motionKeyframes: [leftKeyframe],
         visible: true,
@@ -486,6 +517,7 @@ export function splitPlate(
         polygons: rightPolygons,
         features: rightFeatures,
         paintStrokes: rightPaintStrokes,
+        landmasses: rightLandmasses.length > 0 ? rightLandmasses : undefined,
         motion: newMotion,
         motionKeyframes: [rightKeyframe],
         visible: true,

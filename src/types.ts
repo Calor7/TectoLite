@@ -41,7 +41,10 @@ export interface CrustVertex {
     isOceanic: boolean;       // true = oceanic crust, false = continental
 }
 
-export type ElevationViewMode = 'off' | 'overlay' | 'absolute';
+export type ElevationViewMode = 'off' | 'overlay' | 'absolute' | 'landmass';
+
+// Layer editing mode - determines whether tools operate on plates or landmasses
+export type LayerMode = 'plate' | 'landmass';
 
 export interface MantlePlume {
     id: string;
@@ -70,6 +73,22 @@ export interface PaintStroke {
   deleteDelay?: number;      // Override: How long (Ma) to wait after fading before deletion
   boundaryId?: string;  // ID of the boundary that generated this stroke (for grouping)
   boundaryType?: 'convergent' | 'divergent' | 'transform'; // Type of boundary (for grouping)
+  parentLandmassId?: string; // If set, stroke is associated with a landmass (for clipping/grouping)
+}
+
+// Landmass - artistic polygon layer that moves with plates but doesn't affect elevation
+export interface Landmass {
+  id: string;
+  polygon: Coordinate[];         // The landmass boundary shape
+  originalPolygon?: Coordinate[]; // Source of truth for rotation (at birthTime)
+  fillColor: string;             // Visual fill color
+  strokeColor?: string;          // Optional outline color
+  opacity: number;               // 0.0 to 1.0
+  name?: string;                 // User-defined name
+  description?: string;          // User-defined description
+  birthTime: number;             // Geological time when created
+  deathTime?: number;            // Geological time when destroyed (undefined = active)
+  zIndex?: number;               // Visual layering within plate (higher = on top)
 }
 
 export interface Feature {
@@ -108,6 +127,7 @@ export interface MotionKeyframe {
   snapshotPolygons: Polygon[];     // Plate geometry at keyframe time
   snapshotFeatures: Feature[];     // Features at keyframe time
   snapshotPaintStrokes?: PaintStroke[]; // Paint strokes at keyframe time
+  snapshotLandmasses?: Landmass[]; // Landmasses at keyframe time
 }
 
 export interface PlateMotion {
@@ -161,6 +181,9 @@ export interface TectonicPlate {
   // Paint system
   paintStrokes?: PaintStroke[];
 
+  // Landmass system - artistic layer for detailed geography
+  landmasses?: Landmass[];
+
   // Elevation system
   crustMesh?: CrustVertex[];
   elevationSimulatedTime?: number; // Last time elevation was simulated (for timeline scrubbing)
@@ -183,6 +206,9 @@ export interface WorldState {
   selectedPaintStrokeIds: string[];      // Multiple selection support for paint strokes
   selectedVertexPlateId?: string | null;  // Selected vertex for mesh editing
   selectedVertexId?: string | null;       // Selected vertex ID
+  selectedLandmassId?: string | null;     // Selected landmass for properties panel
+  selectedLandmassIds?: string[];         // Multiple selection support for landmasses
+  layerMode: LayerMode;                   // Current editing layer mode (plate or landmass)
   projection: ProjectionType;
   timeMode: TimeMode;               // NEW: Display mode for time (positive or negative/ago)
   showGrid: boolean;
@@ -313,6 +339,9 @@ export function createDefaultWorldState(): WorldState {
     selectedFeatureIds: [],
     selectedPaintStrokeId: null,
     selectedPaintStrokeIds: [],
+    selectedLandmassId: null,
+    selectedLandmassIds: [],
+    layerMode: 'plate',          // Default to plate mode
     projection: 'orthographic', // Default to globe as requested
     timeMode: 'positive',       // NEW: Default to positive time mode
     showGrid: true,

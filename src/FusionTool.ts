@@ -1,5 +1,5 @@
 // Fusion Tool - Merges two plates into one
-import { AppState, TectonicPlate, Feature, Polygon, Coordinate, generateId, MotionKeyframe } from './types';
+import { AppState, TectonicPlate, Feature, Polygon, Coordinate, Landmass, generateId, MotionKeyframe } from './types';
 import { calculateSphericalCentroid, latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize } from './utils/sphericalMath';
 import polygonClipping from 'polygon-clipping';
 import { isPointInPolygon } from './SplitTool';
@@ -187,12 +187,27 @@ export function fusePlates(
         }
     }
 
+    // Transfer Landmasses from both plates (keep separate, don't merge)
+    const mergedLandmasses: Landmass[] = [];
+    for (const plate of sortedPlates) {
+        if (plate.landmasses) {
+            for (const landmass of plate.landmasses) {
+                // Keep landmass as-is, just transfer to the new fused plate
+                mergedLandmasses.push({
+                    ...landmass,
+                    id: generateId() // New ID for the fused plate
+                });
+            }
+        }
+    }
+
     // Create initial keyframe for merged plate
     const initialKeyframe: MotionKeyframe = {
         time: currentTime,
         eulerPole: { ...plate1.motion.eulerPole },
         snapshotPolygons: mergedPolygons,
-        snapshotFeatures: combinedFeatures
+        snapshotFeatures: combinedFeatures,
+        snapshotLandmasses: mergedLandmasses.length > 0 ? mergedLandmasses : undefined
     };
 
     // Create the new fused plate
@@ -203,6 +218,7 @@ export function fusePlates(
         polygons: mergedPolygons,
         features: combinedFeatures,
         paintStrokes: mergedPaintStrokes,
+        landmasses: mergedLandmasses.length > 0 ? mergedLandmasses : undefined,
         center: newCenter,
         motion: plate1.motion,
         motionKeyframes: [initialKeyframe],

@@ -15,7 +15,9 @@ import {
     Coordinate,
     ProjectionType,
     MotionKeyframe,
-    MantlePlume
+    MantlePlume,
+    Landmass,
+    LayerMode
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -72,7 +74,7 @@ class TectoLiteApp {
             },
             (points) => this.handleDrawComplete(points),
             (pos, type) => this.handleFeaturePlace(pos, type),
-            (plateId, featureId, featureIds, plumeId, paintStrokeId) => this.handleSelect(plateId, featureId, featureIds, plumeId, paintStrokeId),
+            (plateId, featureId, featureIds, plumeId, paintStrokeId, landmassId) => this.handleSelect(plateId, featureId, featureIds, plumeId, paintStrokeId, landmassId),
             (points) => this.handleSplitApply(points),
             (active) => this.handleSplitPreviewChange(active),
             (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
@@ -336,6 +338,7 @@ class TectoLiteApp {
                                             <option value="off" ${this.state.world.globalOptions.elevationViewMode === 'off' ? 'selected' : ''}>Off</option>
                                             <option value="overlay" ${this.state.world.globalOptions.elevationViewMode === 'overlay' ? 'selected' : ''}>Overlay</option>
                                             <option value="absolute" ${this.state.world.globalOptions.elevationViewMode === 'absolute' ? 'selected' : ''}>Absolute</option>
+                                            <option value="landmass" ${this.state.world.globalOptions.elevationViewMode === 'landmass' ? 'selected' : ''}>Landmass Only</option>
                                         </select>
                                     </div>
                                     
@@ -468,6 +471,17 @@ class TectoLiteApp {
                   <input type="checkbox" id="check-show-hints" ${this.state.world.globalOptions.showHints !== false ? 'checked' : ''}> Hints
                 </label>
               </div>
+              
+              <!-- Layer Mode Toggle -->
+              <div style="display: flex; gap: 4px; margin-bottom: 8px; padding: 4px; background: var(--bg-input); border-radius: 4px;">
+                <button id="layer-mode-plate" class="btn ${this.state.world.layerMode === 'plate' ? 'btn-primary' : 'btn-secondary'}" style="flex:1; font-size: 11px; padding: 4px 8px;" title="Edit plates and their geometry (Hotkey: Shift+L)">
+                  🌍 Plate
+                </button>
+                <button id="layer-mode-landmass" class="btn ${this.state.world.layerMode === 'landmass' ? 'btn-primary' : 'btn-secondary'}" style="flex:1; font-size: 11px; padding: 4px 8px;" title="Edit landmasses - artistic layer (Hotkey: Shift+L)">
+                  🏝️ Landmass
+                </button>
+              </div>
+              
               <div style="display: flex; gap: 4px; flex-wrap: wrap;">
                   <button class="tool-btn active" data-tool="select" style="flex:1;">
                     <span class="tool-icon">👆</span>
@@ -1237,6 +1251,14 @@ class TectoLiteApp {
             this.updateHint(this.activeToolText);
         });
 
+        // Layer Mode Toggle (Plate vs Landmass)
+        document.getElementById('layer-mode-plate')?.addEventListener('click', () => {
+            this.setLayerMode('plate');
+        });
+        document.getElementById('layer-mode-landmass')?.addEventListener('click', () => {
+            this.setLayerMode('landmass');
+        });
+
         // UI Mode Toggle
         document.getElementById('btn-ui-mode')?.addEventListener('click', () => {
             document.querySelector('.app-container')?.classList.toggle('oldschool-mode');
@@ -1735,6 +1757,38 @@ class TectoLiteApp {
 
         const executeApply = (mode: 'generation' | 'event') => {
              if (!this.canvasManager) return;
+             
+             // Check for landmass edit first
+             const landmassResult = this.canvasManager.getLandmassEditResult();
+             if (landmassResult) {
+                 // Apply landmass edit - GeoJSON format: coordinates are [lon, lat] tuples
+                 // Remove the closing point (first = last in GeoJSON ring)
+                 const coords = landmassResult.polygon.coordinates[0];
+                 const newPolygon = coords.slice(0, -1) as Coordinate[];
+                 
+                 this.state.world.plates = this.state.world.plates.map(p => {
+                     if (p.id === landmassResult.plateId && p.landmasses) {
+                         return {
+                             ...p,
+                             landmasses: p.landmasses.map(l => {
+                                 if (l.id === landmassResult.landmassId) {
+                                     return { ...l, polygon: newPolygon };
+                                 }
+                                 return l;
+                             })
+                         };
+                     }
+                     return p;
+                 });
+                 
+                 this.canvasManager.cancelLandmassEdit();
+                 document.getElementById('edit-controls')!.style.display = 'none';
+                 document.getElementById('apply-edit-modal')!.style.display = 'none';
+                 this.canvasManager.render();
+                 return;
+             }
+             
+             // Plate edit
              const result = this.canvasManager.getEditResult();
              if (result) {
                  this.state.world.plates = this.state.world.plates.map(p => {
@@ -1828,7 +1882,10 @@ class TectoLiteApp {
         });
 
         document.getElementById('btn-edit-cancel')?.addEventListener('click', () => {
-             if (this.canvasManager) this.canvasManager.cancelEdit();
+             if (this.canvasManager) {
+                 this.canvasManager.cancelEdit();
+                 this.canvasManager.cancelLandmassEdit();
+             }
              document.getElementById('edit-controls')!.style.display = 'none';
         });
 
@@ -2072,6 +2129,14 @@ class TectoLiteApp {
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
                 e.preventDefault();
                 this.redo();
+                return;
+            }
+
+            // Layer Mode Toggle (Shift+L)
+            if (e.shiftKey && e.key.toLowerCase() === 'l') {
+                e.preventDefault();
+                const newMode = this.state.world.layerMode === 'plate' ? 'landmass' : 'plate';
+                this.setLayerMode(newMode);
                 return;
             }
 
@@ -2776,7 +2841,10 @@ class TectoLiteApp {
         const editControls = document.getElementById('edit-controls');
         if (editControls && tool !== 'edit') {
             editControls.style.display = 'none';
-            if (this.canvasManager) this.canvasManager.cancelEdit();
+            if (this.canvasManager) {
+                this.canvasManager.cancelEdit();
+                this.canvasManager.cancelLandmassEdit();
+            }
         }
 
         // Set initial Stage 1 hint/tooltip
@@ -2823,6 +2891,55 @@ class TectoLiteApp {
         this.updateHint(hintText);
     }
 
+    private setLayerMode(mode: LayerMode): void {
+        this.state.world.layerMode = mode;
+        this.updateLayerModeUI();
+        
+        // Update hint based on mode
+        const tool = this.state.activeTool;
+        let hintText = "";
+        
+        if (mode === 'landmass') {
+            switch (tool) {
+                case 'draw':
+                    hintText = "🏝️ LANDMASS MODE: Click to draw a new landmass on the selected plate.";
+                    break;
+                case 'edit':
+                    hintText = "🏝️ LANDMASS MODE: Drag landmass vertices to reshape coastlines.";
+                    break;
+                case 'paint':
+                    hintText = "🏝️ LANDMASS MODE: Paint will be clipped to selected landmass.";
+                    break;
+                case 'select':
+                    hintText = "🏝️ LANDMASS MODE: Click to select a landmass polygon.";
+                    break;
+                default:
+                    hintText = `🏝️ LANDMASS MODE active. Tool: ${tool}`;
+            }
+        } else {
+            // Re-trigger standard hint
+            this.setActiveTool(tool);
+            return;
+        }
+        
+        this.updateHint(hintText);
+    }
+
+    private updateLayerModeUI(): void {
+        const plateBtn = document.getElementById('layer-mode-plate');
+        const landmassBtn = document.getElementById('layer-mode-landmass');
+        
+        if (plateBtn && landmassBtn) {
+            if (this.state.world.layerMode === 'plate') {
+                plateBtn.className = 'btn btn-primary';
+                landmassBtn.className = 'btn btn-secondary';
+            } else {
+                plateBtn.className = 'btn btn-secondary';
+                landmassBtn.className = 'btn btn-primary';
+            }
+        }
+    }
+
     private setActiveFeature(feature: FeatureType): void {
         this.state.activeFeatureType = feature;
         this.updateToolbarState();
@@ -2861,6 +2978,13 @@ class TectoLiteApp {
 
     private handleDrawComplete(points: Coordinate[]): void {
         if (points.length < 3) return;
+        
+        // Check if we're in Landmass mode
+        if (this.state.world.layerMode === 'landmass') {
+            this.handleLandmassDrawComplete(points);
+            return;
+        }
+        
         this.pushState(); // Save state for undo
 
         // Create Polygon
@@ -2911,6 +3035,53 @@ class TectoLiteApp {
 
         this.updateUI();
         this.simulation?.setTime(this.state.world.currentTime);
+        this.setActiveTool('select');
+    }
+
+    private handleLandmassDrawComplete(points: Coordinate[]): void {
+        // Landmass mode: Add landmass to selected plate
+        const plateId = this.state.world.selectedPlateId;
+        
+        if (!plateId) {
+            alert("Please select a plate first to add a landmass to it.");
+            return;
+        }
+        
+        const plate = this.state.world.plates.find(p => p.id === plateId);
+        if (!plate) return;
+        
+        this.pushState();
+        
+        const currentTime = this.state.world.currentTime;
+        
+        // Create new landmass
+        const landmass: Landmass = {
+            id: generateId(),
+            polygon: points,
+            originalPolygon: points,
+            fillColor: '#8B4513', // Default brown (earth/land color)
+            opacity: 0.9,
+            name: `Landmass ${(plate.landmasses?.length || 0) + 1}`,
+            birthTime: currentTime
+        };
+        
+        // Update plate with new landmass
+        this.state = {
+            ...this.state,
+            world: {
+                ...this.state.world,
+                plates: this.state.world.plates.map(p =>
+                    p.id === plateId
+                        ? { ...p, landmasses: [...(p.landmasses || []), landmass] }
+                        : p
+                ),
+                selectedLandmassId: landmass.id,
+                selectedLandmassIds: [landmass.id]
+            }
+        };
+        
+        this.updateUI();
+        this.canvasManager?.render();
         this.setActiveTool('select');
     }
 
@@ -2986,7 +3157,7 @@ class TectoLiteApp {
         this.canvasManager?.render();
     }
 
-    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null, paintStrokeId: string | null = null): void {
+    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null, paintStrokeId: string | null = null, landmassId: string | null = null): void {
         // Reset fusion/link state if switching away
         if (this.state.activeTool !== 'fuse') this.fusionFirstPlateId = null;
         if (this.state.activeTool !== 'link') this.activeLinkSourceId = null;
@@ -3004,7 +3175,11 @@ class TectoLiteApp {
 
         // Selection Logic
         if (this.state.activeTool === 'select') {
-             if (paintStrokeId) {
+             if (landmassId) {
+                 const plate = this.state.world.plates.find(p => p.id === plateId);
+                 const landmass = plate?.landmasses?.find(l => l.id === landmassId);
+                 this.updateHint(`Selected Landmass: ${landmass?.name || 'Unnamed'}.`);
+             } else if (paintStrokeId) {
                  this.updateHint("Selected Paint Stroke.");
              } else if (plateId) {
                  const plate = this.state.world.plates.find(p => p.id === plateId);
@@ -3016,13 +3191,23 @@ class TectoLiteApp {
              }
         }
         
-        // Handle paint stroke selection
-        if (paintStrokeId) {
+        // Handle landmass selection
+        if (landmassId) {
+            this.state.world.selectedLandmassId = landmassId;
+            this.state.world.selectedLandmassIds = [landmassId];
+            this.state.world.selectedPlateId = plateId; // Keep plate context
+            this.state.world.selectedFeatureId = null;
+            this.state.world.selectedFeatureIds = [];
+            this.state.world.selectedPaintStrokeId = null;
+            this.state.world.selectedPaintStrokeIds = [];
+        } else if (paintStrokeId) {
             this.state.world.selectedPaintStrokeId = paintStrokeId;
             this.state.world.selectedPaintStrokeIds = [paintStrokeId];
             this.state.world.selectedPlateId = plateId; // Keep plate context
             this.state.world.selectedFeatureId = null;
             this.state.world.selectedFeatureIds = [];
+            this.state.world.selectedLandmassId = null;
+            this.state.world.selectedLandmassIds = [];
         } else if (plumeId) {
              // If plume selected, deselect others and set ID to selectedFeatureId for UI binding
              this.state.world.selectedPlateId = null;
@@ -3030,11 +3215,15 @@ class TectoLiteApp {
              this.state.world.selectedFeatureIds = [plumeId];
              this.state.world.selectedPaintStrokeId = null;
              this.state.world.selectedPaintStrokeIds = [];
+             this.state.world.selectedLandmassId = null;
+             this.state.world.selectedLandmassIds = [];
         } else {
              this.state.world.selectedPlateId = plateId;
              this.state.world.selectedFeatureId = featureId ?? null;
              this.state.world.selectedPaintStrokeId = null;
              this.state.world.selectedPaintStrokeIds = [];
+             this.state.world.selectedLandmassId = null;
+             this.state.world.selectedLandmassIds = [];
     
              // Handle multi-selection
              if (featureIds.length > 0) {
@@ -3901,6 +4090,150 @@ class TectoLiteApp {
                     strokePlate.paintStrokes = strokePlate.paintStrokes.filter((s: any) => s.id !== strokeId);
                     this.state.world.selectedPaintStrokeId = null;
                     this.state.world.selectedPaintStrokeIds = [];
+                    this.updateUI();
+                    this.canvasManager?.render();
+                });
+
+                return;
+            }
+        }
+
+        // Check for Landmass Selection
+        const landmassIds = this.state.world.selectedLandmassIds || (this.state.world.selectedLandmassId ? [this.state.world.selectedLandmassId] : []);
+        
+        if (landmassIds.length > 0) {
+            const landmassId = landmassIds[0];
+            let foundLandmass: Landmass | null = null;
+            let landmassPlate: TectonicPlate | null = null;
+
+            // Find the landmass across all plates
+            for (const plate of this.state.world.plates) {
+                if (plate.landmasses) {
+                    const landmass = plate.landmasses.find(l => l.id === landmassId);
+                    if (landmass) {
+                        foundLandmass = landmass;
+                        landmassPlate = plate;
+                        break;
+                    }
+                }
+            }
+
+            if (foundLandmass && landmassPlate) {
+                content.innerHTML = `
+                    <h3 class="panel-section-title">🏝️ Landmass</h3>
+                    
+                    <div class="property-group">
+                        <label class="property-label">Name</label>
+                        <input type="text" id="prop-landmass-name" class="property-input" value="${foundLandmass.name || ''}" placeholder="Unnamed Landmass">
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Description</label>
+                        <textarea id="prop-landmass-desc" class="property-input" rows="2" placeholder="Add notes...">${foundLandmass.description || ''}</textarea>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Fill Color</label>
+                        <input type="color" id="prop-landmass-color" value="${foundLandmass.fillColor}" style="width: 100%; height: 28px; cursor: pointer;">
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Stroke Color</label>
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                            <input type="color" id="prop-landmass-stroke-color" value="${foundLandmass.strokeColor || '#000000'}" style="flex: 1; height: 28px; cursor: pointer;">
+                            <button id="prop-landmass-stroke-clear" class="btn btn-secondary" style="padding: 4px 8px; font-size: 10px;">Clear</button>
+                        </div>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Opacity</label>
+                        <input type="range" id="prop-landmass-opacity" min="0" max="100" value="${Math.round(foundLandmass.opacity * 100)}" style="width: 100%;">
+                        <span id="prop-landmass-opacity-value" style="font-size: 10px; color: var(--text-secondary);">${Math.round(foundLandmass.opacity * 100)}%</span>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Timeline (Ma)</label>
+                        <div style="display: flex; gap: 4px;">
+                             <input type="number" id="prop-landmass-birth-time" class="property-input" title="Birth Time" value="${this.getDisplayTimeValue(foundLandmass.birthTime)}" step="5" style="flex:1">
+                             <span style="align-self: center;">-</span>
+                             <input type="number" id="prop-landmass-death-time" class="property-input" title="Death Time" value="${foundLandmass.deathTime !== undefined ? this.getDisplayTimeValue(foundLandmass.deathTime) : ''}" placeholder="Active" step="5" style="flex:1">
+                        </div>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Vertices</label>
+                        <span class="property-value">${foundLandmass.polygon.length}</span>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">On Plate</label>
+                        <span class="property-value">${landmassPlate.name}</span>
+                    </div>
+
+                    <div class="property-group" style="margin-top:20px;">
+                        <button id="btn-delete-landmass" class="btn btn-danger" style="width:100%">Delete Landmass</button>
+                    </div>
+                `;
+
+                // Bind events
+                document.getElementById('prop-landmass-name')?.addEventListener('change', (e) => {
+                    foundLandmass!.name = (e.target as HTMLInputElement).value;
+                });
+
+                document.getElementById('prop-landmass-desc')?.addEventListener('change', (e) => {
+                    foundLandmass!.description = (e.target as HTMLTextAreaElement).value;
+                });
+
+                document.getElementById('prop-landmass-color')?.addEventListener('input', (e) => {
+                    foundLandmass!.fillColor = (e.target as HTMLInputElement).value;
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('prop-landmass-stroke-color')?.addEventListener('input', (e) => {
+                    foundLandmass!.strokeColor = (e.target as HTMLInputElement).value;
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('prop-landmass-stroke-clear')?.addEventListener('click', () => {
+                    delete foundLandmass!.strokeColor;
+                    this.updatePropertiesPanel();
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('prop-landmass-opacity')?.addEventListener('input', (e) => {
+                    const val = parseInt((e.target as HTMLInputElement).value) / 100;
+                    foundLandmass!.opacity = val;
+                    const display = document.getElementById('prop-landmass-opacity-value');
+                    if (display) display.textContent = `${Math.round(val * 100)}%`;
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('prop-landmass-birth-time')?.addEventListener('change', (e) => {
+                    const val = parseFloat((e.target as HTMLInputElement).value);
+                    if (!isNaN(val)) {
+                        foundLandmass!.birthTime = this.transformInputTime(val);
+                        this.canvasManager?.render();
+                    }
+                });
+
+                document.getElementById('prop-landmass-death-time')?.addEventListener('change', (e) => {
+                    const val = (e.target as HTMLInputElement).value;
+                    if (val === '') {
+                        delete foundLandmass!.deathTime;
+                    } else {
+                        const num = parseFloat(val);
+                        if (!isNaN(num)) {
+                            foundLandmass!.deathTime = this.transformInputTime(num);
+                        }
+                    }
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('btn-delete-landmass')?.addEventListener('click', () => {
+                    this.pushState();
+                    landmassPlate!.landmasses = landmassPlate!.landmasses!.filter(l => l.id !== landmassId);
+                    this.state.world.selectedLandmassId = null;
+                    this.state.world.selectedLandmassIds = [];
                     this.updateUI();
                     this.canvasManager?.render();
                 });

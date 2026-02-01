@@ -1,4 +1,4 @@
-import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, PaintStroke, generateId, PaintMode, ElevationViewMode } from '../types';
+import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, PaintStroke, Landmass, generateId, PaintMode, ElevationViewMode } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { Delaunay } from 'd3-delaunay';
@@ -75,6 +75,28 @@ export class CanvasManager {
     // We store the polygons being edited temporarily here
     private editTempPolygons: { plateId: string; polygons: any[] } | null = null;
 
+    // Landmass Edit Tool State
+    private editLandmassHoveredVertex: { 
+        plateId: string; 
+        landmassId: string; 
+        vertexIndex?: number;
+        edgeStartIndex?: number;
+        pointOnEdge?: Coordinate;
+        type: 'vertex' | 'edge';
+    } | null = null;
+    private editLandmassDragState: {
+        operation: 'move_vertex' | 'insert_vertex';
+        plateId: string;
+        landmassId: string;
+        vertexIndex: number;
+        startPoint: Coordinate;
+    } | null = null;
+    private editTempLandmass: { 
+        plateId: string; 
+        landmassId: string; 
+        polygon: { coordinates: [number, number][][] }  // GeoJSON-style structure for editing
+    } | null = null;
+
     // Paint Tool State
     private isPainting = false;
     private currentPaintStroke: Coordinate[] = [];
@@ -96,7 +118,7 @@ export class CanvasManager {
         private setState: (updater: (state: AppState) => AppState) => void,
         private onDrawComplete: (points: Coordinate[]) => void,
         private onFeaturePlace: (position: Coordinate, type: FeatureType) => void,
-        private onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[], plumeId?: string | null, paintStrokeId?: string | null) => void,
+        private onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[], plumeId?: string | null, paintStrokeId?: string | null, landmassId?: string | null) => void,
         private onSplitApply: (points: Coordinate[]) => void,
         private onSplitPreviewChange: (active: boolean) => void,
         private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void,
@@ -142,6 +164,74 @@ export class CanvasManager {
         if (l2 === 0) return 0;
         let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
         return Math.max(0, Math.min(1, t));
+    }
+
+    /**
+     * Find nearest landmass vertex for editing (when in landmass layer mode)
+     */
+    private findNearestLandmassVertex(mouseX: number, mouseY: number): { type: 'vertex' | 'edge', data: any } | null {
+        const state = this.getState();
+        const targetLandmassId = state.world.selectedLandmassId;
+        const targetPlateId = state.world.selectedPlateId;
+        if (!targetLandmassId || !targetPlateId) return null;
+
+        const plate = state.world.plates.find(p => p.id === targetPlateId);
+        if (!plate || !plate.visible || !plate.landmasses) return null;
+
+        const landmass = plate.landmasses.find(l => l.id === targetLandmassId);
+        if (!landmass) return null;
+
+        // Use temp polygon if editing - convert from GeoJSON format to Coordinate[]
+        let polygon: Coordinate[] = landmass.polygon;
+        if (this.editTempLandmass && this.editTempLandmass.landmassId === targetLandmassId) {
+            const coords = this.editTempLandmass.polygon.coordinates[0];
+            // GeoJSON has closing point (first = last), remove it for iteration
+            polygon = coords.slice(0, -1) as Coordinate[];
+        }
+
+        let closestVertex: { plateId: string; landmassId: string; vertexIndex: number; type: 'vertex' } | null = null;
+        let minVertexDist = 12; // px - larger hit target for easier editing
+
+        let closestEdge: { plateId: string; landmassId: string; edgeStartIndex: number; pointOnEdge: Coordinate; type: 'edge' } | null = null;
+        let minEdgeDist = 12; // px
+
+        const screenPoints = polygon.map(p => this.projectionManager.project(p));
+
+        for (let i = 0; i < screenPoints.length; i++) {
+            const p = screenPoints[i];
+            if (!p) continue;
+
+            // Vertex check
+            const d = Math.sqrt((p[0] - mouseX) ** 2 + (p[1] - mouseY) ** 2);
+            if (d < minVertexDist) {
+                minVertexDist = d;
+                closestVertex = { plateId: plate.id, landmassId: landmass.id, vertexIndex: i, type: 'vertex' };
+            }
+
+            // Edge check (only if no vertex found)
+            if (!closestVertex) {
+                const nextIdx = (i + 1) % screenPoints.length;
+                const pNext = screenPoints[nextIdx];
+                if (!pNext) continue;
+
+                const dist2 = this.distToSegmentSquared({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
+                const dEdge = Math.sqrt(dist2);
+                if (dEdge < minEdgeDist) {
+                    const t = this.getT({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
+                    const screenX = p[0] + t * (pNext[0] - p[0]);
+                    const screenY = p[1] + t * (pNext[1] - p[1]);
+                    const geo = this.projectionManager.invert(screenX, screenY);
+                    if (geo) {
+                        minEdgeDist = dEdge;
+                        closestEdge = { plateId: plate.id, landmassId: landmass.id, edgeStartIndex: i, pointOnEdge: geo, type: 'edge' };
+                    }
+                }
+            }
+        }
+
+        if (closestVertex) return { type: 'vertex', data: closestVertex };
+        if (closestEdge) return { type: 'edge', data: closestEdge };
+        return null;
     }
 
     private findNearestBoundaryElement(mouseX: number, mouseY: number): { type: 'vertex' | 'edge', data: any } | null {
@@ -317,6 +407,116 @@ export class CanvasManager {
     public cancelEdit() {
         this.editTempPolygons = null;
         this.editDragState = null;
+        this.editTempLandmass = null;
+        this.editLandmassDragState = null;
+        this.render();
+    }
+
+    // Landmass edit methods
+    private updateLandmassEditDrag(geoPos: Coordinate) {
+        if (!this.editLandmassDragState) return;
+        const state = this.getState();
+        const plate = state.world.plates.find(p => p.id === this.editLandmassDragState!.plateId);
+        if (!plate || !plate.landmasses) return;
+
+        // Init temp if needed - convert Coordinate[] to GeoJSON-style format for editing
+        if (!this.editTempLandmass || this.editTempLandmass.landmassId !== this.editLandmassDragState.landmassId) {
+            const landmass = plate.landmasses.find(l => l.id === this.editLandmassDragState!.landmassId);
+            if (landmass) {
+                // Coordinate is [lon, lat] tuple - make a copy and add closing point
+                const coords: [number, number][] = landmass.polygon.map(p => [p[0], p[1]]);
+                coords.push([landmass.polygon[0][0], landmass.polygon[0][1]]); // Close ring
+                this.editTempLandmass = {
+                    plateId: plate.id,
+                    landmassId: landmass.id,
+                    polygon: { coordinates: [coords] }
+                };
+            }
+        }
+
+        if (this.editTempLandmass && this.editTempLandmass.polygon.coordinates[0]) {
+            this.editTempLandmass.polygon.coordinates[0][this.editLandmassDragState.vertexIndex] = geoPos;
+            // Ensure ring closure
+            const coords = this.editTempLandmass.polygon.coordinates[0];
+            if (this.editLandmassDragState.vertexIndex === 0) {
+                coords[coords.length - 1] = geoPos;
+            } else if (this.editLandmassDragState.vertexIndex === coords.length - 1) {
+                coords[0] = geoPos;
+            }
+        }
+        if (this.onEditPending) this.onEditPending(true);
+    }
+
+    private insertLandmassVertex(plateId: string, landmassId: string, insertIndex: number, point: Coordinate) {
+        const state = this.getState();
+        const plate = state.world.plates.find(p => p.id === plateId);
+        if (!plate || !plate.landmasses) return;
+
+        // Init temp if needed - Coordinate is [lon, lat] tuple
+        if (!this.editTempLandmass || this.editTempLandmass.landmassId !== landmassId) {
+            const landmass = plate.landmasses.find(l => l.id === landmassId);
+            if (landmass) {
+                const coords: [number, number][] = landmass.polygon.map(p => [p[0], p[1]]);
+                coords.push([landmass.polygon[0][0], landmass.polygon[0][1]]); // Close ring
+                this.editTempLandmass = {
+                    plateId: plate.id,
+                    landmassId: landmass.id,
+                    polygon: { coordinates: [coords] }
+                };
+            }
+        }
+
+        if (this.editTempLandmass && this.editTempLandmass.polygon.coordinates[0]) {
+            // Insert before the closing point (last point = first point for closed ring)
+            const coords = this.editTempLandmass.polygon.coordinates[0];
+            coords.splice(insertIndex, 0, point);
+        }
+        if (this.onEditPending) this.onEditPending(true);
+    }
+
+    private deleteLandmassVertex(data: { plateId: string; landmassId: string; vertexIndex: number }) {
+        const state = this.getState();
+        const plate = state.world.plates.find(p => p.id === data.plateId);
+        if (!plate || !plate.landmasses) return;
+
+        // Init temp if needed - Coordinate is [lon, lat] tuple
+        if (!this.editTempLandmass || this.editTempLandmass.landmassId !== data.landmassId) {
+            const landmass = plate.landmasses.find(l => l.id === data.landmassId);
+            if (landmass) {
+                const coords: [number, number][] = landmass.polygon.map(p => [p[0], p[1]]);
+                coords.push([landmass.polygon[0][0], landmass.polygon[0][1]]); // Close ring
+                this.editTempLandmass = {
+                    plateId: plate.id,
+                    landmassId: landmass.id,
+                    polygon: { coordinates: [coords] }
+                };
+            }
+        }
+
+        if (this.editTempLandmass && this.editTempLandmass.polygon.coordinates[0]) {
+            const coords = this.editTempLandmass.polygon.coordinates[0];
+            // Need at least 4 points (3 unique + 1 closure) for a valid polygon
+            if (coords.length > 4) {
+                coords.splice(data.vertexIndex, 1);
+                // If we deleted the first point, update the last point to match
+                if (data.vertexIndex === 0 && coords.length > 0) {
+                    coords[coords.length - 1] = [...coords[0]];
+                }
+                if (this.onEditPending) this.onEditPending(true);
+            } else {
+                console.warn("Cannot delete vertex: Polygon too small");
+            }
+        }
+    }
+
+    public getLandmassEditResult(): { plateId: string; landmassId: string; polygon: any } | null {
+        return this.editTempLandmass;
+    }
+
+    public cancelLandmassEdit() {
+        this.editTempLandmass = null;
+        this.editLandmassDragState = null;
+        this.editLandmassHoveredVertex = null;
         this.render();
     }
 
@@ -387,11 +587,25 @@ export class CanvasManager {
         const mousePos = this.getMousePos(e);
 
         if (state.activeTool === 'edit') {
-            // Check if we clicked on a vertex
-            const nearest = this.findNearestBoundaryElement(mousePos.x, mousePos.y);
-            if (nearest && nearest.type === 'vertex') {
-                this.deleteVertex(nearest.data);
-                this.render();
+            // Check layer mode for landmass vs plate editing
+            if (state.world.layerMode === 'landmass') {
+                // Landmass editing - check if we clicked on a vertex
+                const nearest = this.findNearestLandmassVertex(mousePos.x, mousePos.y);
+                if (nearest && nearest.type === 'vertex') {
+                    this.deleteLandmassVertex({
+                        plateId: nearest.data.plateId,
+                        landmassId: nearest.data.landmassId,
+                        vertexIndex: nearest.data.vertexIndex
+                    });
+                    this.render();
+                }
+            } else {
+                // Plate editing - check if we clicked on a vertex
+                const nearest = this.findNearestBoundaryElement(mousePos.x, mousePos.y);
+                if (nearest && nearest.type === 'vertex') {
+                    this.deleteVertex(nearest.data);
+                    this.render();
+                }
             }
             return;
         }
@@ -583,21 +797,54 @@ export class CanvasManager {
                     break;
 
                 case 'edit':
-                    if (this.editHoveredVertex) {
-                         // Click on vertex - Start Move
-                         // Check for Modifier (Alt) for delete?
-                         // For now, simple drag
-                         this.editDragState = {
-                             operation: 'move_vertex',
-                             plateId: this.editHoveredVertex.plateId,
-                             polyIndex: this.editHoveredVertex.polyIndex,
-                             vertexIndex: this.editHoveredVertex.vertexIndex,
-                             startPoint: geoPos!
-                         };
-                         this.isDragging = true;
-                    } else if (this.editHoveredEdge) {
-                        this.startInsertDrag(this.editHoveredEdge);
-                        this.isDragging = true;
+                    // Check layer mode for landmass vs plate editing
+                    if (state.world.layerMode === 'landmass') {
+                        // Landmass editing mode
+                        if (this.editLandmassHoveredVertex) {
+                            const data = this.editLandmassHoveredVertex;
+                            if (data.type === 'vertex' && data.vertexIndex !== undefined) {
+                                this.editLandmassDragState = {
+                                    operation: 'move_vertex',
+                                    plateId: data.plateId,
+                                    landmassId: data.landmassId,
+                                    vertexIndex: data.vertexIndex,
+                                    startPoint: geoPos!
+                                };
+                                this.isDragging = true;
+                            } else if (data.type === 'edge' && data.edgeStartIndex !== undefined && data.pointOnEdge) {
+                                this.editLandmassDragState = {
+                                    operation: 'insert_vertex',
+                                    plateId: data.plateId,
+                                    landmassId: data.landmassId,
+                                    vertexIndex: data.edgeStartIndex,
+                                    startPoint: data.pointOnEdge
+                                };
+                                this.isDragging = true;
+                                // Immediately insert vertex
+                                this.insertLandmassVertex(data.plateId, data.landmassId, data.edgeStartIndex + 1, data.pointOnEdge);
+                                // Update drag state to reference new vertex
+                                this.editLandmassDragState.operation = 'move_vertex';
+                                this.editLandmassDragState.vertexIndex = data.edgeStartIndex + 1;
+                            }
+                        }
+                    } else {
+                        // Plate editing mode (original logic)
+                        if (this.editHoveredVertex) {
+                             // Click on vertex - Start Move
+                             // Check for Modifier (Alt) for delete?
+                             // For now, simple drag
+                             this.editDragState = {
+                                 operation: 'move_vertex',
+                                 plateId: this.editHoveredVertex.plateId,
+                                 polyIndex: this.editHoveredVertex.polyIndex,
+                                 vertexIndex: this.editHoveredVertex.vertexIndex,
+                                 startPoint: geoPos!
+                             };
+                             this.isDragging = true;
+                        } else if (this.editHoveredEdge) {
+                            this.startInsertDrag(this.editHoveredEdge);
+                            this.isDragging = true;
+                        }
                     }
                     break;
 
@@ -668,6 +915,9 @@ export class CanvasManager {
                         } else if (hit && 'paintStrokeId' in hit && hit.paintStrokeId) {
                             // Paint stroke selected
                             this.onSelect(hit.plateId ?? null, null, [], null, hit.paintStrokeId);
+                        } else if (hit && 'landmassId' in hit && hit.landmassId) {
+                            // Landmass selected
+                            this.onSelect(hit.plateId ?? null, null, [], null, null, hit.landmassId);
                         } else {
                             this.onSelect(hit?.plateId ?? null, hit?.featureId ?? null);
                         }
@@ -860,26 +1110,50 @@ export class CanvasManager {
             // Draw the split polyline with current mouse position as temporary end
             this.drawSplitPolyline([...this.splitPoints, geoPos]);
         } else if (state.activeTool === 'edit') {
-            if (this.isDragging && this.editDragState && geoPos) {
-                 this.updateEditDrag(geoPos);
-                 this.render();
+            // Check layer mode for landmass vs plate editing
+            if (state.world.layerMode === 'landmass') {
+                // Landmass editing mode
+                if (this.isDragging && this.editLandmassDragState && geoPos) {
+                    this.updateLandmassEditDrag(geoPos);
+                    this.render();
+                } else {
+                    const nearest = this.findNearestLandmassVertex(mousePos.x, mousePos.y);
+                    if (nearest) {
+                        this.canvas.style.cursor = nearest.type === 'vertex' ? 'move' : 'copy';
+                        if (nearest.type === 'vertex') {
+                            this.editLandmassHoveredVertex = nearest.data;
+                        } else {
+                            this.editLandmassHoveredVertex = nearest.data; // Store edge data as well
+                        }
+                    } else {
+                        this.editLandmassHoveredVertex = null;
+                        this.canvas.style.cursor = 'default';
+                    }
+                    this.render();
+                }
             } else {
-                 const nearest = this.findNearestBoundaryElement(mousePos.x, mousePos.y);
-                 if (nearest) {
-                     this.canvas.style.cursor = nearest.type === 'vertex' ? 'move' : 'copy';
-                     if (nearest.type === 'vertex') {
-                         this.editHoveredVertex = nearest.data;
-                         this.editHoveredEdge = null;
+                // Plate editing mode (original logic)
+                if (this.isDragging && this.editDragState && geoPos) {
+                     this.updateEditDrag(geoPos);
+                     this.render();
+                } else {
+                     const nearest = this.findNearestBoundaryElement(mousePos.x, mousePos.y);
+                     if (nearest) {
+                         this.canvas.style.cursor = nearest.type === 'vertex' ? 'move' : 'copy';
+                         if (nearest.type === 'vertex') {
+                             this.editHoveredVertex = nearest.data;
+                             this.editHoveredEdge = null;
+                         } else {
+                             this.editHoveredEdge = nearest.data;
+                             this.editHoveredVertex = null;
+                         }
                      } else {
-                         this.editHoveredEdge = nearest.data;
                          this.editHoveredVertex = null;
+                         this.editHoveredEdge = null;
+                         this.canvas.style.cursor = 'default';
                      }
-                 } else {
-                     this.editHoveredVertex = null;
-                     this.editHoveredEdge = null;
-                     this.canvas.style.cursor = 'default';
-                 }
-                 this.render();
+                     this.render();
+                }
             }
         }
     }
@@ -927,6 +1201,13 @@ export class CanvasManager {
             if (this.editDragState) {
                 if (this.onEditPending) this.onEditPending(true);
                 this.editDragState = null;
+                this.isDragging = false;
+                this.render();
+                return;
+            }
+            if (this.editLandmassDragState) {
+                if (this.onEditPending) this.onEditPending(true);
+                this.editLandmassDragState = null;
                 this.isDragging = false;
                 this.render();
                 return;
@@ -1042,7 +1323,7 @@ export class CanvasManager {
         this.render();
     }
 
-    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string; paintStrokeId?: string } | null {
+    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string; paintStrokeId?: string; landmassId?: string } | null {
         const state = this.getState();
         // Naive hit test using Project -> Distance for features
 
@@ -1069,6 +1350,41 @@ export class CanvasManager {
                 if (proj) {
                     const dist = Math.hypot(proj[0] - mousePos.x, proj[1] - mousePos.y);
                     if (dist < 20) return { plateId: plate.id, featureId: feature.id };
+                }
+            }
+        }
+
+        // Check landmasses (before paint strokes, after features) - especially in landmass layer mode
+        const landmassPath = this.projectionManager.getPathGenerator();
+        for (const plate of state.world.plates) {
+            if (!plate.visible || !plate.landmasses) continue;
+            if (state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
+
+            // Check in reverse order (top landmasses first)
+            for (let i = plate.landmasses.length - 1; i >= 0; i--) {
+                const landmass = plate.landmasses[i];
+                // Time-based visibility
+                if (landmass.birthTime > state.world.currentTime && !state.world.showFutureFeatures) continue;
+                if (landmass.deathTime !== undefined && state.world.currentTime >= landmass.deathTime) continue;
+
+                // Create GeoJSON for hit test
+                const geojson: GeoJSON.Feature<GeoJSON.Polygon> = {
+                    type: 'Feature',
+                    properties: {},
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [[...landmass.polygon.map(p => [p[0], p[1]] as [number, number]), [landmass.polygon[0][0], landmass.polygon[0][1]]]]
+                    }
+                };
+
+                if (geoArea(geojson) > 2 * Math.PI) {
+                    geojson.geometry.coordinates[0].reverse();
+                }
+
+                this.ctx.beginPath();
+                landmassPath(geojson);
+                if (this.ctx.isPointInPath(mousePos.x, mousePos.y)) {
+                    return { plateId: plate.id, landmassId: landmass.id };
                 }
             }
         }
@@ -1286,6 +1602,11 @@ export class CanvasManager {
                 this.renderPaintStrokes(plate.paintStrokes, plate);
             }
 
+            // Draw Landmasses (artistic layer on top of paint)
+            if (plate.landmasses && plate.landmasses.length > 0) {
+                this.renderLandmasses(plate.landmasses, plate, isSelected);
+            }
+
             // Euler Pole Visualization
             const showGlobalPoles = state.world.showEulerPoles;
             const gizmoActive = isSelected && state.activeTool === 'select';
@@ -1418,7 +1739,11 @@ export class CanvasManager {
         }
 
         if (state.activeTool === 'edit') {
-            this.drawEditHighlights();
+            if (state.world.layerMode === 'landmass') {
+                this.drawLandmassEditHighlights();
+            } else {
+                this.drawEditHighlights();
+            }
         }
 
         // Split polyline preview
@@ -2057,6 +2382,93 @@ export class CanvasManager {
         this.ctx.restore();
     }
 
+    /**
+     * Render landmasses for a plate - artistic polygon layer
+     */
+    private renderLandmasses(landmasses: Landmass[], plate: any, _isPlateSelected: boolean): void {
+        const state = this.getState();
+        const currentTime = state.world.currentTime;
+        const showFuture = state.world.showFutureFeatures;
+        const selectedLandmassId = state.world.selectedLandmassId;
+        const selectedLandmassIds = state.world.selectedLandmassIds || [];
+        const pathGen = this.projectionManager.getPathGenerator();
+
+        // Sort landmasses by zIndex
+        const sortedLandmasses = [...landmasses].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+
+        for (const landmass of sortedLandmasses) {
+            // Time-based visibility
+            if (landmass.birthTime > currentTime && !showFuture) continue;
+            if (landmass.deathTime !== undefined && currentTime >= landmass.deathTime) continue;
+
+            const isSelected = landmass.id === selectedLandmassId || selectedLandmassIds.includes(landmass.id);
+            const isFromFuture = landmass.birthTime > currentTime;
+            
+            // Check if we're editing this landmass - use temp data if available
+            let polygonToDraw = landmass.polygon;
+            if (this.editTempLandmass && this.editTempLandmass.landmassId === landmass.id) {
+                // Use temp polygon from editing - GeoJSON format, remove closing point
+                const coords = this.editTempLandmass.polygon.coordinates[0];
+                polygonToDraw = coords.slice(0, -1) as Coordinate[];
+            }
+            
+            // Apply ghost rotation if active for this plate
+            if (this.ghostRotation && this.ghostRotation.plateId === plate.id) {
+                const axis = this.ghostRotation.axis;
+                const angle = this.ghostRotation.angle;
+                const spinRad = -this.ghostSpin * Math.PI / 180;
+                const vRotCenter = latLonToVector(plate.center);
+                
+                polygonToDraw = polygonToDraw.map(pt => {
+                    const v = latLonToVector(pt);
+                    const v1 = rotateVector(v, axis, angle);
+                    const v2 = rotateVector(v1, vRotCenter, spinRad);
+                    return vectorToLatLon(v2);
+                });
+            }
+
+            // Create GeoJSON for rendering - Coordinate is [lon, lat]
+            const geojson: GeoJSON.Feature<GeoJSON.Polygon> = {
+                type: 'Feature',
+                properties: {},
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [[...polygonToDraw.map(p => [p[0], p[1]] as [number, number]), [polygonToDraw[0][0], polygonToDraw[0][1]]]]
+                }
+            };
+
+            // Fix winding if needed
+            if (geoArea(geojson) > 2 * Math.PI) {
+                geojson.geometry.coordinates[0].reverse();
+            }
+
+            // Set opacity (ghosted if from future)
+            this.ctx.globalAlpha = isFromFuture ? landmass.opacity * 0.3 : landmass.opacity;
+
+            // Fill landmass
+            this.ctx.beginPath();
+            pathGen(geojson);
+            this.ctx.fillStyle = landmass.fillColor;
+            this.ctx.fill();
+
+            // Stroke outline
+            if (landmass.strokeColor) {
+                this.ctx.strokeStyle = landmass.strokeColor;
+                this.ctx.lineWidth = isSelected ? 3 : 1;
+                this.ctx.stroke();
+            }
+
+            // Selection highlight
+            if (isSelected) {
+                this.ctx.strokeStyle = '#00ffff';
+                this.ctx.lineWidth = 3;
+                this.ctx.stroke();
+            }
+        }
+
+        this.ctx.globalAlpha = 1.0;
+    }
+
     private applyPolyFillPaint(): void {
         const state = this.getState();
         if (!state.world.selectedPlateId || this.polyFillPoints.length < 3) {
@@ -2477,6 +2889,72 @@ export class CanvasManager {
              }
          }
     }
+
+    private drawLandmassEditHighlights() {
+        const state = this.getState();
+        const plateId = state.world.selectedPlateId;
+        const landmassId = state.world.selectedLandmassId;
+        if (!plateId || !landmassId) return;
+
+        const plate = state.world.plates.find(p => p.id === plateId);
+        if (!plate || !plate.landmasses) return;
+
+        const landmass = plate.landmasses.find(l => l.id === landmassId);
+        if (!landmass) return;
+
+        // Get polygon (use temp if editing) - Coordinate is [lon, lat]
+        let polygon: Coordinate[] = landmass.polygon;
+        if (this.editTempLandmass && this.editTempLandmass.landmassId === landmassId) {
+            const coords = this.editTempLandmass.polygon.coordinates[0];
+            polygon = coords.slice(0, -1) as Coordinate[];
+        }
+
+        // 1. Draw all vertices as small gizmos
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.strokeStyle = '#000000';
+        this.ctx.lineWidth = 1;
+
+        for (const pt of polygon) {
+            const proj = this.projectionManager.project(pt);
+            if (proj) {
+                this.ctx.beginPath();
+                this.ctx.arc(proj[0], proj[1], 3, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.stroke();
+            }
+        }
+
+        // 2. Highlights for Hover
+        if (this.editLandmassHoveredVertex) {
+            const data = this.editLandmassHoveredVertex;
+            if (data.type === 'vertex' && data.vertexIndex !== undefined) {
+                const pt = polygon[data.vertexIndex];
+                if (pt) {
+                    const proj = this.projectionManager.project(pt);
+                    if (proj) {
+                        this.ctx.beginPath();
+                        this.ctx.arc(proj[0], proj[1], 6, 0, Math.PI * 2);
+                        this.ctx.fillStyle = '#ff4444'; // Red for Vertex
+                        this.ctx.fill();
+                        this.ctx.strokeStyle = 'white';
+                        this.ctx.lineWidth = 2;
+                        this.ctx.stroke();
+                    }
+                }
+            } else if (data.type === 'edge' && data.pointOnEdge) {
+                const proj = this.projectionManager.project(data.pointOnEdge);
+                if (proj) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(proj[0], proj[1], 5, 0, Math.PI * 2);
+                    this.ctx.fillStyle = '#44ff44'; // Green for Insert
+                    this.ctx.fill();
+                    this.ctx.strokeStyle = 'white';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.stroke();
+                }
+            }
+        }
+    }
     
     /**
      * Render elevation mesh for all visible plates
@@ -2485,6 +2963,12 @@ export class CanvasManager {
     private renderElevationMesh(state: AppState): void {
         const mode = state.world.globalOptions.elevationViewMode;
         if (!mode || mode === 'off') return;
+        
+        // 'landmass' mode: Don't render mesh, just mask underwater areas
+        if (mode === 'landmass') {
+            this.renderLandmassViewMode(state);
+            return;
+        }
         
         // Sort plates by effective z-index (same logic as plate rendering)
         // Oceanic = denser = lower z-index = rendered first (below)
@@ -2508,6 +2992,65 @@ export class CanvasManager {
             if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
             
             this.renderPlateMesh(plate, mode, state);
+        }
+    }
+
+    /**
+     * Render "landmass" view mode - shows only above-ground areas
+     * Areas below sea level are masked/dimmed
+     */
+    private renderLandmassViewMode(state: AppState): void {
+        const oceanLevel = state.world.globalOptions.oceanLevel ?? 0;
+        const pathGen = this.projectionManager.getPathGenerator();
+        
+        for (const plate of state.world.plates) {
+            if (!plate.visible) continue;
+            if (state.world.currentTime < plate.birthTime) continue;
+            if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
+            
+            // If plate has mesh, use it to determine above/below sea level areas
+            if (plate.crustMesh && plate.crustMesh.length >= 3) {
+                // Find vertices above sea level and create a visual representation
+                const aboveSeaVertices = plate.crustMesh.filter((v: any) => v.elevation > oceanLevel);
+                
+                if (aboveSeaVertices.length > 0) {
+                    // Draw above-sea-level areas with a highlight
+                    for (const vertex of aboveSeaVertices) {
+                        const proj = this.projectionManager.project(vertex.pos);
+                        if (!proj) continue;
+                        
+                        // Draw a small circle for each above-sea vertex
+                        this.ctx.beginPath();
+                        this.ctx.arc(proj[0], proj[1], 4, 0, Math.PI * 2);
+                        this.ctx.fillStyle = this.elevationToColor(vertex.elevation);
+                        this.ctx.fill();
+                    }
+                }
+                
+                // Dim the underwater plate areas
+                this.ctx.save();
+                this.ctx.globalAlpha = 0.3;
+                
+                for (const poly of plate.polygons) {
+                    const geojson = toGeoJSON(poly);
+                    if (geoArea(geojson) > 2 * Math.PI) {
+                        geojson.geometry.coordinates[0].reverse();
+                    }
+                    
+                    this.ctx.beginPath();
+                    pathGen(geojson);
+                    this.ctx.fillStyle = '#1a3a4a'; // Ocean/underwater color
+                    this.ctx.fill();
+                }
+                
+                this.ctx.restore();
+            }
+            
+            // Always render landmasses on top with full opacity
+            if (plate.landmasses && plate.landmasses.length > 0) {
+                const isPlateSelected = plate.id === state.world.selectedPlateId;
+                this.renderLandmasses(plate.landmasses, plate, isPlateSelected);
+            }
         }
     }
     
