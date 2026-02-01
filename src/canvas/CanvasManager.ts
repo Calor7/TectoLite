@@ -1873,7 +1873,17 @@ export class CanvasManager {
             width: this.paintConfig.width,
             opacity: this.paintConfig.opacity,
             points: localPoints,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            birthTime: state.world.currentTime, // Born now
+            
+            // Capture Paint Tool Settings
+            autoDelete: state.world.globalOptions.paintAutoDelete,
+            deleteDelay: state.world.globalOptions.paintDeleteDelay !== undefined ? state.world.globalOptions.paintDeleteDelay : 50,
+            
+            // Capture Ageing Settings if overridden? 
+            // The prompt "Overwrite in prefernces" implies per-stroke control.
+            // If I change global ageing duration later, manual strokes should probably follow global unless overridden.
+            // So I WON'T set ageingDuration here unless we add specific "Ageing Duration" sliders to the Paint Brush tool itself (which we don't have, we share the global one).
         };
 
         if (!plate.paintStrokes) {
@@ -1924,6 +1934,27 @@ export class CanvasManager {
             if (stroke.deathTime !== undefined && currentTime >= stroke.deathTime) {
                 continue; // Skip dead strokes
             }
+            
+            // Auto-Delete Logic (Effective Death)
+            // Checks explicit override or global setting for Orogeny strokes
+            const g = state.world.globalOptions;
+            let effectiveAutoDelete = false;
+            
+            if (stroke.autoDelete !== undefined) {
+                effectiveAutoDelete = stroke.autoDelete;
+            } else if (stroke.source === 'orogeny' && g.paintAutoDelete === true) {
+                effectiveAutoDelete = true; 
+            }
+
+            if (effectiveAutoDelete && stroke.birthTime !== undefined) {
+                 const age = currentTime - stroke.birthTime;
+                 const duration = stroke.ageingDuration || g.paintAgeingDuration || 100;
+                 const delay = stroke.deleteDelay !== undefined ? stroke.deleteDelay : (g.paintDeleteDelay || 50);
+                 
+                 if (age > (duration + delay)) {
+                     continue; // Effectively deleted
+                 }
+            }
 
             // Check if this stroke is selected
             const isSelected = stroke.id === selectedStrokeId;
@@ -1933,16 +1964,25 @@ export class CanvasManager {
             let baseOpacity = isFromFuture ? stroke.opacity * 0.3 : stroke.opacity;
 
             // Paint Ageing (Fading) Logic
-            const g = state.world.globalOptions;
-            if (g.paintAgeingEnabled !== false && stroke.source === 'orogeny' && stroke.birthTime !== undefined && !isFromFuture) {
+            // Apply if global enabled OR stroke has explicit overrides
+            // Only strictly apply to 'orogeny' source unless stroke overrides exist
+            // Requirement update: allow manual lines to use fading if overridden or potentially if desired, 
+            // but prompt said "orogeny responsible for orogeny lines".
+            // However, adding properties for override suggests user might want to fade manual lines too.
+            // Let's implement robust check:
+            const hasOverride = stroke.ageingDuration !== undefined || stroke.maxAgeingOpacity !== undefined;
+            const globalEnabled = g.paintAgeingEnabled !== false && stroke.source === 'orogeny';
+            
+            if ((globalEnabled || hasOverride) && stroke.birthTime !== undefined && !isFromFuture) {
                  const age = currentTime - stroke.birthTime;
-                 const duration = g.paintAgeingDuration || 100;
-                 const minOpacity = g.paintMaxWaitOpacity !== undefined ? g.paintMaxWaitOpacity : 0.05;
+                 const duration = stroke.ageingDuration || g.paintAgeingDuration || 100;
+                 const minOpacity = stroke.maxAgeingOpacity !== undefined 
+                    ? stroke.maxAgeingOpacity 
+                    : (g.paintMaxWaitOpacity !== undefined ? g.paintMaxWaitOpacity : 0.05);
                  
                  if (age > 0) {
                      const progress = Math.min(age / duration, 1.0);
                      // Interpolate from current opacity down to minOpacity
-                     // Ensure we don't accidentally increase opacity if it started lower
                      const target = Math.min(baseOpacity, minOpacity);
                      baseOpacity = baseOpacity * (1 - progress) + target * progress;
                  }

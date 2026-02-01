@@ -319,6 +319,38 @@ class TectoLiteApp {
                                         <input type="color" id="orogeny-color-divergent" value="${this.state.world.globalOptions.orogenyPaintDivergent || '#DC143C'}" style="width: 100%; height: 20px; cursor: pointer;">
                                     </div>
                                 </div>
+                                <div id="orogeny-ageing-options" style="display: ${this.state.world.globalOptions.orogenyMode === 'paint' ? 'block' : 'none'}; margin-top: 8px; font-size: 11px;">
+                                     <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">Ageing Fade Effect</div>
+                                     <div style="display: flex; flex-direction: column; gap: 4px;">
+                                         <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                             <input type="checkbox" id="orogeny-ageing-enabled" ${this.state.world.globalOptions.paintAgeingEnabled !== false ? 'checked' : ''}> Enable Fade
+                                         </label>
+                                         
+                                         <div id="orogeny-ageing-controls" style="display: flex; flex-direction: column; gap: 4px; margin-left: 18px; opacity: ${this.state.world.globalOptions.paintAgeingEnabled !== false ? '1' : '0.5'}; pointer-events: ${this.state.world.globalOptions.paintAgeingEnabled !== false ? 'auto' : 'none'};">
+                                             <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                <span>Duration (Ma):</span>
+                                                <input type="number" id="orogeny-ageing-duration" class="property-input" value="${this.state.world.globalOptions.paintAgeingDuration || 100}" min="1" step="10" style="flex: 1; margin-left: 8px;">
+                                             </div>
+                                             <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                <span>Max Trans (%):</span>
+                                                <input type="number" id="orogeny-ageing-max-trans" class="property-input" value="${Math.round((1.0 - (this.state.world.globalOptions.paintMaxWaitOpacity ?? 0.05)) * 100)}" min="0" max="100" step="5" style="flex: 1; margin-left: 8px;">
+                                             </div>
+                                             
+                                             <!-- Auto Delete Options -->
+                                             <div style="margin-top: 4px; padding-top: 4px; border-top: 1px dotted var(--border-default);">
+                                                 <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                                     <input type="checkbox" id="orogeny-auto-delete" ${this.state.world.globalOptions.paintAutoDelete ? 'checked' : ''}> Auto Delete
+                                                 </label>
+                                                 <div id="orogeny-delete-delay-container" style="display: ${this.state.world.globalOptions.paintAutoDelete ? 'flex' : 'none'}; justify-content: space-between; align-items: center; margin-top: 2px; margin-left: 18px;">
+                                                     <span>Delay (Ma):</span>
+                                                     <input type="number" id="orogeny-delete-delay" class="property-input" value="${this.state.world.globalOptions.paintDeleteDelay || 50}" min="0" step="10" style="flex: 1; margin-left: 8px;">
+                                                 </div>
+                                             </div>
+
+                                             <button id="orogeny-ageing-reset" class="btn btn-secondary" style="width: 100%; margin-top: 4px; font-size: 10px;">Revert to Default</button>
+                                         </div>
+                                     </div>
+                                </div>
                             </div>
 
                             <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dotted var(--border-default);">
@@ -535,6 +567,17 @@ class TectoLiteApp {
                                     <input type="number" id="paint-ageing-max-trans" class="property-input" min="0" max="100" step="5" style="flex:1;">
                                     <button id="paint-ageing-reset" class="btn btn-secondary" style="padding: 2px 6px;" title="Reset to Defaults">↺</button>
                                  </div>
+                             </div>
+
+                             <!-- Auto Delete Options -->
+                             <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
+                                <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer;">
+                                    <input type="checkbox" id="paint-auto-delete"> Auto-Delete
+                                </label>
+                                <div id="paint-auto-delete-options" style="display: none; flex-direction: column; gap: 2px; margin-left: 0px;">
+                                     <label style="font-size: 10px; color: var(--text-secondary);">Delete Delay (Ma):</label>
+                                     <input type="number" id="paint-delete-delay" class="property-input" min="0" step="10">
+                                </div>
                              </div>
                          </div>
                      </div>
@@ -1374,41 +1417,143 @@ class TectoLiteApp {
             this.canvasManager?.setPaintOpacity(parseInt(opacity) / 100);
         });
 
-        // Paint Ageing Controls
+        // Orogeny/Paint Ageing - Shared controls from Automation Menu
+        const syncAgeingUI = () => {
+             const g = this.state.world.globalOptions;
+             const enabled = g.paintAgeingEnabled !== false;
+             const autoDelete = g.paintAutoDelete === true;
+             
+             // Sync Orogeny Menu UI
+             const cbOrogeny = document.getElementById('orogeny-ageing-enabled') as HTMLInputElement;
+             if (cbOrogeny) cbOrogeny.checked = enabled;
+             const divOrogeny = document.getElementById('orogeny-ageing-controls');
+             if (divOrogeny) {
+                 divOrogeny.style.opacity = enabled ? '1' : '0.5';
+                 divOrogeny.style.pointerEvents = enabled ? 'auto' : 'none';
+             }
+             const inODur = document.getElementById('orogeny-ageing-duration') as HTMLInputElement;
+             if (inODur) inODur.value = (g.paintAgeingDuration || 100).toString();
+             const inOTrans = document.getElementById('orogeny-ageing-max-trans') as HTMLInputElement;
+             if (inOTrans) inOTrans.value = Math.round((1.0 - (g.paintMaxWaitOpacity ?? 0.05)) * 100).toString();
+             
+             // Sync Orogeny Auto-Delete
+             const cbOrogenyDel = document.getElementById('orogeny-auto-delete') as HTMLInputElement;
+             if (cbOrogenyDel) cbOrogenyDel.checked = autoDelete;
+             const divOrogenyDel = document.getElementById('orogeny-delete-delay-container');
+             if (divOrogenyDel) divOrogenyDel.style.display = autoDelete ? 'flex' : 'none';
+             const inODelDelay = document.getElementById('orogeny-delete-delay') as HTMLInputElement;
+             if (inODelDelay) inODelDelay.value = (g.paintDeleteDelay || 50).toString();
+
+             // Sync Paint Tool UI
+             const cbPaint = document.getElementById('paint-ageing-enabled') as HTMLInputElement;
+             if (cbPaint) cbPaint.checked = enabled;
+             const divPaint = document.getElementById('paint-ageing-options');
+             if (divPaint) {
+                 divPaint.style.opacity = enabled ? '1' : '0.5';
+                 divPaint.style.pointerEvents = enabled ? 'auto' : 'none';
+             }
+             const inPDur = document.getElementById('paint-ageing-duration') as HTMLInputElement;
+             if (inPDur) inPDur.value = (g.paintAgeingDuration || 100).toString();
+             const inPTrans = document.getElementById('paint-ageing-max-trans') as HTMLInputElement;
+             if (inPTrans) inPTrans.value = Math.round((1.0 - (g.paintMaxWaitOpacity ?? 0.05)) * 100).toString();
+
+             // Sync Paint Tool Auto-Delete
+             const cbPaintDel = document.getElementById('paint-auto-delete') as HTMLInputElement;
+             if (cbPaintDel) cbPaintDel.checked = autoDelete;
+             const divPaintDel = document.getElementById('paint-auto-delete-options');
+             if (divPaintDel) divPaintDel.style.display = autoDelete ? 'flex' : 'none';
+             const inPaintDelDelay = document.getElementById('paint-delete-delay') as HTMLInputElement;
+             if (inPaintDelDelay) inPaintDelDelay.value = (g.paintDeleteDelay || 50).toString();
+
+             this.canvasManager?.render();
+        };
+
+        // Orogeny Menu Listeners
+        document.getElementById('orogeny-ageing-enabled')?.addEventListener('change', (e) => {
+             if (!this.state.world.globalOptions) return;
+             this.state.world.globalOptions.paintAgeingEnabled = (e.target as HTMLInputElement).checked;
+             syncAgeingUI();
+        });
+        document.getElementById('orogeny-ageing-duration')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val > 0) {
+                 this.state.world.globalOptions.paintAgeingDuration = val;
+                 syncAgeingUI();
+             }
+        });
+        document.getElementById('orogeny-ageing-max-trans')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val >= 0 && val <= 100) {
+                 this.state.world.globalOptions.paintMaxWaitOpacity = 1.0 - (val / 100.0);
+                 syncAgeingUI();
+             }
+        });
+        document.getElementById('orogeny-auto-delete')?.addEventListener('change', (e) => {
+             const enabled = (e.target as HTMLInputElement).checked;
+             if (!this.state.world.globalOptions) return;
+             this.state.world.globalOptions.paintAutoDelete = enabled;
+             syncAgeingUI();
+        });
+        document.getElementById('orogeny-delete-delay')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val >= 0) {
+                 this.state.world.globalOptions.paintDeleteDelay = val;
+                 syncAgeingUI();
+             }
+        });
+
+        document.getElementById('orogeny-ageing-reset')?.addEventListener('click', () => {
+             this.state.world.globalOptions.paintAgeingDuration = 100;
+             this.state.world.globalOptions.paintMaxWaitOpacity = 0.05; // 95% trans
+             syncAgeingUI();
+        });
+
+        // Paint Tool Listeners (Synchronized)
         document.getElementById('paint-ageing-enabled')?.addEventListener('change', (e) => {
              const enabled = (e.target as HTMLInputElement).checked;
              if (!this.state.world.globalOptions) return;
              this.state.world.globalOptions.paintAgeingEnabled = enabled;
-             const optionsDiv = document.getElementById('paint-ageing-options');
-             if (optionsDiv) optionsDiv.style.opacity = enabled ? '1' : '0.5';
-             if (optionsDiv) optionsDiv.style.pointerEvents = enabled ? 'auto' : 'none';
-             this.canvasManager?.render();
+             syncAgeingUI();
         });
 
         document.getElementById('paint-ageing-duration')?.addEventListener('change', (e) => {
              const val = parseFloat((e.target as HTMLInputElement).value);
              if (!isNaN(val) && val > 0) {
                  this.state.world.globalOptions.paintAgeingDuration = val;
-                 this.canvasManager?.render();
+                 syncAgeingUI();
              }
         });
 
         document.getElementById('paint-ageing-max-trans')?.addEventListener('change', (e) => {
              const val = parseFloat((e.target as HTMLInputElement).value);
              if (!isNaN(val) && val >= 0 && val <= 100) {
-                 // Convert % transparency to min opacity
-                 // 95% transparency = 0.05 opacity
-                 const opacity = 1.0 - (val / 100.0);
-                 this.state.world.globalOptions.paintMaxWaitOpacity = opacity;
-                 this.canvasManager?.render();
+                 this.state.world.globalOptions.paintMaxWaitOpacity = 1.0 - (val / 100.0);
+                 syncAgeingUI();
              }
         });
 
         document.getElementById('paint-ageing-reset')?.addEventListener('click', () => {
              this.state.world.globalOptions.paintAgeingDuration = 100;
              this.state.world.globalOptions.paintMaxWaitOpacity = 0.05; // 95% trans
-             this.syncUIToState();
-             this.canvasManager?.render();
+             // Reset delete defaults too? User didn't specify, but safer to leave alone or reset to 50
+             this.state.world.globalOptions.paintAutoDelete = false;
+             this.state.world.globalOptions.paintDeleteDelay = 50;
+             syncAgeingUI();
+        });
+
+        document.getElementById('paint-auto-delete')?.addEventListener('change', (e) => {
+             const enabled = (e.target as HTMLInputElement).checked;
+             if (!this.state.world.globalOptions) return;
+             this.state.world.globalOptions.paintAutoDelete = enabled;
+             syncAgeingUI();
+        });
+
+        document.getElementById('paint-delete-delay')?.addEventListener('change', (e) => {
+             const val = parseFloat((e.target as HTMLInputElement).value);
+             if (!isNaN(val) && val >= 0) {
+                 this.state.world.globalOptions.paintDeleteDelay = val;
+                 syncAgeingUI();
+             }
         });
 
         document.getElementById('paint-mode-brush')?.addEventListener('click', () => {
@@ -3134,7 +3279,7 @@ class TectoLiteApp {
         this.state.world.plates.forEach(p => {
              if(p.events) {
                  p.events.forEach(ev => {
-                     let desc = ev.type;
+                     let desc: string = ev.type;
                      if(ev.type === 'motion_change') desc = 'Motion Change';
                      if(ev.type === 'split') desc = 'Plate Split';
                      if(ev.type === 'fusion') desc = 'Fusion';
@@ -3217,7 +3362,7 @@ class TectoLiteApp {
                      const selIndicator = allSelected ? '☑' : '☐';
                      
                      gHeader.innerHTML = `<span>${selIndicator} ${label} (${groups[gid].length})</span> <span>${isGroupExpanded ? '▼' : '▶'}</span>`;
-                     gHeader.onclick = (e) => {
+                     gHeader.onclick = (_e) => {
                          // Click on header logic:
                          // Select all strokes in this group (Plate)
                          
@@ -3377,12 +3522,6 @@ class TectoLiteApp {
             }
 
             if (foundStroke && strokePlate) {
-                const birthTimeDisplay = foundStroke.birthTime !== undefined 
-                    ? `${foundStroke.birthTime.toFixed(2)} Ma` 
-                    : 'N/A (User)';
-                const ageDisplay = foundStroke.birthTime !== undefined 
-                    ? `${(this.state.world.currentTime - foundStroke.birthTime).toFixed(2)} Ma`
-                    : 'N/A';
                 const sourceDisplay = foundStroke.source || 'user';
 
                 content.innerHTML = `
@@ -3396,6 +3535,39 @@ class TectoLiteApp {
                     <div class="property-group">
                         <label class="property-label">Source</label>
                         <span class="property-value">${sourceDisplay === 'orogeny' ? '⚙️ Orogeny' : '🖌️ User'}</span>
+                    </div>
+
+                    <!-- Fade Override Settings -->
+                    <div class="property-group" style="padding: 6px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 6px;">
+                        <div style="font-size: 10px; font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">Fade Override (Optional)</div>
+                         <div style="display: flex; flex-direction: column; gap: 4px;">
+                             <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <label style="font-size: 10px;">Duration (Ma):</label>
+                                <input type="number" id="prop-stroke-fade-dur" class="property-input" 
+                                    value="${foundStroke.ageingDuration || ''}" 
+                                    placeholder="Global" style="width: 50px;">
+                             </div>
+                             <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <label style="font-size: 10px;">Max Trans (%):</label>
+                                <input type="number" id="prop-stroke-fade-max" class="property-input" 
+                                    value="${foundStroke.maxAgeingOpacity !== undefined ? Math.round((1.0 - foundStroke.maxAgeingOpacity) * 100) : ''}" 
+                                    placeholder="Global" style="width: 50px;">
+                             </div>
+                             <div style="display: flex; justify-content: space-between; align-items: center;">
+                                 <label style="font-size: 10px;">Auto-Delete:</label>
+                                 <select id="prop-stroke-auto-delete" class="property-input" style="width: 60px; font-size: 10px; padding: 0;">
+                                     <option value="" ${foundStroke.autoDelete === undefined ? 'selected' : ''}>Global</option>
+                                     <option value="true" ${foundStroke.autoDelete === true ? 'selected' : ''}>Yes</option>
+                                     <option value="false" ${foundStroke.autoDelete === false ? 'selected' : ''}>No</option>
+                                 </select>
+                             </div>
+                             <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <label style="font-size: 10px;">Delay (Ma):</label>
+                                <input type="number" id="prop-stroke-delete-delay" class="property-input" 
+                                    value="${foundStroke.deleteDelay !== undefined ? foundStroke.deleteDelay : ''}" 
+                                    placeholder="Global" style="width: 50px;">
+                             </div>
+                         </div>
                     </div>
 
                     <div class="property-group">
@@ -3441,6 +3613,53 @@ class TectoLiteApp {
                         this.canvasManager?.render();
                         // this.updateExplorer(); // Timeline might change? Actions list uses birthTime but strokes list doesn't sort by time yet explicitly, just groups.
                     }
+                });
+
+                document.getElementById('prop-stroke-fade-dur')?.addEventListener('change', (e) => {
+                    const val = (e.target as HTMLInputElement).value;
+                    if (val === '') {
+                        delete foundStroke.ageingDuration;
+                    } else {
+                        const num = parseFloat(val);
+                        if (!isNaN(num) && num > 0) foundStroke.ageingDuration = num;
+                    }
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('prop-stroke-fade-max')?.addEventListener('change', (e) => {
+                    const val = (e.target as HTMLInputElement).value;
+                    if (val === '') {
+                        delete foundStroke.maxAgeingOpacity;
+                    } else {
+                        const num = parseFloat(val);
+                        if (!isNaN(num) && num >= 0 && num <= 100) {
+                             foundStroke.maxAgeingOpacity = 1.0 - (num / 100.0);
+                        }
+                    }
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('prop-stroke-auto-delete')?.addEventListener('change', (e) => {
+                    const val = (e.target as HTMLSelectElement).value;
+                    if (val === '') {
+                        delete foundStroke.autoDelete;
+                    } else {
+                        foundStroke.autoDelete = val === 'true';
+                    }
+                    this.canvasManager?.render();
+                });
+
+                document.getElementById('prop-stroke-delete-delay')?.addEventListener('change', (e) => {
+                    const val = (e.target as HTMLInputElement).value;
+                    if (val === '') {
+                        delete foundStroke.deleteDelay;
+                    } else {
+                        const num = parseFloat(val);
+                        if (!isNaN(num) && num >= 0) {
+                            foundStroke.deleteDelay = num;
+                        }
+                    }
+                    this.canvasManager?.render();
                 });
 
                 document.getElementById('prop-stroke-death-time')?.addEventListener('change', (e) => {

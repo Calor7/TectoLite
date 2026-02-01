@@ -51,6 +51,10 @@ export interface PaintStroke {
   source?: 'user' | 'orogeny';  // Origin: user-drawn or auto-generated
   birthTime?: number;   // Geological time (Ma) when created - for time-based visibility
   deathTime?: number;   // Geological time (Ma) when destroyed/eroded - undefined means active indefinitely
+  ageingDuration?: number; // Override: Time to fade (if set)
+  maxAgeingOpacity?: number; // Override: Max transparency opacity target (0.0-1.0)
+  autoDelete?: boolean;      // Override: Whether to delete after fading
+  deleteDelay?: number;      // Override: How long (Ma) to wait after fading before deletion
   boundaryId?: string;  // ID of the boundary that generated this stroke (for grouping)
   boundaryType?: 'convergent' | 'divergent' | 'transform'; // Type of boundary (for grouping)
 }
@@ -192,6 +196,8 @@ export interface WorldState {
     paintAgeingEnabled?: boolean;        // Whether paint strokes fade over time
     paintAgeingDuration?: number;        // Time (Ma) to reach max transparency
     paintMaxWaitOpacity?: number;        // Minimum opacity (max transparency target) [0.0 - 1.0]
+    paintAutoDelete?: boolean;           // Whether to delete strokes after ageing
+    paintDeleteDelay?: number;           // Extra time (Ma) after fade before deletion
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
@@ -287,10 +293,13 @@ export function createDefaultWorldState(): WorldState {
       enableHotspots: false,
       hotspotSpawnRate: 1.0,
       enableOrogeny: false,
+      orogenyMode: 'paint', // Default to paint mode
       showHints: true,
       paintAgeingEnabled: true,
       paintAgeingDuration: 100, // Ma
-      paintMaxWaitOpacity: 0.05 // 95% transparency
+      paintMaxWaitOpacity: 0.05, // 95% transparency
+      paintAutoDelete: false, // Default: keep strokes, just fade
+      paintDeleteDelay: 50 // Ma after fade, if auto-delete enabled
     }
   };
 }

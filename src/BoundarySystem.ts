@@ -60,50 +60,83 @@ export class BoundarySystem {
         return boundaries;
     }
 
+
     private static checkOverlap(p1: TectonicPlate, p2: TectonicPlate): { rings: Coordinate[][], center: Coordinate } | null {
-        // Convert to format AND Round Coordinates to avoid floating point 'dust'
-        // Precision 4 = ~11 meters. Enough for tectonics, coarse enough to snap tiny gaps.
-        const coords1 = p1.polygons.map(p => this.polyToRing(p).map(pt => [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))]));
-        const coords2 = p2.polygons.map(p => this.polyToRing(p).map(pt => [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))]));
-
-        try {
-            const intersection = polygonClipping.intersection(coords1 as any, coords2 as any);
-            if (intersection.length > 0) {
-                // Store as list of rings for proper rendering
-                let rings: Coordinate[][] = [];
-                intersection.forEach(multi => multi.forEach(ring => {
-                    // Filter "Dust": Remove tiny artifacts from clipping
-                    // Minimum 4 points (triangle + closing point)
-                    if (ring.length < 4) return;
-
-                    // Area Check (Shoelace Formula approximation)
-                    // Discard slivers with negligible area
-                    let area = 0;
-                    for (let i = 0; i < ring.length - 1; i++) {
-                        area += ring[i][0] * ring[i+1][1] - ring[i+1][0] * ring[i][1];
-                    }
-                    area = Math.abs(area / 2);
-                    
-                    // Threshold: 0.2 deg^2 (approx 2500 km^2)
-                    if (area < 0.2) return;
-
-                    rings.push(ring.map(pt => [pt[0], pt[1]] as Coordinate));
-                }));
-                
-                // Limit to top 5 largest rings
-                if (rings.length > 5) {
-                    rings.sort((a,b) => b.length - a.length);
-                    rings = rings.slice(0, 5);
-                }
-
-                // Approximate center
-                if (rings.length === 0 || rings[0].length === 0) return null;
-                const center = rings[0][0];
-
-                return { rings, center };
+        // Convert, Round, and Unwrap Coordinates
+        // This solves the "Ghost Overlap" bug where a plate wrapping the dateline (179 to -179) 
+        // was seen as crossing the map at 0 by the 2D clipping library.
+        const unwrap = (coords: Coordinate[]): Coordinate[] => {
+            if (coords.length === 0) return [];
+            const res: Coordinate[] = [[coords[0][0], coords[0][1]]];
+            for (let i = 1; i < coords.length; i++) {
+                let lon = coords[i][0];
+                let lat = coords[i][1];
+                let prevLon = res[i - 1][0];
+                let diff = lon - prevLon;
+                // If jump > 180, adjust to be continuous
+                if (diff > 180) lon -= 360;
+                else if (diff < -180) lon += 360;
+                res.push([Number(lon.toFixed(4)), Number(lat.toFixed(4))]);
             }
-        } catch (e) {
-            // Ignore clipping errors
+            return res;
+        };
+
+        const coords1 = p1.polygons.map(p => unwrap(this.polyToRing(p) as Coordinate[]));
+        const coords2 = p2.polygons.map(p => unwrap(this.polyToRing(p) as Coordinate[]));
+
+        // Helper to run intersection check with offset
+        const check = (offX: number) => {
+             const c2 = coords2.map(ring => ring.map(pt => [pt[0] + offX, pt[1]]));
+             try {
+                return polygonClipping.intersection(coords1 as any, c2 as any);
+             } catch(e) { return []; }
+        };
+
+        // Check center, left (-360), and right (+360) to catch wrap-around neighbors
+        let intersection = check(0);
+        if (intersection.length === 0) intersection = check(360);
+        if (intersection.length === 0) intersection = check(-360);
+
+        if (intersection.length > 0) {
+            // Store as list of rings for proper rendering
+            let rings: Coordinate[][] = [];
+            intersection.forEach(multi => multi.forEach(ring => {
+                // Filter "Dust": Remove tiny artifacts from clipping
+                // Minimum 4 points (triangle + closing point)
+                if (ring.length < 4) return;
+
+                // Area Check (Shoelace Formula approximation)
+                // Discard slivers with negligible area
+                let area = 0;
+                for (let i = 0; i < ring.length - 1; i++) {
+                    area += ring[i][0] * ring[i+1][1] - ring[i+1][0] * ring[i][1];
+                }
+                area = Math.abs(area / 2);
+                
+                // Threshold: 0.2 deg^2 (approx 2500 km^2)
+                if (area < 0.2) return;
+
+                // Normalize result back to [-180, 180] for rendering
+                rings.push(ring.map(pt => {
+                    let lon = pt[0];
+                    // Normalize lon
+                    while(lon > 180) lon -= 360;
+                    while(lon < -180) lon += 360;
+                    return [lon, pt[1]] as Coordinate;
+                }));
+            }));
+            
+            // Limit to top 5 largest rings
+            if (rings.length > 5) {
+                rings.sort((a,b) => b.length - a.length);
+                rings = rings.slice(0, 5);
+            }
+
+            // Approximate center
+            if (rings.length === 0 || rings[0].length === 0) return null;
+            const center = rings[0][Math.floor(rings[0].length/2)]; // Use a vertex as center approx
+
+            return { rings, center };
         }
         return null;
     }
