@@ -101,11 +101,15 @@ export class BoundarySystem {
         const p1p2 = normalize(subtractVectors(pos2, pos1));
 
         const closingSpeed = dot(vRel, p1p2);
-        // If V1 moves towards P2 (positive dot), and V2 is static...
-        // Vrel = V1. dot(V1, p1p2) > 0 => approaching P2 -> Convergence.
+        
+        // Threshold Tuning:
+        // 1 cm/yr ~= 0.09 deg/Ma ~= 0.0016 rad/Ma
+        // Previous threshold 0.05 was ~30 cm/yr (Too high!)
+        // New threshold 0.0005 ~= 0.3 cm/yr (Catches most motion)
+        const THRESHOLD = 0.0005;
 
-        if (closingSpeed > 0.05) return { type: 'convergent', velocity: Math.abs(closingSpeed) };
-        if (closingSpeed < -0.05) return { type: 'divergent', velocity: Math.abs(closingSpeed) };
+        if (closingSpeed > THRESHOLD) return { type: 'convergent', velocity: Math.abs(closingSpeed) };
+        if (closingSpeed < -THRESHOLD) return { type: 'divergent', velocity: Math.abs(closingSpeed) };
 
         return { type: 'transform', velocity: speed };
     }

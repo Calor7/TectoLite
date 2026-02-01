@@ -3,9 +3,10 @@
 
 import { AppState, Feature, generateId, TectonicPlate, FeatureType, Coordinate } from '../types';
 import { isPointInPolygon } from '../SplitTool';
-import { BoundarySystem } from '../BoundarySystem';
+import { distance } from '../utils/sphericalMath';
 
 export class GeologicalAutomationSystem {
+    private boundaryCooldowns: Map<string, number> = new Map();
 
     constructor() {}
 
@@ -110,29 +111,49 @@ export class GeologicalAutomationSystem {
     }
 
     private getRandomBoundaryPoint(rings: Coordinate[][]): Coordinate {
-        // Flatten to finding a valid segment
-        // 1. Filter valid rings
-        const validRings = rings.filter(r => r.length > 1);
-        if (validRings.length === 0) return [0, 0];
+        // Collect all segments with their lengths to ensure uniform distribution
+        // This fixes "bunching" where areas with many small vertices (corners) got disproportionate spawns
+        const segments: { p1: Coordinate, p2: Coordinate, length: number }[] = [];
+        let totalLength = 0;
 
-        // 2. Select random ring
-        const ring = validRings[Math.floor(Math.random() * validRings.length)];
+        for (const ring of rings) {
+            if (ring.length < 2) continue;
+            for (let i = 0; i < ring.length - 1; i++) {
+                const p1 = ring[i];
+                const p2 = ring[i+1];
+                
+                // Calculate distance in radians (great circle)
+                const d = distance(p1, p2);
+                
+                // Skip effectively zero-length segments or artifacts
+                if (d > 0.000001) { 
+                    segments.push({ p1, p2, length: d });
+                    totalLength += d;
+                }
+            }
+        }
 
-        // 3. Select random segment
-        // ring has N points. Segments are 0->1, 1->2 ... (N-2)->(N-1) usually, or (N-1)->0 if closed?
-        // Assuming open linestring or closed polygon, polygon-clipping usually returns closed?
-        // Let's assume points are ordered.
-        const segIdx = Math.floor(Math.random() * (ring.length - 1));
-        const p1 = ring[segIdx];
-        const p2 = ring[segIdx + 1];
+        if (segments.length === 0) return [0, 0]; // Fallback
 
-        // 4. Interpolate
+        // Weighted Random Selection: Likelihood is proportional to physical length
+        let target = Math.random() * totalLength;
+        let selectedSeg = segments[segments.length - 1]; // Default to last (floating point safety)
+
+        for (const seg of segments) {
+            target -= seg.length;
+            if (target <= 0) {
+                selectedSeg = seg;
+                break;
+            }
+        }
+
+        // Interpolate along the segment
         const t = Math.random();
-        // Coordinate is [lon, lat]
-        const lon = p1[0] + (p2[0] - p1[0]) * t;
-        const lat = p1[1] + (p2[1] - p1[1]) * t;
+        // Linear interpolation for lat/lon is aproximation but sufficient for short boundary segments
+        const lon = selectedSeg.p1[0] + (selectedSeg.p2[0] - selectedSeg.p1[0]) * t;
+        const lat = selectedSeg.p1[1] + (selectedSeg.p2[1] - selectedSeg.p1[1]) * t;
 
-        // 5. Jitter (approx 0.1 - 0.5 degrees)
+        // Jitter (approx 0.1 - 0.5 degrees)
         const jitter = 0.5;
         const jLon = (Math.random() - 0.5) * jitter;
         const jLat = (Math.random() - 0.5) * jitter;
@@ -141,8 +162,12 @@ export class GeologicalAutomationSystem {
     }
 
     private processOrogenies(state: AppState): AppState {
-        // Detect current boundaries
-        const boundaries = BoundarySystem.detectBoundaries(state.world.plates);
+        // Use existing boundaries from state if available, otherwise detect (fallback)
+        let boundaries = state.world.boundaries;
+        if (!boundaries || boundaries.length === 0) {
+            // Only detect if truly missing and we need them (rare case if engine did its job)
+             boundaries = BoundarySystem.detectBoundaries(state.world.plates);
+        }
         
         // Filter for convergent
         const collisions = boundaries.filter(b => b.type === 'convergent');
@@ -183,45 +208,123 @@ export class GeologicalAutomationSystem {
              
              const timeSinceLast = currentTime - Math.max(lastTime1, lastTime2);
              
-             // Lowered lockout to allow building density
-             if (timeSinceLast < 0.2) continue; // Rate limit: 0.2 Ma
+             // Dynamic Density Control
+             // High Velocity = Denser packing (smaller spacing)
+             // Low Velocity = Sparse packing (larger spacing)
+             // v is in radians/Ma. 0.001 rad/Ma ~= 0.6 cm/yr.
+             const velocity = boundary.velocity || 0.001; 
+             
+             // Define desired spacing in km (approx) converted to radians
+             // 1 degree ~ 111km.
+             // Low density: 50km spacing (~0.5 deg)
+             // High density: 20km spacing (~0.2 deg)
+             // Velocity range: 0.0005 (0.3cm/yr) to 0.01 (6cm/yr)
+             
+             let minSpacingDeg = 0.5; // Default Low Density
+             if (velocity > 0.005) minSpacingDeg = 0.2; // High Density (>3cm/yr)
+             else if (velocity > 0.002) minSpacingDeg = 0.35; // Medium Density
+             
+             // Convert to radians for distance check
+             const minSpacingRad = minSpacingDeg * Math.PI / 180;
 
-             // Calculate spawns based on boundary length (points count)
+             // Saturation Check: If we recently failed to find space here, skip
+             const cooldown = this.boundaryCooldowns.get(boundary.id);
+             if (cooldown && cooldown > currentTime) continue;
+
+             // Reduced time lockout - Rely more on spatial density
+             if (timeSinceLast < 0.05) continue; 
+
+             // Calculate spawns based on boundary length
              let totalPoints = 0;
              boundary.points.forEach(r => totalPoints += r.length);
-             // Spawn multiple if boundary is large.
-             const spawnCount = Math.max(1, Math.min(6, Math.floor(totalPoints / 15)));
+             
+             // Reduced max attempts to avoid lag when full
+             // Was 10, now 4.
+             const spawnAttempts = Math.max(2, Math.min(4, Math.floor(totalPoints / 10)));
+             
+             let successCount = 0;
+             let failCount = 0;
 
-             for (let k = 0; k < spawnCount; k++) {
+             for (let k = 0; k < spawnAttempts; k++) {
+                 // Optimization: If we failed twice in a row, assume full
+                 if (failCount >= 2) {
+                     // Set cooldown
+                     this.boundaryCooldowns.set(boundary.id, currentTime + 1.0); // Wait 1 Ma
+                     break;
+                 }
+
                  // Generate a distributed point
                  const seedPoint = this.getRandomBoundaryPoint(boundary.points);
-
-                 // Use current plates state for density checks if we were doing them, 
-                 // but mainly just to append to the array.
                  
+                 // Spatial Density Check against EXISTING features on relevant plates
+                 // We only check if the NEW point is too close to ANY existing mountain on that plate.
+                 
+                 // Check P1
+                 let p1Clear = true;
+                 if (t1 === 'continental') { // Only care if we are spawning here
+                     p1Clear = this.checkClearance(plates[p1Index], seedPoint, minSpacingRad);
+                 }
+                 
+                 // Check P2
+                 let p2Clear = true;
+                 const isContCont = t1 === 'continental' && t2 === 'continental';
+                 if (isContCont) {
+                     p2Clear = this.checkClearance(plates[p2Index], seedPoint, minSpacingRad);
+                 }
+
+                 if (!p1Clear && !p2Clear) {
+                     failCount++;
+                     continue; 
+                 }
+                 if (isContCont && (!p1Clear || !p2Clear)) {
+                     // Strict Mode: Need space on both sides for nice shared belt?
+                     // Nah, let's just count it as half-fail but proceed if one side is open?
+                     // Actually, usually users want symmetry. Let's count it as fail if one side blocks.
+                     failCount++;
+                     continue; 
+                 }
+
+                 if (!p1Clear && t1 === 'continental') { failCount++; continue; }
+                 
+                 // If we got here, we have clearance
+                 let didSpawn = false;
+
                  if (t1 === 'continental' && t2 === 'continental') {
                      // Cont-Cont Collision -> Mountains on BOTH
-                     plates[p1Index] = this.addFeature(plates[p1Index], 'mountain', seedPoint, boundary.id, currentTime, 'Orogeny Belt');
-                     plates[p2Index] = this.addFeature(plates[p2Index], 'mountain', seedPoint, boundary.id, currentTime, 'Orogeny Belt');
-                     modified = true;
+                     if (p1Clear) plates[p1Index] = this.addFeature(plates[p1Index], 'mountain', seedPoint, boundary.id, currentTime, 'Orogeny Belt');
+                     if (p2Clear) plates[p2Index] = this.addFeature(plates[p2Index], 'mountain', seedPoint, boundary.id, currentTime, 'Orogeny Belt');
+                     didSpawn = true;
                  }
                  else if (t1 === 'oceanic' && t2 === 'oceanic') {
                      // Oce-Oce -> Older/Denser subducts.
                      const d1 = p1.density || 3.0;
                      const d2 = p2.density || 3.0;
-                     // Tie-breaker: ID
                      const p1Denser = d1 > d2;
-                     const overridingIndex = p1Denser ? p2Index : p1Index; // Denser subducts, Overriding stays on top
-
-                     plates[overridingIndex] = this.addFeature(plates[overridingIndex], 'volcano', seedPoint, boundary.id, currentTime, 'Island Arc');
-                     modified = true;
+                     const overridingIndex = p1Denser ? p2Index : p1Index; 
+                     
+                     if (this.checkClearance(plates[overridingIndex], seedPoint, minSpacingRad)) {
+                        plates[overridingIndex] = this.addFeature(plates[overridingIndex], 'volcano', seedPoint, boundary.id, currentTime, 'Island Arc');
+                        didSpawn = true;
+                     } else {
+                         failCount++;
+                     }
                  }
                  else {
                      // Mix -> Oceanic Subducts
                      const contIdx = t1 === 'continental' ? p1Index : p2Index;
                      
-                     plates[contIdx] = this.addFeature(plates[contIdx], 'volcano', seedPoint, boundary.id, currentTime, 'Continental Arc');
+                     if (this.checkClearance(plates[contIdx], seedPoint, minSpacingRad)) {
+                        plates[contIdx] = this.addFeature(plates[contIdx], 'volcano', seedPoint, boundary.id, currentTime, 'Continental Arc');
+                        didSpawn = true;
+                     } else {
+                         failCount++;
+                     }
+                 }
+
+                 if (didSpawn) {
                      modified = true;
+                     successCount++;
+                     failCount = 0; // Reset fail chain
                  }
              }
         }
@@ -237,13 +340,25 @@ export class GeologicalAutomationSystem {
         };
     }
 
+    private checkClearance(plate: TectonicPlate, pos: Coordinate, minRad: number): boolean {
+        // Simple linear scan of features. Optimization: Spatial index if needed later.
+        for (const f of plate.features) {
+            // Only care about orogeny features for spacing
+            if (f.type !== 'mountain' && f.type !== 'volcano') continue;
+            
+            const d = distance(pos, f.position);
+            if (d < minRad) return false;
+        }
+        return true;
+    }
+
     private addFeature(plate: TectonicPlate, type: FeatureType, pos: Coordinate, boundaryId: string, time: number, desc?: string): TectonicPlate {
          const newF: Feature = {
              id: generateId(),
              type: type,
              position: [...pos], // Spread to copy
-             originalPosition: [...pos], // Important for rotation stability
-             rotation: Math.random() * 360,
+             originalPosition: [...pos], 
+             rotation: 0, // Upright
              scale: 0.8 + Math.random() * 0.4,
              generatedAt: time,
              properties: {
