@@ -2480,12 +2480,27 @@ export class CanvasManager {
     
     /**
      * Render elevation mesh for all visible plates
+     * Sorted by density - oceanic (denser) renders below continental
      */
     private renderElevationMesh(state: AppState): void {
         const mode = state.world.globalOptions.elevationViewMode;
         if (!mode || mode === 'off') return;
         
-        for (const plate of state.world.plates) {
+        // Sort plates by effective z-index (same logic as plate rendering)
+        // Oceanic = denser = lower z-index = rendered first (below)
+        // Continental = less dense = higher z-index = rendered last (on top)
+        const sortedPlates = [...state.world.plates].sort((a, b) => {
+            let zA = a.zIndex ?? 0;
+            let zB = b.zIndex ?? 0;
+            
+            // Continental plates render on top of oceanic
+            if (a.crustType === 'continental') zA += 1;
+            if (b.crustType === 'continental') zB += 1;
+            
+            return zA - zB;
+        });
+        
+        for (const plate of sortedPlates) {
             if (!plate.visible || !plate.crustMesh || plate.crustMesh.length < 3) continue;
             
             // Lifecycle check
