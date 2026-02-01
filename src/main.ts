@@ -4113,6 +4113,16 @@ class TectoLiteApp {
         <label class="property-label">Density (g/cm³)</label>
         <input type="number" id="prop-density" class="property-input" value="${plate.density || (plate.crustType === 'oceanic' ? 3.0 : 2.7)}" step="0.1">
       </div>
+
+      <div class="property-group">
+        <label class="property-label">Mesh Starting Height (m) <span class="info-icon" data-tooltip="Initial elevation when mesh is generated. Leave blank to use isostatic calculation.">(i)</span></label>
+        <input type="number" id="prop-mesh-height" class="property-input" value="${plate.meshStartingHeight ?? ''}" placeholder="Auto (isostatic)" step="100">
+      </div>
+
+      <div class="property-group">
+        <label class="property-label">Crustal Thickness (km) <span class="info-icon" data-tooltip="Baseline crustal thickness for isostatic calculations. Continental: 35km, Oceanic: 7km, Thickened: 40-70km">(i)</span></label>
+        <input type="number" id="prop-crustal-thickness" class="property-input" value="${plate.crustalThickness ?? ''}" placeholder="${plate.crustType === 'oceanic' ? 7 : 35}" step="1" min="5" max="100">
+      </div>
       
       <div class="property-group">
         <label class="property-label">Layer (Z-Index) <span class="info-icon" data-tooltip="Visual stacking order. Continental plates get an automatic +1 bonus.">(i)</span></label>
@@ -4255,6 +4265,44 @@ class TectoLiteApp {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val)) {
                 plate.density = val;
+            }
+        });
+
+        document.getElementById('prop-mesh-height')?.addEventListener('change', (e) => {
+            const val = (e.target as HTMLInputElement).value;
+            if (val === '' || val === null) {
+                // Clear custom height to use isostatic calculation
+                plate.meshStartingHeight = undefined;
+            } else {
+                const numVal = parseFloat(val);
+                if (!isNaN(numVal)) {
+                    plate.meshStartingHeight = numVal;
+                    // If mesh already generated, clear it so it regenerates with new height
+                    if (plate.crustMesh && plate.crustMesh.length > 0) {
+                        plate.crustMesh = undefined;
+                        plate.elevationSimulatedTime = undefined;
+                        this.canvasManager?.render();
+                    }
+                }
+            }
+        });
+
+        document.getElementById('prop-crustal-thickness')?.addEventListener('change', (e) => {
+            const val = (e.target as HTMLInputElement).value;
+            if (val === '' || val === null) {
+                // Clear custom thickness to use reference thickness
+                plate.crustalThickness = undefined;
+            } else {
+                const numVal = parseFloat(val);
+                if (!isNaN(numVal) && numVal > 0) {
+                    plate.crustalThickness = numVal;
+                    // Clear mesh so it regenerates with new thickness
+                    if (plate.crustMesh && plate.crustMesh.length > 0) {
+                        plate.crustMesh = undefined;
+                        plate.elevationSimulatedTime = undefined;
+                        this.canvasManager?.render();
+                    }
+                }
             }
         });
 

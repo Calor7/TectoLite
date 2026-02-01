@@ -164,6 +164,8 @@ export interface TectonicPlate {
   // Elevation system
   crustMesh?: CrustVertex[];
   elevationSimulatedTime?: number; // Last time elevation was simulated (for timeline scrubbing)
+  meshStartingHeight?: number; // Initial elevation (m) when mesh is generated (overrides isostatic calculation)
+  crustalThickness?: number; // Optional override crustal thickness (km) - uses reference thickness if undefined
 
   visible: boolean;
   locked: boolean;

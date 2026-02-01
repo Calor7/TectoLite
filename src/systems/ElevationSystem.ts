@@ -209,7 +209,12 @@ export class ElevationSystem {
         
         const vertices: CrustVertex[] = [];
         const isOceanic = plate.crustType === 'oceanic';
-        const baseThickness = isOceanic ? REFERENCE_THICKNESS_OCEAN : REFERENCE_THICKNESS_CONT;
+        const referenceThickness = isOceanic ? REFERENCE_THICKNESS_OCEAN : REFERENCE_THICKNESS_CONT;
+        const baseThickness = plate.crustalThickness !== undefined ? plate.crustalThickness : referenceThickness;
+        
+        // Use custom starting height if set, otherwise calculate from isostasy
+        const useCustomHeight = plate.meshStartingHeight !== undefined;
+        const customHeight = plate.meshStartingHeight ?? 0;
         
         let row = 0;
         for (let lat = bMinLat; lat <= bMaxLat; lat += rowOffset) {
@@ -225,7 +230,7 @@ export class ElevationSystem {
                 const pos: Coordinate = [lon, lat];
                 
                 if (geoContains(feature, pos)) {
-                    const elevation = this.calculateIsostasyElevation(baseThickness, isOceanic);
+                    const elevation = useCustomHeight ? customHeight : this.calculateIsostasyElevation(baseThickness, isOceanic);
                     vertices.push({
                         id: generateId(),
                         pos: pos,
@@ -253,7 +258,7 @@ export class ElevationSystem {
                     if (d < minDistInfo) continue;
                 }
                 
-                const elevation = this.calculateIsostasyElevation(baseThickness, isOceanic);
+                const elevation = useCustomHeight ? customHeight : this.calculateIsostasyElevation(baseThickness, isOceanic);
                 vertices.push({
                     id: generateId(),
                     pos: p,
