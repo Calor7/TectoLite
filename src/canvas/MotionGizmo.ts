@@ -62,14 +62,14 @@ export class MotionGizmo {
 
         const poleProj = projectionManager.project(this.state.polePosition);
 
-        if (!poleProj) return;
-
         ctx.save();
 
-        // Draw Euler pole handle (crosshair with circle)
-        this.drawPoleHandle(ctx, poleProj[0], poleProj[1]);
+        // Draw Euler pole handle (crosshair with circle) if visible
+        if (poleProj) {
+            this.drawPoleHandle(ctx, poleProj[0], poleProj[1]);
+        }
 
-        // Draw rate arrow from plate center - now on globe surface
+        // Draw rate arrow from plate center - now on globe surface (independent of pole visibility)
         this.drawRateArrowOnGlobe(ctx, projectionManager, plateCenter, planetRadiusKm);
 
         ctx.restore();

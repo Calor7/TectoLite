@@ -23,6 +23,22 @@ export interface Polygon {
 
 export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'flowline' | 'seafloor';
 
+export type CrustType = 'continental' | 'oceanic';
+
+export interface CrustSegment {
+    id: string;
+    polygon: Polygon; // The shape of this specific strip of crust
+    birthTime: number; // When was this segment created?
+}
+
+export interface MantlePlume {
+    id: string;
+    position: Coordinate; // Fixed geographic location (lat/lon)
+    radius: number;       // Size of the hotspot magmatism
+    strength: number;     // How frequently it spawns features
+    active: boolean;
+}
+
 export interface PaintStroke {
   id: string;
   color: string;        // Hex color (e.g., "#ff0000")
@@ -92,6 +108,8 @@ export interface TectonicPlate {
   color: string;
 
   density?: number; // Optional custom density
+  crustType?: CrustType; // Type of crust
+  crustSegments?: CrustSegment[]; // Segments for age tracking
   elevation?: number; // Base elevation
 
   // Current Visual State (Calculated from keyframes)
@@ -154,10 +172,14 @@ export interface WorldState {
     ratePresets?: number[]; // User-defined rate presets (e.g. [0.5, 1.0, 2.0, 5.0])
     enableBoundaryVisualization?: boolean;
     enableDynamicFeatures?: boolean;
+    // Granular Automation Options
+    enableHotspots?: boolean;
+    enableOrogeny?: boolean;
     showHints?: boolean;
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
+  mantlePlumes?: MantlePlume[]; // Active mantle plumes
   // Image Overlay for tracing existing maps
   imageOverlay?: ImageOverlay;
 }
@@ -244,6 +266,8 @@ export function createDefaultWorldState(): WorldState {
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,
       enableDynamicFeatures: false,
+      enableHotspots: false,
+      enableOrogeny: false,
       showHints: true
     }
   };

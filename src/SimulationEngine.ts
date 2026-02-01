@@ -7,6 +7,7 @@ import {
     calculateSphericalCentroid
 } from './utils/sphericalMath';
 import { BoundarySystem } from './BoundarySystem';
+import { GeologicalAutomationSystem } from './systems/GeologicalAutomation';
 // import { SpawnerSystem } from './systems/SpawnerSystem';
 
 
@@ -14,11 +15,14 @@ export class SimulationEngine {
     private isRunning = false;
     private lastUpdate = 0;
     private animationId: number | null = null;
+    private geologicalAutomation: GeologicalAutomationSystem;
 
     constructor(
         private getState: () => AppState,
         private setState: (updater: (state: AppState) => AppState) => void
-    ) { }
+    ) { 
+        this.geologicalAutomation = new GeologicalAutomationSystem();
+    }
 
     // Helper: Check if a point is inside a spherical polygon using ray casting
     private isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
@@ -103,8 +107,9 @@ export class SimulationEngine {
             let finalPlates = newPlates;
             // Removed for lightweight performance per user request
             // if (state.world.globalOptions.enableDynamicFeatures && boundaries && boundaries.length > 0) ...
-
-            return {
+            
+            // Phase 4: Geological Automation
+            const tempState = {
                 ...state,
                 world: {
                     ...state.world,
@@ -113,6 +118,9 @@ export class SimulationEngine {
                     currentTime: time
                 }
             };
+            const postAutomationState = this.geologicalAutomation.update(tempState);
+
+            return postAutomationState;
         });
         this.updateFlowlines();
     }
@@ -168,7 +176,8 @@ export class SimulationEngine {
                 return this.calculatePlateAtTime(plate, newTime, state.world.plates);
             });
 
-            return {
+            // Phase 3: Geological Automation (during tick)
+            const tempState = {
                 ...state,
                 world: {
                     ...state.world,
@@ -176,6 +185,9 @@ export class SimulationEngine {
                     currentTime: newTime
                 }
             };
+            const postAutomationState = this.geologicalAutomation.update(tempState);
+
+            return postAutomationState;
         });
         this.updateFlowlines();
     }

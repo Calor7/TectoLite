@@ -264,9 +264,7 @@ class TectoLiteApp {
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-features" checked> Show Features <span class="info-icon" data-tooltip="Show mountains, volcanoes, etc.">(i)</span>
                         </label>
-                        <label class="view-dropdown-item">
-                            <input type="checkbox" id="check-boundary-vis"> Show Boundaries <span class="info-icon" data-tooltip="Visualize plate boundaries">(i)</span>
-                        </label>
+                        <!-- Boundary Visualization moved to Automation menu -->
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-euler-poles"> Show Euler Poles <span class="info-icon" data-tooltip="Show all rotation axes (Euler poles)">(i)</span>
                         </label>
@@ -276,6 +274,40 @@ class TectoLiteApp {
                         <label class="view-dropdown-item">
                              <input type="checkbox" id="check-show-paint"> Show Paint <span class="info-icon" data-tooltip="Show brush strokes on plates">(i)</span>
                         </label>
+                    </div>
+                </div>
+
+                <div class="view-dropdown-container">
+                    <button id="btn-automation-menu" class="btn btn-secondary" title="Geological Automation" style="${(this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableOrogeny) ? 'background-color: var(--color-success); color: white;' : ''}">
+                        <span class="icon">⚙️</span> Automation
+                    </button>
+                    <div id="automation-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
+                        <div class="dropdown-section">
+                            <div class="dropdown-header">Automation Systems</div>
+                            
+                            <label class="view-dropdown-item">
+                                 <input type="checkbox" id="check-enable-hotspots" ${this.state.world.globalOptions.enableHotspots ? 'checked' : ''}> Hotspot Tracking <span class="info-icon" data-tooltip="Stationary plumes create volcanic trails on moving plates">(i)</span>
+                            </label>
+                            
+                            <label class="view-dropdown-item">
+                                 <input type="checkbox" id="check-enable-orogeny" ${this.state.world.globalOptions.enableOrogeny ? 'checked' : ''}> Orogeny Detection <span class="info-icon" data-tooltip="Spawns mountains and trenches at plate collisions based on crust type">(i)</span>
+                            </label>
+
+                            <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dotted var(--border-default);">
+                                <label class="view-dropdown-item">
+                                    <input type="checkbox" id="check-boundary-vis"> Visualize Boundaries <span class="info-icon" data-tooltip="Show Convergent (Red) and Divergent (Blue) lines">(i)</span>
+                                </label>
+                            </div>
+
+                            <div style="margin-top: 8px; border-top: 1px solid var(--border-default); padding-top: 8px;">
+                                <button id="btn-debug-spawn-plume" class="btn btn-secondary" style="width: 100%; font-size: 11px;">
+                                    + Add Test Plume (Center)
+                                </button>
+                                <div style="font-size: 10px; color: var(--text-secondary); margin-top: 4px; text-align: center;">
+                                    Use 'Add Test Plume' to spawn a stationary mantle plume at the center of the viewport for testing.
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -791,15 +823,30 @@ class TectoLiteApp {
         const planetBtn = document.getElementById('btn-planet');
         const planetMenu = document.getElementById('planet-dropdown-menu');
 
+        // Automation Dropdown
+        const automationBtn = document.getElementById('btn-automation-menu');
+        const automationMenu = document.getElementById('automation-dropdown-menu');
+
         // Toggle Dropdown
         viewBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
             viewMenu?.classList.toggle('show');
+            planetMenu?.classList.remove('show');
+            automationMenu?.classList.remove('show');
         });
 
         planetBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
             planetMenu?.classList.toggle('show');
+            viewMenu?.classList.remove('show');
+            automationMenu?.classList.remove('show');
+        });
+
+        automationBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            automationMenu?.classList.toggle('show');
+            viewMenu?.classList.remove('show');
+            planetMenu?.classList.remove('show');
         });
 
         // Close on outside click
@@ -809,6 +856,9 @@ class TectoLiteApp {
             }
             if (planetMenu?.classList.contains('show') && !planetMenu.contains(e.target as Node) && e.target !== planetBtn) {
                 planetMenu.classList.remove('show');
+            }
+            if (automationMenu?.classList.contains('show') && !automationMenu.contains(e.target as Node) && e.target !== automationBtn) {
+                automationMenu.classList.remove('show');
             }
         });
 
@@ -1118,6 +1168,60 @@ class TectoLiteApp {
 
         document.getElementById('check-show-paint')?.addEventListener('change', (e) => {
             this.state.world.showPaint = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        // Automation Settings
+        const updateAutomationBtn = () => {
+             const btn = document.getElementById('btn-automation-menu');
+             if (btn) {
+                 const anyActive = this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableOrogeny;
+                 if (anyActive) {
+                     btn.style.backgroundColor = 'var(--color-success)';
+                     btn.style.color = 'white';
+                 } else {
+                     btn.style.backgroundColor = '';
+                     btn.style.color = '';
+                 }
+             }
+        };
+
+        document.getElementById('check-enable-hotspots')?.addEventListener('change', (e) => {
+             this.state.world.globalOptions.enableHotspots = (e.target as HTMLInputElement).checked;
+             updateAutomationBtn();
+             this.updateTimeDisplay();
+        });
+
+        document.getElementById('check-enable-orogeny')?.addEventListener('change', (e) => {
+             this.state.world.globalOptions.enableOrogeny = (e.target as HTMLInputElement).checked;
+             updateAutomationBtn();
+             this.updateTimeDisplay();
+        });
+
+        // Debug: Add Test Plume
+        document.getElementById('btn-debug-spawn-plume')?.addEventListener('click', () => {
+            // Add a plume at current viewport center? Or just (0,0)?
+            // Let's use current center of projection
+            const centerLat = this.state.viewport.rotate[1] * -1; // approx
+            const centerLon = this.state.viewport.rotate[0] * -1;
+            
+            // For proper "Screen Center" we need inverse projection, but let's just stick to (0,0) or some random spot for now if complex.
+            // Actually, let's just use (0,0) or the inverse of rotation.
+            
+            const newPlume = {
+                id: generateId(),
+                position: [centerLon, centerLat] as any, // Simple approx
+                radius: 100,
+                strength: 1,
+                active: true
+            };
+            
+            if (!this.state.world.mantlePlumes) {
+                this.state.world.mantlePlumes = [];
+            }
+            this.state.world.mantlePlumes.push(newPlume);
+            
+            alert(`Created Mantle Plume at [${centerLon.toFixed(1)}, ${centerLat.toFixed(1)}]. If you move a plate over this location, 'Hotspot Track' volcanoes will appear.`);
             this.canvasManager?.render();
         });
 
@@ -2759,6 +2863,19 @@ class TectoLiteApp {
       </div>
       
       <div class="property-group">
+        <label class="property-label">Crust Type</label>
+        <select id="prop-crust-type" class="property-input">
+            <option value="continental" ${plate.crustType === 'continental' ? 'selected' : ''}>Continental</option>
+            <option value="oceanic" ${plate.crustType === 'oceanic' ? 'selected' : ''}>Oceanic</option>
+        </select>
+      </div>
+
+      <div class="property-group">
+        <label class="property-label">Density (g/cm³)</label>
+        <input type="number" id="prop-density" class="property-input" value="${plate.density || (plate.crustType === 'oceanic' ? 3.0 : 2.7)}" step="0.1">
+      </div>
+      
+      <div class="property-group">
         <label class="property-label">Layer (Z-Index)</label>
         <input type="number" id="prop-z-index" class="property-input" value="${plate.zIndex || 0}" step="1" style="width: 60px;">
       </div>
@@ -2866,6 +2983,29 @@ class TectoLiteApp {
             plate.color = (e.target as HTMLInputElement).value;
             this.updatePlateList();
             this.canvasManager?.render();
+        });
+
+        document.getElementById('prop-crust-type')?.addEventListener('change', (e) => {
+            const val = (e.target as HTMLSelectElement).value as 'continental' | 'oceanic';
+            plate.crustType = val;
+            
+            // Auto-update density defaults
+            const densityInput = document.getElementById('prop-density') as HTMLInputElement;
+            if (val === 'oceanic') {
+                plate.density = 3.0;
+                if (densityInput) densityInput.value = "3.0";
+            } else {
+                plate.density = 2.7;
+                if (densityInput) densityInput.value = "2.7";
+            }
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('prop-density')?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val)) {
+                plate.density = val;
+            }
         });
 
         document.getElementById('prop-z-index')?.addEventListener('change', (e) => {
