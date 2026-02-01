@@ -771,8 +771,11 @@ export class CanvasManager {
 
             if (this.interactionMode === 'pan') {
                 this.setState(state => {
-                    // Sensitivity: 0.25 degrees per pixel
-                    const sens = 0.25;
+                    // Dynamic Sensitivity based on Zoom Level
+                    // Scale corresponds to pixels per radian at the center of the projection
+                    // We want 1 pixel drag to equal ~1 pixel surface movement
+                    // degrees = pixels * (180 / (PI * scale))
+                    const sens = (180 / Math.PI) / (state.viewport.scale || 250);
 
                     let newRotate = [...state.viewport.rotate] as [number, number, number];
 
