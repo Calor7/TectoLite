@@ -12,6 +12,15 @@ import {
     drawIslandIcon
 } from './canvas/featureIcons';
 
+const FEATURE_DRAWERS: Record<string, (ctx: CanvasRenderingContext2D, size: number) => void> = {
+    mountain: drawMountainIcon,
+    volcano: drawVolcanoIcon,
+    hotspot: drawHotspotIcon,
+    rift: drawRiftIcon,
+    trench: drawTrenchIcon,
+    island: drawIslandIcon
+};
+
 export interface PNGExportOptions {
     projection: ProjectionType;
     waterMode: 'transparent' | 'color' | 'white';
@@ -178,14 +187,8 @@ function drawFeature(
     ctx.translate(proj[0], proj[1]);
     ctx.rotate(feature.rotation * Math.PI / 180);
 
-    switch (feature.type) {
-        case 'mountain': drawMountainIcon(ctx, size); break;
-        case 'volcano': drawVolcanoIcon(ctx, size); break;
-        case 'hotspot': drawHotspotIcon(ctx, size); break;
-        case 'rift': drawRiftIcon(ctx, size); break;
-        case 'trench': drawTrenchIcon(ctx, size); break;
-        case 'island': drawIslandIcon(ctx, size); break;
-    }
+    const draw = FEATURE_DRAWERS[feature.type];
+    if (draw) draw(ctx, size);
 
     ctx.restore();
 }

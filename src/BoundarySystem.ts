@@ -12,6 +12,7 @@ export class BoundarySystem {
         // FRAME BUDGET: Prevent boundary detection from blocking UI
         const startTime = performance.now();
         const MAX_DETECTION_MS = 50;
+        const deadline = startTime + MAX_DETECTION_MS;
 
         // Pre-calculate BBoxes for performance
         const bboxes = activePlates.map(p => this.getPlateBBox(p));
@@ -19,7 +20,7 @@ export class BoundarySystem {
         for (let i = 0; i < activePlates.length; i++) {
             for (let j = i + 1; j < activePlates.length; j++) {
                 // Frame budget check
-                if (performance.now() - startTime > MAX_DETECTION_MS) {
+                if (performance.now() > deadline) {
                     return boundaries; // Return what we have so far
                 }
 
@@ -93,9 +94,11 @@ export class BoundarySystem {
         };
 
         // Check center, left (-360), and right (+360) to catch wrap-around neighbors
-        let intersection = check(0);
-        if (intersection.length === 0) intersection = check(360);
-        if (intersection.length === 0) intersection = check(-360);
+        let intersection: any[] = [];
+        for (const offX of [0, 360, -360]) {
+            intersection = check(offX);
+            if (intersection.length) break;
+        }
 
         if (intersection.length > 0) {
             // Store as list of rings for proper rendering

@@ -86,7 +86,8 @@ function findSegmentIntersection(
     const dir = { x: crossN.x / len, y: crossN.y / len, z: crossN.z / len };
 
     // Angle validation helper
-    const getAngle = (u: Vector3, v: Vector3) => Math.acos(Math.max(-1, Math.min(1, dot(u, v))));
+    const clamp = (val: number, min: number, max: number) => (val < min ? min : val > max ? max : val);
+    const getAngle = (u: Vector3, v: Vector3) => Math.acos(clamp(dot(u, v), -1, 1));
 
     const isBetween = (p: Vector3, start: Vector3, end: Vector3): boolean => {
         const angTotal = getAngle(start, end);
@@ -389,11 +390,12 @@ export function splitPlate(
     const rightCenter = calculateSphericalCentroid(rightPolygons.flatMap(p => p.points));
 
     if (plateToSplit.paintStrokes) {
+        const [centerLon, centerLat] = plateToSplit.center;
         for (const stroke of plateToSplit.paintStrokes) {
             // Convert paint points from plate-local back to world coordinates
             const worldPoints = stroke.points.map(pt => [
-                plateToSplit.center[0] + pt[0],
-                plateToSplit.center[1] + pt[1]
+                centerLon + pt[0],
+                centerLat + pt[1]
             ] as Coordinate);
             
             // Duplicate strokes to BOTH plates completely
@@ -401,19 +403,20 @@ export function splitPlate(
             // This prevents "cutting" strokes incorrectly near the boundary
             
             if (worldPoints.length >= 2) {
+                const { id, points, ...strokeMeta } = stroke;
                 // Add to Left Plate
                 const leftLocalPoints = worldPoints.map(pt => [
                     pt[0] - leftCenter[0],
                     pt[1] - leftCenter[1]
                 ] as Coordinate);
-                leftPaintStrokes.push({ ...stroke, points: leftLocalPoints, id: generateId() });
+                leftPaintStrokes.push({ ...strokeMeta, points: leftLocalPoints, id: generateId() });
 
                 // Add to Right Plate
                 const rightLocalPoints = worldPoints.map(pt => [
                     pt[0] - rightCenter[0],
                     pt[1] - rightCenter[1]
                 ] as Coordinate);
-                rightPaintStrokes.push({ ...stroke, points: rightLocalPoints, id: generateId() });
+                rightPaintStrokes.push({ ...strokeMeta, points: rightLocalPoints, id: generateId() });
             }
         }
     }

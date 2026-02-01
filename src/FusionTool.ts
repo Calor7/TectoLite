@@ -51,13 +51,14 @@ function mergePolygons(plate1: TectonicPlate, plate2: TectonicPlate): Polygon[] 
         return vectorToLatLon(derotated);
     };
 
-    const polys1: [number, number][][] = plate1.polygons.map(p =>
-        [...p.points.map(pt => rotateToSafe(pt)), rotateToSafe(p.points[0])]
-    );
+    const toRing = (points: Coordinate[]): [number, number][] => {
+        const ring = points.map(rotateToSafe);
+        ring.push(ring[0]);
+        return ring;
+    };
 
-    const polys2: [number, number][][] = plate2.polygons.map(p =>
-        [...p.points.map(pt => rotateToSafe(pt)), rotateToSafe(p.points[0])]
-    );
+    const polys1: [number, number][][] = plate1.polygons.map(p => toRing(p.points));
+    const polys2: [number, number][][] = plate2.polygons.map(p => toRing(p.points));
 
     try {
         const result = polygonClipping.union(polys1 as any, polys2 as any);

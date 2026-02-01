@@ -346,42 +346,22 @@ export class GeoPackageExporter {
     wkbArray.push(1);
 
     // Geometry type (6 = MULTIPOLYGON)
-    const mpType = 6;
-    wkbArray.push(mpType & 0xFF);
-    wkbArray.push((mpType >> 8) & 0xFF);
-    wkbArray.push((mpType >> 16) & 0xFF);
-    wkbArray.push((mpType >> 24) & 0xFF);
+    this.pushUInt32LE(wkbArray, 6);
 
     // Number of polygons
-    const numPolygons = plate.polygons.length;
-    wkbArray.push(numPolygons & 0xFF);
-    wkbArray.push((numPolygons >> 8) & 0xFF);
-    wkbArray.push((numPolygons >> 16) & 0xFF);
-    wkbArray.push((numPolygons >> 24) & 0xFF);
+    this.pushUInt32LE(wkbArray, plate.polygons.length);
 
     // Encode each polygon
     for (const polygon of plate.polygons) {
       // Polygon type (3)
-      const polyType = 3;
       wkbArray.push(1); // byte order
-      wkbArray.push(polyType & 0xFF);
-      wkbArray.push((polyType >> 8) & 0xFF);
-      wkbArray.push((polyType >> 16) & 0xFF);
-      wkbArray.push((polyType >> 24) & 0xFF);
+      this.pushUInt32LE(wkbArray, 3);
 
       // Number of rings (1 exterior)
-      const numRings = 1;
-      wkbArray.push(numRings & 0xFF);
-      wkbArray.push((numRings >> 8) & 0xFF);
-      wkbArray.push((numRings >> 16) & 0xFF);
-      wkbArray.push((numRings >> 24) & 0xFF);
+      this.pushUInt32LE(wkbArray, 1);
 
       // Ring point count
-      const numPoints = polygon.points.length;
-      wkbArray.push(numPoints & 0xFF);
-      wkbArray.push((numPoints >> 8) & 0xFF);
-      wkbArray.push((numPoints >> 16) & 0xFF);
-      wkbArray.push((numPoints >> 24) & 0xFF);
+      this.pushUInt32LE(wkbArray, polygon.points.length);
 
       // Ring points (lon, lat as doubles)
       for (const [lon, lat] of polygon.points) {
@@ -405,11 +385,7 @@ export class GeoPackageExporter {
     wkbArray.push(1);
 
     // Geometry type (1 = POINT)
-    const pointType = 1;
-    wkbArray.push(pointType & 0xFF);
-    wkbArray.push((pointType >> 8) & 0xFF);
-    wkbArray.push((pointType >> 16) & 0xFF);
-    wkbArray.push((pointType >> 24) & 0xFF);
+    this.pushUInt32LE(wkbArray, 1);
 
     // Coordinates (lon, lat as doubles in little-endian)
     const lonBuf = new Float64Array([pos[0]]);
@@ -418,6 +394,10 @@ export class GeoPackageExporter {
     wkbArray.push(...new Uint8Array(latBuf.buffer));
 
     return new Uint8Array(wkbArray);
+  }
+
+  private pushUInt32LE(target: number[], value: number): void {
+    target.push(value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF, (value >> 24) & 0xFF);
   }
 
   /**

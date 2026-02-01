@@ -16,6 +16,14 @@ export interface TimelineEventItem {
     originalRef: MotionKeyframe | PlateEvent | TectonicPlate;
 }
 
+const EVENT_ICONS: Record<string, string> = {
+    birth: '★',
+    motion: '⟳',
+    split: '✂',
+    fuse: '🔗',
+    death: '†'
+};
+
 export class TimelineSystem {
     private container: HTMLElement | null = null;
     private plate: TectonicPlate | null = null;
@@ -307,14 +315,7 @@ export class TimelineSystem {
     }
 
     private getIconForType(type: string): string {
-        switch (type) {
-            case 'birth': return '★';
-            case 'motion': return '⟳';
-            case 'split': return '✂';
-            case 'fuse': return '🔗';
-            case 'death': return '†';
-            default: return '•';
-        }
+        return EVENT_ICONS[type] || '•';
     }
 
     // --- Logic Handlers ---

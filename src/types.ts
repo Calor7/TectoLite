@@ -314,7 +314,7 @@ export interface Viewport {
 
 // Utility function to generate unique IDs
 export function generateId(): string {
-  return Math.random().toString(36).substring(2, 11);
+  return Math.random().toString(36).slice(2, 11);
 }
 
 // Default plate motion
@@ -390,16 +390,18 @@ export function createDefaultWorldState(): WorldState {
 
 // Default app state
 export function createDefaultAppState(): AppState {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
   return {
     world: createDefaultWorldState(),
     activeTool: 'select',
     activeFeatureType: 'mountain',
     viewport: {
-      width: window.innerWidth,
-      height: window.innerHeight,
+      width: width,
+      height: height,
       scale: 250,
       rotate: [0, 0, 0],
-      translate: [window.innerWidth / 2, window.innerHeight / 2]
+      translate: [width / 2, height / 2]
     }
   };
 }

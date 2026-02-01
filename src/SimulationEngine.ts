@@ -93,6 +93,7 @@ export class SimulationEngine {
 
     public setTime(time: number): void {
         this.setState(state => {
+            const { globalOptions } = state.world;
             // Recalculate ALL plates at the new time
             const newPlates = state.world.plates.map(plate => {
                 const isBorn = time >= plate.birthTime;
@@ -106,20 +107,18 @@ export class SimulationEngine {
             // Calculate Boundaries if enabled
             // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization is enabled.
             // If none are on, clear boundaries to prevent stale artifacts.
-            const boundaries = (state.world.globalOptions.enableBoundaryVisualization || 
-                state.world.globalOptions.enableOrogeny || 
-                state.world.globalOptions.enableElevationSimulation)
+            const boundaries = (globalOptions.enableBoundaryVisualization || 
+                globalOptions.enableOrogeny || 
+                globalOptions.enableElevationSimulation)
                 ? BoundarySystem.detectBoundaries(newPlates)
                 : [];
-
-            const finalPlates = newPlates;
 
             // Phase 4: Geological Automation
             const tempState = {
                 ...state,
                 world: {
                     ...state.world,
-                    plates: finalPlates,
+                    plates: newPlates,
                     boundaries: boundaries,
                     currentTime: time
                 }
@@ -159,6 +158,7 @@ export class SimulationEngine {
 
     private update(deltaMa: number): void {
         this.setState(state => {
+            const { globalOptions } = state.world;
             const newTime = state.world.currentTime + deltaMa;
 
             // Re-calculate ALL plates based on absolute time
@@ -189,9 +189,9 @@ export class SimulationEngine {
             // Calculate Boundaries if enabled
             // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization is enabled.
             // If none are on, clear boundaries to prevent stale artifacts.
-            const boundaries = (state.world.globalOptions.enableBoundaryVisualization || 
-                state.world.globalOptions.enableOrogeny || 
-                state.world.globalOptions.enableElevationSimulation)
+            const boundaries = (globalOptions.enableBoundaryVisualization || 
+                globalOptions.enableOrogeny || 
+                globalOptions.enableElevationSimulation)
                 ? BoundarySystem.detectBoundaries(newPlates)
                 : [];
             
