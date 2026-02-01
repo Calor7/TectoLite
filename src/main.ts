@@ -4437,7 +4437,8 @@ class TectoLiteApp {
                     time: currentTime,
                     eulerPole: updated.motion.eulerPole,
                     snapshotPolygons: p.polygons,
-                    snapshotFeatures: p.features
+                    snapshotFeatures: p.features,
+                    snapshotPaintStrokes: p.paintStrokes || []
                 };
 
                 const otherKeyframes = (p.motionKeyframes || []).filter(k => Math.abs(k.time - currentTime) > 0.001);

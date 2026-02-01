@@ -1,4 +1,4 @@
-import { AppState, TectonicPlate, Coordinate, Feature } from './types';
+import { AppState, TectonicPlate, Coordinate, Feature, PaintStroke } from './types';
 import {
     toRad,
     latLonToVector,
@@ -362,6 +362,55 @@ export class SimulationEngine {
 
         const newFeatures = [...transformedSnapshotFeatures, ...transformedDynamicFeatures, ...transformedInheritedFeatures];
 
+        // --- Paint Stroke Transformation ---
+        // Identical logic to Features: Snapshot vs Dynamic
+
+        // Helper for Point Arrays (Paint Strokes)
+        const transformStroke = (stroke: PaintStroke, startTime: number, useOriginal: boolean = false): PaintStroke => {
+             const strokeElapsed = Math.max(0, time - startTime);
+             const strokeAngle = toRad(pole.rate * strokeElapsed);
+
+             if (strokeAngle === 0) return stroke;
+
+             // Source points: use originalPoints if available and requested
+             const sourcePoints = (useOriginal && stroke.originalPoints) ? stroke.originalPoints : stroke.points;
+             
+             // Optimize rotation: Single axis object
+             const strokeAxis = axis; 
+
+             const newPoints = sourcePoints.map(p => {
+                 const v = latLonToVector(p);
+                 const vRot = rotateVector(v, strokeAxis, strokeAngle);
+                 return vectorToLatLon(vRot);
+             });
+
+             return {
+                 ...stroke,
+                 points: newPoints,
+                 originalPoints: stroke.originalPoints // Explicitly preserve
+             };
+        };
+
+        const snapshotStrokes = activeKeyframe.snapshotPaintStrokes || [];
+        const snapshotStrokeIds = new Set(snapshotStrokes.map(s => s.id));
+        
+        // Filter dynamic strokes (those created after keyframe OR legacy strokes without birthTime)
+        const currentStrokes = plate.paintStrokes || [];
+        const dynamicStrokes = currentStrokes.filter(s => 
+            !snapshotStrokeIds.has(s.id) &&
+            (s.birthTime === undefined || s.birthTime >= activeKeyframe.time)
+        );
+
+        // Transform Snapshot Strokes (From Keyframe Time, use points as source)
+        const transformSnapshotStrokes = snapshotStrokes.map(s => transformStroke(s, activeKeyframe.time, false));
+
+        // Transform Dynamic Strokes (From Birth Time, use originalPoints as source)
+        // Fallback to plate birthTime or 0 for legacy strokes
+        const transformDynamicStrokes = dynamicStrokes.map(s => transformStroke(s, s.birthTime !== undefined ? s.birthTime : (plate.birthTime || 0), true));
+
+        const newPaintStrokes = [...transformSnapshotStrokes, ...transformDynamicStrokes];
+
+
         const allPoints = newPolygons.flatMap(poly => poly.points);
         const newCenter = calculateSphericalCentroid(allPoints);
 
@@ -369,6 +418,7 @@ export class SimulationEngine {
             ...plate,
             polygons: newPolygons,
             features: newFeatures,
+            paintStrokes: newPaintStrokes,
             center: newCenter
         };
 

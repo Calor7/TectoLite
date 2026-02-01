@@ -1076,8 +1076,9 @@ export class CanvasManager {
                     // Check proximity to stroke path
                     const hitDist = stroke.width + 8; // Hit margin
                     for (let i = 0; i < stroke.points.length - 1; i++) {
-                        const worldP1 = this.plateLocalToWorld(stroke.points[i], plate.center);
-                        const worldP2 = this.plateLocalToWorld(stroke.points[i + 1], plate.center);
+                        // World coordinate system (points are already in world space)
+                        const worldP1 = stroke.points[i];
+                        const worldP2 = stroke.points[i + 1];
                         const proj1 = this.projectionManager.project(worldP1);
                         const proj2 = this.projectionManager.project(worldP2);
                         if (!proj1 || !proj2) continue;
@@ -1807,30 +1808,6 @@ export class CanvasManager {
     }
 
     /**
-     * Convert world coordinates to plate-local coordinates.
-     * This allows paint to move with the plate as it rotates.
-     */
-    private worldToPlateLocal(worldCoord: Coordinate, plateCenter: Coordinate): Coordinate {
-        // Store offset relative to plate center
-        // This preserves paint positioning as plate rotates
-        const offsetLon = worldCoord[0] - plateCenter[0];
-        const offsetLat = worldCoord[1] - plateCenter[1];
-        
-        return [offsetLon, offsetLat];
-    }
-
-    /**
-     * Convert plate-local coordinates back to world coordinates.
-     * This reconstructs paint positions when rendering.
-     */
-    private plateLocalToWorld(localCoord: Coordinate, plateCenter: Coordinate): Coordinate {
-        return [
-            plateCenter[0] + localCoord[0],
-            plateCenter[1] + localCoord[1]
-        ];
-    }
-
-    /**
      * Calculate distance from point P to line segment AB
      */
     private pointToSegmentDistance(p: Point, a: Point, b: Point): number {
@@ -1865,25 +1842,22 @@ export class CanvasManager {
 
         // Store all painted points (no filtering) - paint will be clipped at render time to plate boundaries
         // This allows painting across plate edges while only showing paint inside the plate
-        const localPoints = this.currentPaintStroke.map(p => this.worldToPlateLocal(p, plate.center));
+        // Stored as World Coordinates (Rotation via SimulationEngine)
+        const worldPoints = [...this.currentPaintStroke];
 
         const stroke: PaintStroke = {
             id: generateId(),
             color: this.paintConfig.color,
             width: this.paintConfig.width,
             opacity: this.paintConfig.opacity,
-            points: localPoints,
+            points: worldPoints,
+            originalPoints: worldPoints, // Reference for rotation logic
             timestamp: Date.now(),
             birthTime: state.world.currentTime, // Born now
             
             // Capture Paint Tool Settings
             autoDelete: state.world.globalOptions.paintAutoDelete,
             deleteDelay: state.world.globalOptions.paintDeleteDelay !== undefined ? state.world.globalOptions.paintDeleteDelay : 50,
-            
-            // Capture Ageing Settings if overridden? 
-            // The prompt "Overwrite in prefernces" implies per-stroke control.
-            // If I change global ageing duration later, manual strokes should probably follow global unless overridden.
-            // So I WON'T set ageingDuration here unless we add specific "Ageing Duration" sliders to the Paint Brush tool itself (which we don't have, we share the global one).
         };
 
         if (!plate.paintStrokes) {
@@ -1997,9 +1971,8 @@ export class CanvasManager {
                 let isFirstPoint = true;
 
                 for (const point of stroke.points) {
-                    // Convert from plate-local to world coordinates
-                    const worldCoord = this.plateLocalToWorld(point, plate.center);
-                    const proj = this.projectionManager.project(worldCoord);
+                    // Points are World Coordinates
+                    const proj = this.projectionManager.project(point);
                     if (!proj) continue;
 
                     if (isFirstPoint) {
@@ -2030,11 +2003,10 @@ export class CanvasManager {
                 let isFirstPoint = true;
 
                 for (const point of stroke.points) {
-                    // Convert from plate-local to world coordinates
-                    const worldCoord = this.plateLocalToWorld(point, plate.center);
-                    const proj = this.projectionManager.project(worldCoord);
+                    // Points are World Coordinates
+                    const proj = this.projectionManager.project(point);
                     if (!proj) continue; // Skip points on globe backside
-
+                    
                     if (isFirstPoint) {
                         this.ctx.moveTo(proj[0], proj[1]);
                         isFirstPoint = false;
@@ -2067,8 +2039,8 @@ export class CanvasManager {
         const plate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
         if (!plate) return;
 
-        // Convert to plate-local coordinates so paint moves with the plate
-        const localPoints = this.polyFillPoints.map(p => this.worldToPlateLocal(p, plate.center));
+        // Stored as World Coordinates
+        const worldPoints = [...this.polyFillPoints];
 
         // Create a filled polygon stroke
         const stroke: PaintStroke = {
@@ -2076,7 +2048,8 @@ export class CanvasManager {
             color: this.polyFillConfig.color,
             width: 0, // 0 width indicates fill-only
             opacity: this.polyFillConfig.opacity,
-            points: localPoints,
+            points: worldPoints,
+            originalPoints: worldPoints,
             timestamp: Date.now(),
             isFilled: true  // Mark as filled polygon
         };

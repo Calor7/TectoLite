@@ -45,7 +45,8 @@ export interface PaintStroke {
   color: string;        // Hex color (e.g., "#ff0000")
   width: number;        // Brush width in pixels (0 for filled polygons)
   opacity: number;      // 0.0 to 1.0
-  points: Coordinate[]; // Array of [lon, lat] positions
+  points: Coordinate[]; // Current projected position (World Coordinates)
+  originalPoints?: Coordinate[]; // Source of truth: Positions at birthTime (World coords)
   timestamp: number;    // For undo/redo ordering
   isFilled?: boolean;   // True for polygon fill, false/undefined for brush strokes
   source?: 'user' | 'orogeny';  // Origin: user-drawn or auto-generated
@@ -94,6 +95,7 @@ export interface MotionKeyframe {
   eulerPole: EulerPole;            // Motion parameters for this segment
   snapshotPolygons: Polygon[];     // Plate geometry at keyframe time
   snapshotFeatures: Feature[];     // Features at keyframe time
+  snapshotPaintStrokes?: PaintStroke[]; // Paint strokes at keyframe time
 }
 
 export interface PlateMotion {

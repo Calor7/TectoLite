@@ -1,9 +1,9 @@
 // Geological Automation System
 // Handles dynamic feature tracking, orogeny detection, and crust aging
 
-import { AppState, Feature, generateId, TectonicPlate, FeatureType, Coordinate, PaintStroke } from '../types';
+import { AppState, Feature, generateId, TectonicPlate, FeatureType, Coordinate, PaintStroke, EulerPole } from '../types';
 import { isPointInPolygon } from '../SplitTool';
-import { distance } from '../utils/sphericalMath';
+import { distance, latLonToVector, toRad, Vector3 } from '../utils/sphericalMath';
 
 export class GeologicalAutomationSystem {
     private boundaryCooldowns: Map<string, number> = new Map();
@@ -516,61 +516,166 @@ export class GeologicalAutomationSystem {
             const p2Index = plates.findIndex(p => p.id === id2);
             if (p1Index === -1 && p2Index === -1) continue;
 
-            // Convert boundary points to plate-local coordinates and add as strokes
+            // Get Euler Poles for relative motion calculation
+            const getPole = (plate: TectonicPlate): EulerPole | undefined => {
+                if (plate.motionKeyframes && plate.motionKeyframes.length > 0) {
+                     // Find active keyframe
+                     const sorted = [...plate.motionKeyframes].sort((a,b) => b.time - a.time); // Descending
+                     const active = sorted.find(k => k.time <= currentTime);
+                     return active ? active.eulerPole : undefined;
+                }
+                return plate.motion?.eulerPole; // Legacy fallback
+            };
+            const pole1 = p1Index !== -1 ? getPole(plates[p1Index]) : undefined;
+            const pole2 = p2Index !== -1 ? getPole(plates[p2Index]) : undefined;
+
+            // Velocity helper
+            const getVelocity = (pos: Coordinate, pole: EulerPole | undefined): Vector3 => {
+                if (!pole || pole.rate === 0) return {x:0, y:0, z:0};
+                const r = latLonToVector(pos);
+                const omega = latLonToVector(pole.position);
+                // v = omega x r * rate (approx magnitude, not exact m/s but compatible units)
+                const rate = toRad(pole.rate);
+                return {
+                    x: (omega.y * r.z - omega.z * r.y) * rate,
+                    y: (omega.z * r.x - omega.x * r.z) * rate,
+                    z: (omega.x * r.y - omega.y * r.x) * rate
+                };
+            };
+            
+            const normalize = (v: Vector3): Vector3 => {
+                const len = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+                return len > 0 ? {x:v.x/len, y:v.y/len, z:v.z/len} : {x:0, y:0, z:0};
+            };
+
+            const dot = (v1: Vector3, v2: Vector3): number => v1.x*v2.x + v1.y*v2.y + v1.z*v2.z;
+
             // Paint on BOTH plates so the boundary line shows on each
             for (const ring of boundary.points) {
                 if (ring.length < 2) continue;
 
-                // Create paint stroke for plate 1
-                if (p1Index !== -1) {
-                    const p1 = plates[p1Index];
-                    const localPoints1 = ring.map(pt => this.worldToPlateLocal(pt, p1.center));
-                    
-                    const stroke1: PaintStroke = {
-                        id: generateId(),
-                        color: color,
-                        width: strokeWidth,
-                        opacity: 0.7,
-                        points: localPoints1,
-                        timestamp: Date.now(),
-                        source: 'orogeny',
-                        birthTime: currentTime,  // Track when this stroke was created
-                        boundaryId: boundary.id,
-                        boundaryType: boundary.type
-                    };
+                // Collection of independent "bar" strokes (which are just segments of the boundary now)
+                const barStrokes: Coordinate[][] = [];
 
-                    if (!plates[p1Index].paintStrokes) plates[p1Index] = { ...plates[p1Index], paintStrokes: [] };
-                    plates[p1Index] = {
-                        ...plates[p1Index],
-                        paintStrokes: [...(plates[p1Index].paintStrokes || []), stroke1]
+                // Consolidate valid segments into continuous polylines ("whole length of edge")
+                let activePolyline: Coordinate[] = [];
+
+                for (let i = 0; i < ring.length - 1; i++) {
+                    const pStart = ring[i];
+                    const pEnd = ring[i+1];
+                    
+                    // --- ORIENTATION CHECK ---
+                    // Midpoint for velocity check
+                    const mid: Coordinate = [
+                        (pStart[0] + pEnd[0])/2,
+                        (pStart[1] + pEnd[1])/2
+                    ];
+
+                    const v1 = getVelocity(mid, pole1);
+                    const v2 = getVelocity(mid, pole2);
+                    
+                    // Relative velocity vector (Plate 1 relative to Plate 2)
+                    const vRel = {
+                        x: v1.x - v2.x,
+                        y: v1.y - v2.y,
+                        z: v1.z - v2.z
                     };
-                    modified = true;
+                    const vMag = Math.sqrt(vRel.x*vRel.x + vRel.y*vRel.y + vRel.z*vRel.z);
+                    
+                    const isSignificantMotion = vMag > 0.0000001;
+                    let isParallel = false;
+
+                    if (isSignificantMotion) {
+                        const vRelDir = normalize(vRel);
+
+                        // Segment orientation vector
+                        const vec1 = latLonToVector(pStart);
+                        const vec2 = latLonToVector(pEnd);
+                        const segVec = {
+                            x: vec2.x - vec1.x,
+                            y: vec2.y - vec1.y,
+                            z: vec2.z - vec1.z
+                        };
+                        const segDir = normalize(segVec);
+
+                        // Dot product: 1.0 = parallel, 0.0 = perpendicular
+                        const alignment = Math.abs(dot(vRelDir, segDir));
+
+                        // User Requirement: "edges that run PARALLEL... to NOT create orogony lines"
+                        // Threshold: If alignment > 0.9 (approx 25 degrees), skip.
+                        isParallel = alignment > 0.9;
+                    } else {
+                        // No motion -> treat as 'parallel' (skip painting)
+                        isParallel = true;
+                    }
+
+                    if (!isParallel) {
+                        // Valid orogeny edge - append to current polyline
+                        if (activePolyline.length === 0) {
+                            activePolyline.push(pStart);
+                        }
+                        activePolyline.push(pEnd);
+                    } else {
+                        // Parallel or static edge - breaks the chain
+                        if (activePolyline.length > 1) {
+                            barStrokes.push([...activePolyline]);
+                        }
+                        activePolyline = [];
+                    }
+                }
+                
+                // Final flush of active polyline
+                if (activePolyline.length > 1) {
+                    barStrokes.push([...activePolyline]);
                 }
 
-                // Create paint stroke for plate 2
-                if (p2Index !== -1) {
-                    const p2 = plates[p2Index];
-                    const localPoints2 = ring.map(pt => this.worldToPlateLocal(pt, p2.center));
-                    
-                    const stroke2: PaintStroke = {
-                        id: generateId(),
-                        color: color,
-                        width: strokeWidth,
-                        opacity: 0.7,
-                        points: localPoints2,
-                        timestamp: Date.now(),
-                        source: 'orogeny',
-                        birthTime: currentTime,  // Track when this stroke was created
-                        boundaryId: boundary.id,
-                        boundaryType: boundary.type
-                    };
+                // Process all bar strokes created from this ring
+                for (const barPoints of barStrokes) {
+                    // Create paint stroke for plate 1
+                    if (p1Index !== -1) {
+                         // We likely want to associate these with the boundary so we don't spam 1000s of strokes too aggressively
+                         // The paint interval already throttles this function call
+                         
+                        const stroke1: PaintStroke = {
+                            id: generateId(),
+                            color: color,
+                            width: strokeWidth,
+                            opacity: 0.7,
+                            points: barPoints,         // World Coordinates
+                            originalPoints: barPoints, // World Coordinates (Reference)
+                            timestamp: Date.now(),
+                            source: 'orogeny',
+                            birthTime: currentTime,  
+                            boundaryId: boundary.id,
+                            boundaryType: boundary.type
+                        };
 
-                    if (!plates[p2Index].paintStrokes) plates[p2Index] = { ...plates[p2Index], paintStrokes: [] };
-                    plates[p2Index] = {
-                        ...plates[p2Index],
-                        paintStrokes: [...(plates[p2Index].paintStrokes || []), stroke2]
-                    };
-                    modified = true;
+                        if (!plates[p1Index].paintStrokes) plates[p1Index] = { ...plates[p1Index], paintStrokes: [] };
+                        // Optimize: append to array instead of spread
+                        plates[p1Index].paintStrokes!.push(stroke1);
+                        modified = true;
+                    }
+
+                    // Create paint stroke for plate 2
+                    if (p2Index !== -1) {
+                        const stroke2: PaintStroke = {
+                            id: generateId(),
+                            color: color,
+                            width: strokeWidth,
+                            opacity: 0.7,
+                            points: barPoints,
+                            originalPoints: barPoints,
+                            timestamp: Date.now(),
+                            source: 'orogeny',
+                            birthTime: currentTime, 
+                            boundaryId: boundary.id,
+                            boundaryType: boundary.type
+                        };
+                         
+                        if (!plates[p2Index].paintStrokes) plates[p2Index] = { ...plates[p2Index], paintStrokes: [] };
+                        plates[p2Index].paintStrokes!.push(stroke2);
+                        modified = true;
+                    }
                 }
             }
 
@@ -588,16 +693,4 @@ export class GeologicalAutomationSystem {
             }
         };
     }
-
-    /**
-     * Convert world coordinates to plate-local coordinates
-     * (Relative to plate center for transform invariance)
-     */
-    private worldToPlateLocal(worldCoord: Coordinate, plateCenter: Coordinate): Coordinate {
-        return [
-            worldCoord[0] - plateCenter[0],
-            worldCoord[1] - plateCenter[1]
-        ];
-    }
 }
-
