@@ -2700,7 +2700,9 @@ export class CanvasManager {
         let minDistance = Infinity;
         const clickThreshold = 0.3; // ~30km at equator
         
-        // Find nearest vertex across all visible plates
+        // Collect all vertices within threshold, organized by plate
+        const candidatesPerPlate = new Map<string, {vertex: any, distance: number, plate: any}[]>();
+        
         for (const plate of state.world.plates) {
             if (!plate.visible || !plate.crustMesh) continue;
             
@@ -2708,15 +2710,67 @@ export class CanvasManager {
             if (state.world.currentTime < plate.birthTime) continue;
             if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
             
+            const candidates: {vertex: any, distance: number}[] = [];
+            
             for (const vertex of plate.crustMesh) {
                 const dist = distance(geoPos, vertex.pos);
                 
-                if (dist < clickThreshold && dist < minDistance) {
-                    minDistance = dist;
-                    closestVertex = vertex;
-                    closestPlateId = plate.id;
+                if (dist < clickThreshold) {
+                    candidates.push({vertex, distance: dist});
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                    }
                 }
             }
+            
+            if (candidates.length > 0) {
+                candidatesPerPlate.set(plate.id, candidates.map(c => ({
+                    vertex: c.vertex,
+                    distance: c.distance,
+                    plate
+                })));
+            }
+        }
+        
+        // If multiple plates have candidates, prioritize higher z-index (topmost)
+        if (candidatesPerPlate.size > 1) {
+            // Get all plates with candidates and sort by z-index (descending)
+            const platesWithCandidates = Array.from(candidatesPerPlate.entries())
+                .map(([plateId, candidates]) => {
+                    const plate = state.world.plates.find(p => p.id === plateId);
+                    let zIndex = plate?.zIndex ?? 0;
+                    // Continental plates render on top (same logic as renderPlateMesh)
+                    if (plate?.crustType === 'continental') zIndex += 1;
+                    return {plateId, candidates, zIndex, plate};
+                })
+                .sort((a, b) => b.zIndex - a.zIndex); // Higher z-index first
+            
+            // Find closest vertex in the topmost plate(s)
+            const topZIndex = platesWithCandidates[0].zIndex;
+            const topCandidates = platesWithCandidates
+                .filter(p => p.zIndex === topZIndex)
+                .flatMap(p => p.candidates);
+            
+            let bestCandidate = topCandidates[0];
+            for (const candidate of topCandidates) {
+                if (candidate.distance < bestCandidate.distance) {
+                    bestCandidate = candidate;
+                }
+            }
+            
+            closestVertex = bestCandidate.vertex;
+            closestPlateId = bestCandidate.plate.id;
+        } else if (candidatesPerPlate.size === 1) {
+            // Single plate - just find closest vertex
+            const [, candidates] = Array.from(candidatesPerPlate.entries())[0];
+            let bestCandidate = candidates[0];
+            for (const candidate of candidates) {
+                if (candidate.distance < bestCandidate.distance) {
+                    bestCandidate = candidate;
+                }
+            }
+            closestVertex = bestCandidate.vertex;
+            closestPlateId = bestCandidate.plate.id;
         }
         
         if (closestVertex && closestPlateId) {
