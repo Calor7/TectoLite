@@ -116,31 +116,40 @@ export class GeologicalAutomationSystem {
         const segments: { p1: Coordinate, p2: Coordinate, length: number }[] = [];
         let totalLength = 0;
         
-        // Safety: Limit processing of super-detailed rings to prevent loop hang
-        // Downsample rings if they have excessive vertex count (> 200)
-        // This is purely for performance during complex boundary interactions
+        // AGGRESSIVE SAFETY LIMITS
+        const MAX_RINGS = 10;
+        const MAX_SEGMENTS = 100;
+        let segmentCount = 0;
 
-        for (const ring of rings) {
+        const ringsToProcess = rings.slice(0, MAX_RINGS);
+
+        for (const ring of ringsToProcess) {
             if (ring.length < 2) continue;
+            if (segmentCount >= MAX_SEGMENTS) break;
             
-            const step = ring.length > 200 ? Math.ceil(ring.length / 100) : 1;
+            const step = ring.length > 50 ? Math.ceil(ring.length / 25) : 1;
 
-            for (let i = 0; i < ring.length - step; i += step) {
+            for (let i = 0; i < ring.length - step && segmentCount < MAX_SEGMENTS; i += step) {
                 const p1 = ring[i];
-                const p2 = ring[i+step]; // Skip to next step
+                const p2 = ring[i+step];
+                
+                // Validate coordinates
+                if (!p1 || !p2) continue;
+                if (isNaN(p1[0]) || isNaN(p1[1]) || isNaN(p2[0]) || isNaN(p2[1])) continue;
                 
                 // Calculate distance in radians (great circle)
                 const d = distance(p1, p2);
                 
                 // Skip effectively zero-length segments or artifacts
-                if (d > 0.000001 && !isNaN(d)) { 
+                if (d > 0.000001 && !isNaN(d) && isFinite(d)) { 
                     segments.push({ p1, p2, length: d });
                     totalLength += d;
+                    segmentCount++;
                 }
             }
         }
 
-        if (segments.length === 0 || totalLength === 0) return null;
+        if (segments.length === 0 || totalLength === 0 || !isFinite(totalLength)) return null;
 
         // Weighted Random Selection: Likelihood is proportional to physical length
         let target = Math.random() * totalLength;
@@ -169,24 +178,35 @@ export class GeologicalAutomationSystem {
     }
 
     private processOrogenies(state: AppState): AppState {
-        // Use existing boundaries from state if available, otherwise detect (fallback)
-        let boundaries = state.world.boundaries;
-        if (!boundaries || boundaries.length === 0) {
-            // Only detect if truly missing and we need them (rare case if engine did its job)
-             boundaries = BoundarySystem.detectBoundaries(state.world.plates);
-        }
-        
-        // Filter for active boundaries (Convergent or Divergent)
-        const collisions = boundaries.filter(b => b.type === 'convergent' || b.type === 'divergent');
-        
-        if (collisions.length === 0) return state;
+        try {
+            // Use existing boundaries from state if available, otherwise detect (fallback)
+            let boundaries = state.world.boundaries;
+            if (!boundaries || boundaries.length === 0) {
+                return state; // No boundaries = no processing. Don't call detectBoundaries here.
+            }
+            
+            // Filter for active boundaries - ONLY CONVERGENT for now
+            // Divergent boundary processing is disabled due to polygon-clipping library freezes
+            // when plates are nearly separated. TODO: Implement proper fix.
+            const collisions = boundaries.filter(b => b.type === 'convergent');
+            
+            if (collisions.length === 0) return state;
 
-        let modified = false;
-        let plates = [...state.world.plates];
-        const currentTime = state.world.currentTime;
+            let modified = false;
+            let plates = [...state.world.plates];
+            const currentTime = state.world.currentTime;
 
-        for (const boundary of collisions) {
-             const [id1, id2] = boundary.plateIds;
+            // FRAME BUDGET: Prevent any single frame from taking too long
+            const frameStartTime = performance.now();
+            const MAX_FRAME_MS = 20; // Reduced to 20ms for safety
+
+            for (const boundary of collisions) {
+                 // Frame budget check - bail if we've spent too long
+                 if (performance.now() - frameStartTime > MAX_FRAME_MS) {
+                     break;
+                 }
+
+                 const [id1, id2] = boundary.plateIds;
              
              const p1Index = plates.findIndex(p => p.id === id1);
              const p2Index = plates.findIndex(p => p.id === id2);
@@ -202,11 +222,23 @@ export class GeologicalAutomationSystem {
              // Intersection Center
              if (boundary.points.length === 0 || boundary.points[0].length === 0) continue;
 
+             // SAFETY: Skip boundaries with excessive vertex count (indicates problematic geometry)
+             let totalVertices = 0;
+             for (const ring of boundary.points) {
+                 totalVertices += ring.length;
+             }
+             if (totalVertices > 500) continue; // Skip overly complex boundaries
+
              // PHYSICAL LENGTH THRESHOLD CHECK
              // Calculate the actual length of the collision/divergence boundary in radians
+             // OPTIMIZATION: Limit iterations to prevent freeze on complex geometry
              let boundaryLengthRad = 0;
+             let iterCount = 0;
+             const MAX_ITER = 200;
+             outerLoop:
              for (const ring of boundary.points) {
                  for (let k = 0; k < ring.length - 1; k++) {
+                     if (++iterCount > MAX_ITER) break outerLoop;
                      // Quick approx distance is fine for threshold check to avoid heavy trig
                      // But we use real distance to be safe
                      boundaryLengthRad += distance(ring[k], ring[k+1]);
@@ -269,6 +301,9 @@ export class GeologicalAutomationSystem {
              let failCount = 0;
 
              for (let k = 0; k < spawnAttempts; k++) {
+                 // Frame budget check inside inner loop too
+                 if (performance.now() - frameStartTime > MAX_FRAME_MS) break;
+
                  // Optimization: If we failed twice in a row, assume full
                  if (failCount >= 2) {
                      // Set cooldown
@@ -376,16 +411,33 @@ export class GeologicalAutomationSystem {
                 plates
             }
         };
+        } catch (e) {
+            // Safety catch - if anything goes wrong, return unchanged state
+            console.error('Orogeny processing error:', e);
+            return state;
+        }
     }
 
     private checkClearance(plate: TectonicPlate, pos: Coordinate, minRad: number): boolean {
-        // Simple linear scan of features. Optimization: Spatial index if needed later.
-        for (const f of plate.features) {
+        // Validate inputs to prevent NaN/Infinity issues
+        if (!pos || !Array.isArray(pos) || pos.length < 2) return false;
+        if (isNaN(pos[0]) || isNaN(pos[1])) return false;
+        if (!isFinite(minRad) || minRad <= 0) return true; // Invalid radius = allow spawn
+        
+        // Limit feature scan to prevent freeze on plates with thousands of features
+        const maxCheck = Math.min(plate.features.length, 500);
+        
+        for (let i = 0; i < maxCheck; i++) {
+            const f = plate.features[i];
             // Only care about orogeny features for spacing
             // FIX: include 'rift' to prevent infinite spawning loop
             if (f.type !== 'mountain' && f.type !== 'volcano' && f.type !== 'rift') continue;
             
+            // Validate feature position
+            if (!f.position || isNaN(f.position[0]) || isNaN(f.position[1])) continue;
+            
             const d = distance(pos, f.position);
+            if (isNaN(d)) continue; // Skip invalid distance
             if (d < minRad) return false;
         }
         return true;

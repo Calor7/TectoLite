@@ -9,17 +9,31 @@ export class BoundarySystem {
         const boundaries: Boundary[] = [];
         const activePlates = plates.filter(p => !p.deathTime); // Only check active plates
 
+        // FRAME BUDGET: Prevent boundary detection from blocking UI
+        const startTime = performance.now();
+        const MAX_DETECTION_MS = 50;
+
         // Pre-calculate BBoxes for performance
         const bboxes = activePlates.map(p => this.getPlateBBox(p));
 
         for (let i = 0; i < activePlates.length; i++) {
             for (let j = i + 1; j < activePlates.length; j++) {
+                // Frame budget check
+                if (performance.now() - startTime > MAX_DETECTION_MS) {
+                    return boundaries; // Return what we have so far
+                }
+
                 const p1 = activePlates[i];
                 const p2 = activePlates[j];
                 
                 // Fast BBox Overlap Check
                 // If bounding boxes don't overlap, skip expensive polygon clipping
                 if (!this.bboxesOverlap(bboxes[i], bboxes[j])) continue;
+
+                // PRE-CHECK VELOCITY BEFORE EXPENSIVE GEOMETRY
+                // Previously skipped diverging entirely, but visualization is fine
+                // The freeze is in GeologicalAutomation, not here
+                const preVelocity = this.quickVelocityCheck(p1, p2);
 
                 // 1. Check for basic Overlap (Convergent)
                 const overlap = this.checkOverlap(p1, p2);
@@ -47,9 +61,10 @@ export class BoundarySystem {
     }
 
     private static checkOverlap(p1: TectonicPlate, p2: TectonicPlate): { rings: Coordinate[][], center: Coordinate } | null {
-        // Convert to format
-        const coords1 = p1.polygons.map(p => this.polyToRing(p));
-        const coords2 = p2.polygons.map(p => this.polyToRing(p));
+        // Convert to format AND Round Coordinates to avoid floating point 'dust'
+        // Precision 4 = ~11 meters. Enough for tectonics, coarse enough to snap tiny gaps.
+        const coords1 = p1.polygons.map(p => this.polyToRing(p).map(pt => [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))]));
+        const coords2 = p2.polygons.map(p => this.polyToRing(p).map(pt => [Number(pt[0].toFixed(4)), Number(pt[1].toFixed(4))]));
 
         try {
             const intersection = polygonClipping.intersection(coords1 as any, coords2 as any);
@@ -69,16 +84,14 @@ export class BoundarySystem {
                     }
                     area = Math.abs(area / 2);
                     
-                    // Threshold: 0.005 deg^2 (approx 50km^2) 
-                    // INCREASED from 0.001 to more aggressively filter ghost overlaps during divergence
-                    if (area < 0.005) return;
+                    // Threshold: 0.2 deg^2 (approx 2500 km^2)
+                    if (area < 0.2) return;
 
                     rings.push(ring.map(pt => [pt[0], pt[1]] as Coordinate));
                 }));
                 
-                // Limit to top 5 largest rings to prevent performance explosion on fragmentation
+                // Limit to top 5 largest rings
                 if (rings.length > 5) {
-                    // Sort by complexity/length estimation as proxy for importance
                     rings.sort((a,b) => b.length - a.length);
                     rings = rings.slice(0, 5);
                 }
@@ -167,6 +180,29 @@ export class BoundarySystem {
         if (closingSpeed < -THRESHOLD) return { type: 'divergent', velocity: Math.abs(closingSpeed) };
 
         return { type: 'transform', velocity: speed };
+    }
+
+    // Quick velocity check WITHOUT requiring intersection geometry
+    // Used to pre-filter diverging plates before expensive polygon clipping
+    private static quickVelocityCheck(p1: TectonicPlate, p2: TectonicPlate): 'converging' | 'diverging' | 'neutral' {
+        // Use plate centers as proxy for boundary point
+        const midLon = (p1.center[0] + p2.center[0]) / 2;
+        const midLat = (p1.center[1] + p2.center[1]) / 2;
+        const midPt: Coordinate = [midLon, midLat];
+
+        const v1 = this.calculatePlateVelocityAt(p1, midPt);
+        const v2 = this.calculatePlateVelocityAt(p2, midPt);
+        const vRel = subtractVectors(v1, v2);
+
+        const pos1 = latLonToVector(p1.center);
+        const pos2 = latLonToVector(p2.center);
+        const p1p2 = normalize(subtractVectors(pos2, pos1));
+
+        const closingSpeed = dot(vRel, p1p2);
+
+        if (closingSpeed > 0.0005) return 'converging';
+        if (closingSpeed < -0.0005) return 'diverging';
+        return 'neutral';
     }
 
     private static calculatePlateVelocityAt(plate: TectonicPlate, pt: Coordinate): { x: number, y: number, z: number } {

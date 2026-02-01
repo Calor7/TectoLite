@@ -11,7 +11,7 @@ import {
     drawIslandIcon
 } from './featureIcons';
 import { MotionGizmo } from './MotionGizmo';
-import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion } from '../utils/sphericalMath';
+import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, distance } from '../utils/sphericalMath';
 
 export class CanvasManager {
     private canvas: HTMLCanvasElement;
@@ -22,6 +22,7 @@ export class CanvasManager {
     // Drag state
     private isDragging = false;
     private lastMousePos: Point = { x: 0, y: 0 };
+    private currentMouseGeo: Coordinate | null = null; // Track current mouse for previews
     private interactionMode: 'pan' | 'modify_velocity' | 'drag_target' | 'none' = 'none';
     private dragStartGeo: Coordinate | null = null;
     private ghostPlateId: string | null = null;
@@ -722,6 +723,11 @@ export class CanvasManager {
         const state = this.getState(); // Ensure state is available
         const geoPos = this.getGeoFromMouse(e);
         const mousePos = this.getMousePos(e);
+        this.currentMouseGeo = geoPos; // Store for previews
+
+        if (state.activeTool === 'draw' && this.isDrawing) {
+            this.render(); // Trigger render for dynamic distance preview
+        }
 
         if (this.isBoxSelecting) {
             this.selectionBoxEnd = mousePos;
@@ -1337,6 +1343,29 @@ export class CanvasManager {
             this.ctx.setLineDash([5, 5]);
             this.ctx.stroke();
             this.ctx.setLineDash([]);
+
+            // Draw distances for established segments
+            for (let i = 0; i < this.currentPolygon.length - 1; i++) {
+                this.drawDistanceLabel(this.currentPolygon[i], this.currentPolygon[i+1]);
+            }
+
+            // Draw preview line + distance to cursor
+            if (this.currentMouseGeo) {
+                const lastPoint = this.currentPolygon[this.currentPolygon.length - 1];
+                
+                this.ctx.beginPath();
+                path({
+                    type: 'LineString',
+                    coordinates: [lastPoint, this.currentMouseGeo]
+                } as any);
+                this.ctx.strokeStyle = '#ffff00'; // Yellow for preview
+                this.ctx.lineWidth = 1;
+                this.ctx.setLineDash([2, 4]);
+                this.ctx.stroke();
+                this.ctx.setLineDash([]);
+
+                this.drawDistanceLabel(lastPoint, this.currentMouseGeo, '#ffff00');
+            }
         }
 
         if (state.activeTool === 'edit') {
@@ -2204,6 +2233,41 @@ export class CanvasManager {
     public destroy(): void {
         this.stopRenderLoop();
         window.removeEventListener('resize', () => this.resizeCanvas());
+    }
+
+    private drawDistanceLabel(p1: Coordinate, p2: Coordinate, color: string = '#ffffff'): void {
+        const rad = distance(p1, p2);
+        const km = rad * 6371;
+        
+        // Midpoint for label
+        // Simple linear avg is ok for short segments, but use slerp/great circle mid for accuracy?
+        // Let's use simple avg of projected points to ensure screen placement is correct
+        const proj1 = this.projectionManager.project(p1);
+        const proj2 = this.projectionManager.project(p2);
+        
+        if (!proj1 || !proj2) return; // Clipped
+
+        const mx = (proj1[0] + proj2[0]) / 2;
+        const my = (proj1[1] + proj2[1]) / 2;
+
+        let label = '';
+        if (km < 1000) {
+            label = `${Math.round(km)} km`;
+        } else {
+            label = `${(km / 1000).toFixed(1)}k km`; // 1.2k km
+        }
+
+        this.ctx.font = '11px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        
+        // Shadow/Stroke for readability
+        this.ctx.lineWidth = 3;
+        this.ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+        this.ctx.strokeText(label, mx, my);
+        
+        this.ctx.fillStyle = color;
+        this.ctx.fillText(label, mx, my);
     }
 
     private drawEditHighlights() {
