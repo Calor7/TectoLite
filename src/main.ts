@@ -563,6 +563,11 @@ class TectoLiteApp {
                     <span class="tool-label">Paint</span>
                     <span class="info-icon" data-tooltip="Paint on plates (Hotkey: P)">(i)</span>
                   </button>
+                  <button class="tool-btn" data-tool="mesh_edit" style="flex:1;">
+                    <span class="tool-icon">🔺</span>
+                    <span class="tool-label">Mesh</span>
+                    <span class="info-icon" data-tooltip="Edit elevation mesh vertices (Hotkey: M)">(i)</span>
+                  </button>
               </div>
             </div>
             
@@ -2200,6 +2205,7 @@ class TectoLiteApp {
                 case 'l': this.setActiveTool('link'); break;
                 case 't': this.setActiveTool('flowline'); break;
                 case 'p': this.setActiveTool('paint'); break;
+                case 'm': this.setActiveTool('mesh_edit'); break;
                 case 'enter':
                     // Apply poly fill if in poly fill mode
                     this.canvasManager?.applyPaintPolyFill();
@@ -3901,6 +3907,71 @@ class TectoLiteApp {
                 });
 
                 return;
+            }
+        }
+
+        // Check for Mesh Vertex Selection
+        if (this.state.world.selectedVertexPlateId && this.state.world.selectedVertexId) {
+            const plateId = this.state.world.selectedVertexPlateId;
+            const vertexId = this.state.world.selectedVertexId;
+            
+            const plate = this.state.world.plates.find(p => p.id === plateId);
+            if (plate && plate.crustMesh) {
+                const vertex = plate.crustMesh.find(v => v.id === vertexId);
+                
+                if (vertex) {
+                    content.innerHTML = `
+                        <h3 class="panel-section-title">Mesh Vertex</h3>
+                        
+                        <div class="property-group">
+                            <label class="property-label">Vertex ID</label>
+                            <span class="property-value">${vertex.id.substring(0,8)}</span>
+                        </div>
+
+                        <div class="property-group">
+                            <label class="property-label">Position (Lon, Lat)</label>
+                            <span class="property-value">${vertex.pos[0].toFixed(2)}°, ${vertex.pos[1].toFixed(2)}°</span>
+                        </div>
+
+                        <div class="property-group">
+                            <label class="property-label">On Plate</label>
+                            <span class="property-value">${plate.name}</span>
+                        </div>
+
+                        <div class="property-group">
+                            <label class="property-label">Elevation (m)</label>
+                            <input type="number" id="prop-vertex-elevation" class="property-input" value="${Math.round(vertex.elevation)}" step="100">
+                        </div>
+
+                        <div class="property-group">
+                            <label class="property-label">Sediment Thickness (m)</label>
+                            <span class="property-value">${Math.round(vertex.sediment)}</span>
+                        </div>
+
+                        <div class="property-group" style="margin-top:20px;">
+                            <button id="btn-deselect-vertex" class="btn btn-secondary" style="width:100%">Deselect</button>
+                        </div>
+                    `;
+
+                    // Bind elevation edit event
+                    document.getElementById('prop-vertex-elevation')?.addEventListener('change', (e) => {
+                        const val = parseFloat((e.target as HTMLInputElement).value);
+                        if (!isNaN(val)) {
+                            vertex.elevation = val;
+                            this.canvasManager?.render();
+                        }
+                    });
+
+                    // Bind deselect button
+                    document.getElementById('btn-deselect-vertex')?.addEventListener('click', () => {
+                        this.state.world.selectedVertexPlateId = null;
+                        this.state.world.selectedVertexId = null;
+                        this.updateUI();
+                        this.canvasManager?.render();
+                    });
+
+                    return;
+                }
             }
         }
 

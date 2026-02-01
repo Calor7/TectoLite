@@ -128,8 +128,8 @@ export class SimulationEngine {
             };
             const postAutomationState = this.geologicalAutomation.update(tempState);
             
-            // Phase 5: Elevation System
-            const deltaT = Math.abs(time - state.world.currentTime);
+            // Phase 5: Elevation System (use signed deltaT to detect direction)
+            const deltaT = time - state.world.currentTime;
             const finalState = this.elevationSystem.update(postAutomationState, deltaT);
 
             return finalState;

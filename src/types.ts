@@ -161,6 +161,7 @@ export interface TectonicPlate {
 
   // Elevation system
   crustMesh?: CrustVertex[];
+  elevationSimulatedTime?: number; // Last time elevation was simulated (for timeline scrubbing)
 
   visible: boolean;
   locked: boolean;

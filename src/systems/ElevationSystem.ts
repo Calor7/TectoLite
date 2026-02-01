@@ -13,37 +13,105 @@ export class ElevationSystem {
     
     /**
      * Main update loop - runs each simulation tick
+     * Handles both forward simulation and backward timeline scrubbing
      */
     public update(state: AppState, deltaT: number): AppState {
         if (!state.world.globalOptions.enableElevationSimulation) {
             return state;
         }
         
+        const currentTime = state.world.currentTime;
         let newState = { ...state };
         
         // Step 1: Initialize meshes for plates without them
         newState.world.plates = newState.world.plates.map(plate => {
             if (plate.visible && (!plate.crustMesh || plate.crustMesh.length === 0)) {
                 const resolution = state.world.globalOptions.meshResolution || 150;
-                return this.initializePlateMesh(plate, resolution);
+                const initializedPlate = this.initializePlateMesh(plate, resolution);
+                return {
+                    ...initializedPlate,
+                    elevationSimulatedTime: plate.birthTime // Start from birth
+                };
             }
             return plate;
         });
         
-        // Step 2: Apply uplift at boundaries
-        newState = this.applyUplift(newState, deltaT);
+        // Step 2: Handle timeline scrubbing
+        // If current time is before last simulated time, we need to recalculate from birthTime
+        newState.world.plates = newState.world.plates.map(plate => {
+            if (!plate.crustMesh || plate.crustMesh.length === 0) return plate;
+            
+            const lastSimTime = plate.elevationSimulatedTime ?? plate.birthTime;
+            
+            // If moving backward in time, reset and recalculate to current time
+            if (currentTime < lastSimTime) {
+                // Reset all elevations to zero (birthTime state)
+                const resetMesh = plate.crustMesh.map(v => ({
+                    ...v,
+                    elevation: 0,
+                    sediment: 0
+                }));
+                
+                return {
+                    ...plate,
+                    crustMesh: resetMesh,
+                    elevationSimulatedTime: plate.birthTime
+                };
+            }
+            
+            return plate;
+        });
         
-        // Step 3: Apply erosion
-        newState = this.applyErosion(newState, deltaT);
+        // Step 3: Simulate from last simulated time to current time
+        // When scrubbing backward, this recalculates from birthTime to currentTime
+        // When moving forward, this continues from lastSimulatedTime
+        const timeDiff = currentTime - (newState.world.plates[0]?.elevationSimulatedTime ?? currentTime);
         
-        // Step 4: Apply global decay (0.1% per Ma)
-        newState.world.plates = newState.world.plates.map(plate => ({
-            ...plate,
-            crustMesh: plate.crustMesh?.map(v => ({
-                ...v,
-                elevation: v.elevation * 0.999
-            }))
-        }));
+        if (Math.abs(timeDiff) > 0.01) { // Significant time jump (scrubbing)
+            // Need to simulate the gap - do it in steps for accuracy
+            const simulationSteps = Math.ceil(Math.abs(timeDiff) / 1.0); // 1 Ma per step
+            const stepSize = timeDiff / simulationSteps;
+            
+            for (let step = 0; step < simulationSteps; step++) {
+                const stepDeltaT = stepSize;
+                
+                // Apply uplift
+                if (stepDeltaT > 0) {
+                    newState = this.applyUplift(newState, stepDeltaT);
+                    newState = this.applyErosion(newState, stepDeltaT);
+                    
+                    // Apply decay
+                    newState.world.plates = newState.world.plates.map(plate => ({
+                        ...plate,
+                        crustMesh: plate.crustMesh?.map(v => ({
+                            ...v,
+                            elevation: v.elevation * 0.999
+                        }))
+                    }));
+                }
+            }
+            
+            // Update simulated time
+            newState.world.plates = newState.world.plates.map(plate => ({
+                ...plate,
+                elevationSimulatedTime: currentTime
+            }));
+            
+        } else if (deltaT > 0) {
+            // Normal forward tick - single step
+            newState = this.applyUplift(newState, deltaT);
+            newState = this.applyErosion(newState, deltaT);
+            
+            // Apply global decay
+            newState.world.plates = newState.world.plates.map(plate => ({
+                ...plate,
+                crustMesh: plate.crustMesh?.map(v => ({
+                    ...v,
+                    elevation: v.elevation * 0.999
+                })),
+                elevationSimulatedTime: currentTime
+            }));
+        }
         
         return newState;
     }

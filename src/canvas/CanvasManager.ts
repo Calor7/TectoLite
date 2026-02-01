@@ -598,6 +598,12 @@ export class CanvasManager {
                     }
                     break;
 
+                case 'mesh_edit':
+                    if (geoPos) {
+                        this.handleMeshEditClick(geoPos);
+                    }
+                    break;
+
                 case 'feature':
                     if (geoPos) this.onFeaturePlace(geoPos, state.activeFeatureType);
                     break;
@@ -1301,6 +1307,9 @@ export class CanvasManager {
 
         // Render Elevation Meshes (after plate polygons, overlaid on plates)
         this.renderElevationMesh(state);
+        
+        // Render selected vertex highlight
+        this.renderSelectedVertex(state);
 
         // Draw Mantle Plumes (Global Features)
         if (state.world.mantlePlumes) {
@@ -2590,5 +2599,110 @@ export class CanvasManager {
             return `rgba(${r}, ${g}, ${b}, ${alpha})`;
         }
         return rgbColor;
+    }
+    
+    /**
+     * Handle mesh edit tool click - select nearest vertex
+     */
+    private handleMeshEditClick(geoPos: Coordinate): void {
+        const state = this.getState();
+        let closestVertex: any = null;
+        let closestPlateId: string | null = null;
+        let minDistance = Infinity;
+        const clickThreshold = 0.3; // ~30km at equator
+        
+        // Find nearest vertex across all visible plates
+        for (const plate of state.world.plates) {
+            if (!plate.visible || !plate.crustMesh) continue;
+            
+            // Lifecycle check
+            if (state.world.currentTime < plate.birthTime) continue;
+            if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
+            
+            for (const vertex of plate.crustMesh) {
+                const dist = distance(geoPos, vertex.pos);
+                
+                if (dist < clickThreshold && dist < minDistance) {
+                    minDistance = dist;
+                    closestVertex = vertex;
+                    closestPlateId = plate.id;
+                }
+            }
+        }
+        
+        if (closestVertex && closestPlateId) {
+            // Select the vertex
+            this.setState(state => ({
+                ...state,
+                world: {
+                    ...state.world,
+                    selectedVertexId: closestVertex.id,
+                    selectedVertexPlateId: closestPlateId
+                }
+            }));
+        } else {
+            // Deselect if clicking empty space
+            this.setState(state => ({
+                ...state,
+                world: {
+                    ...state.world,
+                    selectedVertexId: null,
+                    selectedVertexPlateId: null
+                }
+            }));
+        }
+        
+        this.render();
+    }
+    
+    /**
+     * Render selected vertex highlight
+     */
+    private renderSelectedVertex(state: AppState): void {
+        if (!state.world.selectedVertexPlateId || !state.world.selectedVertexId) return;
+        
+        const plate = state.world.plates.find(p => p.id === state.world.selectedVertexPlateId);
+        if (!plate || !plate.crustMesh) return;
+        
+        const vertex = plate.crustMesh.find(v => v.id === state.world.selectedVertexId);
+        if (!vertex) return;
+        
+        const screenPos = this.projectionManager.project(vertex.pos);
+        if (!screenPos) return;
+        
+        // Draw bright cyan highlight with pulsing effect
+        this.ctx.save();
+        
+        // Outer glow
+        this.ctx.beginPath();
+        this.ctx.arc(screenPos[0], screenPos[1], 12, 0, Math.PI * 2);
+        this.ctx.fillStyle = 'rgba(0, 255, 255, 0.3)';
+        this.ctx.fill();
+        
+        // Main circle
+        this.ctx.beginPath();
+        this.ctx.arc(screenPos[0], screenPos[1], 8, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#00ffff';
+        this.ctx.fill();
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.lineWidth = 3;
+        this.ctx.stroke();
+        
+        // Inner dot
+        this.ctx.beginPath();
+        this.ctx.arc(screenPos[0], screenPos[1], 3, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fill();
+        
+        // Label with elevation
+        this.ctx.fillStyle = '#00ffff';
+        this.ctx.strokeStyle = '#000000';
+        this.ctx.lineWidth = 3;
+        this.ctx.font = 'bold 12px sans-serif';
+        const label = `${Math.round(vertex.elevation)}m`;
+        this.ctx.strokeText(label, screenPos[0] + 12, screenPos[1] - 8);
+        this.ctx.fillText(label, screenPos[0] + 12, screenPos[1] - 8);
+        
+        this.ctx.restore();
     }
 }
