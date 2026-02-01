@@ -123,9 +123,37 @@ export function fusePlates(
         ...plate2.features
     ];
 
-    // Calculate new center
+    // Merge paint strokes - convert from each plate's local coords to world, then to fused plate's local coords
+    const sortedPlates = [plate1, plate2].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+    const mergedPaintStrokes = [];
+    
+    // Calculate new center first so we can convert paint to fused plate's local coordinates
     const allPoints = mergedPolygons.flatMap(p => p.points);
     const newCenter = calculateSphericalCentroid(allPoints);
+    
+    for (const plate of sortedPlates) {
+        if (plate.paintStrokes) {
+            for (const stroke of plate.paintStrokes) {
+                // Convert from plate's local coordinates to world coordinates
+                const worldPoints = stroke.points.map(pt => [
+                    plate.center[0] + pt[0],
+                    plate.center[1] + pt[1]
+                ] as Coordinate);
+                
+                // Convert from world coordinates to fused plate's local coordinates
+                const fusedLocalPoints = worldPoints.map(pt => [
+                    pt[0] - newCenter[0],
+                    pt[1] - newCenter[1]
+                ] as Coordinate);
+                
+                mergedPaintStrokes.push({
+                    ...stroke,
+                    points: fusedLocalPoints,
+                    id: generateId()
+                });
+            }
+        }
+    }
 
     // Create initial keyframe for merged plate
     const initialKeyframe: MotionKeyframe = {
@@ -142,6 +170,7 @@ export function fusePlates(
         color: plate1.color,
         polygons: mergedPolygons,
         features: combinedFeatures,
+        paintStrokes: mergedPaintStrokes,
         center: newCenter,
         motion: plate1.motion,
         motionKeyframes: [initialKeyframe],

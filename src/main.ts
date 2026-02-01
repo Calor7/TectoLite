@@ -273,6 +273,9 @@ class TectoLiteApp {
                         <label class="view-dropdown-item">
                              <input type="checkbox" id="check-future-features"> Show Future/Past <span class="info-icon" data-tooltip="Show features not yet born">(i)</span>
                         </label>
+                        <label class="view-dropdown-item">
+                             <input type="checkbox" id="check-show-paint"> Show Paint <span class="info-icon" data-tooltip="Show brush strokes on plates">(i)</span>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -394,6 +397,11 @@ class TectoLiteApp {
                     <span class="tool-label">Flowline</span>
                     <span class="info-icon" data-tooltip="Drop a flowline seed to trace motion (Hotkey: T)">(i)</span>
                   </button>
+                  <button class="tool-btn" data-tool="paint" style="flex:1;">
+                    <span class="tool-icon">🖌️</span>
+                    <span class="tool-label">Paint</span>
+                    <span class="info-icon" data-tooltip="Paint on plates (Hotkey: P)">(i)</span>
+                  </button>
               </div>
             </div>
             
@@ -431,6 +439,32 @@ class TectoLiteApp {
                      </div>
                  </div>
 
+                 <div id="paint-controls" style="display: none; flex-direction:column; gap:6px; margin-top: 8px; padding: 8px; border: 1px solid var(--border-default); border-radius: 4px;">
+                     <div style="font-size: 12px; font-weight: bold; color: var(--text-primary);">🖌️ Paint Tool</div>
+                     
+                     <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+                         <button id="paint-mode-brush" class="btn" style="flex:1; background: #3b82f6; color: white; cursor: default;">Brush</button>
+                     </div>
+                     
+                     <div id="paint-brush-options" style="display: flex; flex-direction: column; gap: 6px;">
+                         <div style="display: flex; flex-direction: column; gap: 4px;">
+                             <label style="font-size: 11px; color: var(--text-secondary);">Brush Color:</label>
+                             <input type="color" id="paint-color" value="#ff0000" style="width: 100%; height: 32px; cursor: pointer; border: 1px solid var(--border-default); border-radius: 3px;">
+                         </div>
+                         
+                         <div style="display: flex; flex-direction: column; gap: 4px;">
+                             <label style="font-size: 11px; color: var(--text-secondary);">Brush Size: <span id="paint-size-value" style="font-weight: bold;">5</span>px</label>
+                             <input type="range" id="paint-size" min="1" max="50" value="5" style="width: 100%;">
+                         </div>
+                         
+                         <div style="display: flex; flex-direction: column; gap: 4px;">
+                             <label style="font-size: 11px; color: var(--text-secondary);">Opacity: <span id="paint-opacity-value" style="font-weight: bold;">80</span>%</label>
+                             <input type="range" id="paint-opacity" min="0" max="100" value="80" style="width: 100%;">
+                         </div>
+                     </div>
+                     
+                     <button id="paint-clear-plate" class="btn btn-secondary" style="margin-top: 4px;">Clear Plate Paint</button>
+                 </div>
 
                  <!-- Motion Mode Specifics -->
                  <div style="margin-top: 8px;">
@@ -1082,6 +1116,71 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
+        document.getElementById('check-show-paint')?.addEventListener('change', (e) => {
+            this.state.world.showPaint = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        // Paint tool controls
+        document.getElementById('paint-color')?.addEventListener('change', (e) => {
+            this.canvasManager?.setPaintColor((e.target as HTMLInputElement).value);
+        });
+
+        document.getElementById('paint-size')?.addEventListener('input', (e) => {
+            const size = (e.target as HTMLInputElement).value;
+            document.getElementById('paint-size-value')!.textContent = size;
+            this.canvasManager?.setPaintSize(parseInt(size));
+        });
+
+        document.getElementById('paint-opacity')?.addEventListener('input', (e) => {
+            const opacity = (e.target as HTMLInputElement).value;
+            document.getElementById('paint-opacity-value')!.textContent = opacity;
+            this.canvasManager?.setPaintOpacity(parseInt(opacity) / 100);
+        });
+
+        document.getElementById('paint-mode-brush')?.addEventListener('click', () => {
+            this.canvasManager?.setPaintMode('brush');
+            document.getElementById('paint-brush-options')!.style.display = 'flex';
+            document.getElementById('paint-poly-options')!.style.display = 'none';
+            document.getElementById('paint-mode-brush')!.style.background = '#3b82f6';
+            document.getElementById('paint-mode-brush')!.style.color = 'white';
+            document.getElementById('paint-mode-poly')!.classList.add('btn-secondary');
+            document.getElementById('paint-mode-poly')!.style.background = '';
+            document.getElementById('paint-mode-poly')!.style.color = '';
+        });
+
+        document.getElementById('paint-mode-poly')?.addEventListener('click', () => {
+            this.canvasManager?.setPaintMode('poly_fill');
+            document.getElementById('paint-brush-options')!.style.display = 'none';
+            document.getElementById('paint-poly-options')!.style.display = 'flex';
+            document.getElementById('paint-mode-poly')!.style.background = '#3b82f6';
+            document.getElementById('paint-mode-poly')!.style.color = 'white';
+            document.getElementById('paint-mode-poly')!.classList.remove('btn-secondary');
+            document.getElementById('paint-mode-brush')!.style.background = '';
+            document.getElementById('paint-mode-brush')!.style.color = '';
+        });
+
+        document.getElementById('paint-poly-color')?.addEventListener('change', (e) => {
+            this.canvasManager?.setPolyFillColor((e.target as HTMLInputElement).value);
+        });
+
+        document.getElementById('paint-poly-opacity')?.addEventListener('input', (e) => {
+            const opacity = (e.target as HTMLInputElement).value;
+            document.getElementById('paint-poly-opacity-value')!.textContent = opacity;
+            this.canvasManager?.setPolyFillOpacity(parseInt(opacity) / 100);
+        });
+
+        document.getElementById('paint-clear-plate')?.addEventListener('click', () => {
+            if (this.state.world.selectedPlateId) {
+                const plate = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
+                if (plate) {
+                    plate.paintStrokes = [];
+                    this.pushState();
+                    this.canvasManager?.render();
+                }
+            }
+        });
+
         // Global Options
         // Advanced Toggles
         // Speed Preset Logic
@@ -1453,6 +1552,11 @@ class TectoLiteApp {
                 case 'g': this.setActiveTool('fuse'); break;
                 case 'l': this.setActiveTool('link'); break;
                 case 't': this.setActiveTool('flowline'); break;
+                case 'p': this.setActiveTool('paint'); break;
+                case 'enter':
+                    // Apply poly fill if in poly fill mode
+                    this.canvasManager?.applyPaintPolyFill();
+                    break;
                 case 'escape':
                     this.canvasManager?.cancelDrawing();
                     break;
@@ -2020,6 +2124,7 @@ class TectoLiteApp {
         (document.getElementById('check-euler-poles') as HTMLInputElement).checked = w.showEulerPoles;
         (document.getElementById('check-features') as HTMLInputElement).checked = w.showFeatures;
         (document.getElementById('check-future-features') as HTMLInputElement).checked = w.showFutureFeatures;
+        (document.getElementById('check-show-paint') as HTMLInputElement).checked = w.showPaint;
 
         // Global Options
         const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
@@ -2082,6 +2187,11 @@ class TectoLiteApp {
             featureSelector.style.display = tool === 'feature' ? 'block' : 'none';
         }
 
+        const paintControls = document.getElementById('paint-controls');
+        if (paintControls) {
+            paintControls.style.display = tool === 'paint' ? 'flex' : 'none';
+        }
+
         const editControls = document.getElementById('edit-controls');
         if (editControls && tool !== 'edit') {
             editControls.style.display = 'none';
@@ -2117,6 +2227,12 @@ class TectoLiteApp {
                 break;
             case 'link':
                 hintText = "Select first plate to link.";
+                break;
+            case 'paint':
+                hintText = "Select a plate, then draw on it with the brush. Adjust size and color in Tool Options.";
+                break;
+            case 'flowline':
+                hintText = "Click on a plate to place a flowline seed.";
                 break;
         }
 

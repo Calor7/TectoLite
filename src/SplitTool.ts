@@ -322,6 +322,45 @@ export function splitPlate(
         }
     }
 
+    // Assign Paint Strokes based on point-in-polygon
+    const leftPaintStrokes = [];
+    const rightPaintStrokes = [];
+
+    // Calculate the new centers for proper paint coordinate conversion
+    const leftCenter = calculateSphericalCentroid(leftPolygons.flatMap(p => p.points));
+    const rightCenter = calculateSphericalCentroid(rightPolygons.flatMap(p => p.points));
+
+    if (plateToSplit.paintStrokes) {
+        for (const stroke of plateToSplit.paintStrokes) {
+            // Convert paint points from plate-local back to world coordinates
+            const worldPoints = stroke.points.map(pt => [
+                plateToSplit.center[0] + pt[0],
+                plateToSplit.center[1] + pt[1]
+            ] as Coordinate);
+            
+            // Duplicate strokes to BOTH plates completely
+            // Visual clipping will handle hiding the parts that are outside boundary
+            // This prevents "cutting" strokes incorrectly near the boundary
+            
+            if (worldPoints.length >= 2) {
+                // Add to Left Plate
+                const leftLocalPoints = worldPoints.map(pt => [
+                    pt[0] - leftCenter[0],
+                    pt[1] - leftCenter[1]
+                ] as Coordinate);
+                leftPaintStrokes.push({ ...stroke, points: leftLocalPoints, id: generateId() });
+
+                // Add to Right Plate
+                const rightLocalPoints = worldPoints.map(pt => [
+                    pt[0] - rightCenter[0],
+                    pt[1] - rightCenter[1]
+                ] as Coordinate);
+                rightPaintStrokes.push({ ...stroke, points: rightLocalPoints, id: generateId() });
+            }
+        }
+    }
+
+
     // Create two new plates with default motion (0) OR inherited
     const currentTime = state.world.currentTime;
     const newMotion = inheritMomentum ? { ...plateToSplit.motion } : createDefaultMotion();
@@ -349,12 +388,13 @@ export function splitPlate(
         name: `${plateToSplit.name} (A)`,
         polygons: leftPolygons,
         features: leftFeatures,
+        paintStrokes: leftPaintStrokes,
         motion: newMotion,
         motionKeyframes: [leftKeyframe],
         visible: true,
         locked: false,
         color: plateToSplit.color, // Keep original color for A
-        center: calculateSphericalCentroid(leftPolygons.flatMap(p => p.points)),
+        center: leftCenter,
         events: [],
         birthTime: currentTime,
         deathTime: null,
@@ -371,12 +411,13 @@ export function splitPlate(
         name: `${plateToSplit.name} (B)`,
         polygons: rightPolygons,
         features: rightFeatures,
+        paintStrokes: rightPaintStrokes,
         motion: newMotion,
         motionKeyframes: [rightKeyframe],
         visible: true,
         locked: false,
         color: '#D4AF37', // Gold for B
-        center: calculateSphericalCentroid(rightPolygons.flatMap(p => p.points)),
+        center: rightCenter,
         events: [],
         birthTime: currentTime,
         deathTime: null,

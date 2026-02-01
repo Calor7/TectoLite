@@ -1,4 +1,4 @@
-import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary } from '../types';
+import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, PaintStroke, generateId, PaintMode } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
@@ -69,6 +69,21 @@ export class CanvasManager {
     } | null = null;
     // We store the polygons being edited temporarily here
     private editTempPolygons: { plateId: string; polygons: any[] } | null = null;
+
+    // Paint Tool State
+    private isPainting = false;
+    private currentPaintStroke: Coordinate[] = [];
+    private paintMode: PaintMode = 'brush';
+    private paintConfig = {
+        color: '#ff0000',
+        width: 5,
+        opacity: 0.8
+    };
+    private polyFillPoints: Coordinate[] = [];
+    private polyFillConfig = {
+        color: '#ff0000',
+        opacity: 0.8
+    };
 
     constructor(
         canvas: HTMLCanvasElement,
@@ -387,6 +402,24 @@ export class CanvasManager {
             this.splitPoints.pop();
             if (this.onDrawUpdate && state.activeTool === 'split') this.onDrawUpdate(this.splitPoints.length);
             this.render();
+        } else if (state.activeTool === 'paint') {
+            // Paint tool undo
+            if (this.paintMode === 'brush' && this.currentPaintStroke.length > 0) {
+                // Undo last brush point (while painting)
+                this.currentPaintStroke.pop();
+                this.render();
+            } else if (this.paintMode === 'poly_fill' && this.polyFillPoints.length > 0) {
+                // Undo last placed polygon point
+                this.polyFillPoints.pop();
+                this.render();
+            } else if (this.paintMode === 'brush' && this.isPainting === false && state.world.selectedPlateId) {
+                // Undo last committed brush stroke
+                const plate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
+                if (plate && plate.paintStrokes && plate.paintStrokes.length > 0) {
+                    plate.paintStrokes.pop();
+                    this.render();
+                }
+            }
         }
     }
 
@@ -664,6 +697,19 @@ export class CanvasManager {
                         this.onSelect(linkHit.plateId, null);
                     }
                     break;
+
+                case 'paint':
+                    if (state.world.selectedPlateId && geoPos) {
+                        if (this.paintMode === 'brush') {
+                            this.isPainting = true;
+                            this.currentPaintStroke = [geoPos];
+                        } else {
+                            // Poly fill mode
+                            this.polyFillPoints.push(geoPos);
+                        }
+                        this.render();
+                    }
+                    break;
             }
         }
     }
@@ -764,6 +810,21 @@ export class CanvasManager {
 
             this.lastMousePos = { x: e.clientX, y: e.clientY };
             this.render();
+        } else if (this.isPainting && state.activeTool === 'paint' && geoPos) {
+            this.currentPaintStroke.push(geoPos);
+            this.render();
+        } else if (state.activeTool === 'paint' && this.paintMode === 'poly_fill' && !this.isPainting && geoPos) {
+            // Show preview of poly fill while moving mouse
+            this.render();
+            if (this.polyFillPoints.length > 0) {
+                this.drawPolyFillPreview([...this.polyFillPoints, geoPos]);
+            }
+        } else if (state.activeTool === 'paint' && this.paintMode === 'brush' && !this.isPainting && geoPos) {
+            // Show brush preview
+            this.render();
+            if (state.world.selectedPlateId) {
+                this.drawBrushPreview(geoPos);
+            }
         } else if (this.isDrawing && geoPos) {
             this.render();
             const projPos = this.projectionManager.project(geoPos);
@@ -867,6 +928,14 @@ export class CanvasManager {
         this.canvas.style.cursor = 'default';
         this.dragStartGeo = null;
 
+        // Handle paint tool mouse up
+        if (this.isPainting && state.activeTool === 'paint') {
+            this.isPainting = false;
+            this.commitPaintStroke();
+            this.render();
+            return;
+        }
+
         if (!this.isFineTuning) {
             this.ghostPlateId = null;
             this.ghostRotation = null;
@@ -900,6 +969,8 @@ export class CanvasManager {
             this.splitPreviewActive = false;
             this.onSplitPreviewChange(false);
             this.render();
+        } else if (state.activeTool === 'paint' && this.paintMode === 'poly_fill' && this.polyFillPoints.length >= 3) {
+            this.applyPolyFillPaint();
         } else if (state.activeTool === 'select') {
             // Handle Feature Multi-Select via Double-Click
             // Use the currently selected plate (don't require direct hit on feature)
@@ -1142,6 +1213,11 @@ export class CanvasManager {
                 }
             }
 
+            // Draw Paint Strokes (if visible)
+            if (state.world.showPaint && plate.paintStrokes && plate.paintStrokes.length > 0) {
+                this.renderPaintStrokes(plate.paintStrokes, plate);
+            }
+
             // Euler Pole Visualization
             const showGlobalPoles = state.world.showEulerPoles;
             const gizmoActive = isSelected && state.activeTool === 'select';
@@ -1223,6 +1299,11 @@ export class CanvasManager {
             this.ctx.fillRect(x, y, w, h);
             this.ctx.strokeRect(x, y, w, h);
             this.ctx.restore();
+        }
+
+        // Draw poly fill gizmo on top at the very end (so it's always visible)
+        if (state.activeTool === 'paint' && this.paintMode === 'poly_fill' && this.polyFillPoints.length > 0) {
+            this.drawPolyFillGizmo();
         }
     }
 
@@ -1564,6 +1645,385 @@ export class CanvasManager {
             this.ctx.stroke();
             this.ctx.setLineDash([]);
         }
+    }
+
+    // Paint Tool Methods
+    public setPaintColor(color: string): void {
+        this.paintConfig.color = color;
+    }
+
+    public setPaintSize(size: number): void {
+        this.paintConfig.width = size;
+    }
+
+    public setPaintOpacity(opacity: number): void {
+        this.paintConfig.opacity = Math.max(0, Math.min(1, opacity));
+    }
+
+    public setPaintMode(mode: PaintMode): void {
+        this.paintMode = mode;
+        this.currentPaintStroke = [];
+        this.polyFillPoints = [];
+    }
+
+    public setPolyFillColor(color: string): void {
+        this.polyFillConfig.color = color;
+    }
+
+    public setPolyFillOpacity(opacity: number): void {
+        this.polyFillConfig.opacity = Math.max(0, Math.min(1, opacity));
+    }
+
+    public applyPaintPolyFill(): void {
+        const state = this.getState();
+        if (state.activeTool === 'paint' && this.paintMode === 'poly_fill' && this.polyFillPoints.length >= 3) {
+            this.applyPolyFillPaint();
+        }
+    }
+
+    /**
+     * Convert world coordinates to plate-local coordinates.
+     * This allows paint to move with the plate as it rotates.
+     */
+    private worldToPlateLocal(worldCoord: Coordinate, plateCenter: Coordinate): Coordinate {
+        // Store offset relative to plate center
+        // This preserves paint positioning as plate rotates
+        const offsetLon = worldCoord[0] - plateCenter[0];
+        const offsetLat = worldCoord[1] - plateCenter[1];
+        
+        return [offsetLon, offsetLat];
+    }
+
+    /**
+     * Convert plate-local coordinates back to world coordinates.
+     * This reconstructs paint positions when rendering.
+     */
+    private plateLocalToWorld(localCoord: Coordinate, plateCenter: Coordinate): Coordinate {
+        return [
+            plateCenter[0] + localCoord[0],
+            plateCenter[1] + localCoord[1]
+        ];
+    }
+
+    private commitPaintStroke(): void {
+        const state = this.getState();
+        if (!state.world.selectedPlateId || this.currentPaintStroke.length < 2) {
+            this.currentPaintStroke = [];
+            return;
+        }
+
+        const plate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
+        if (!plate) return;
+
+        // Store all painted points (no filtering) - paint will be clipped at render time to plate boundaries
+        // This allows painting across plate edges while only showing paint inside the plate
+        const localPoints = this.currentPaintStroke.map(p => this.worldToPlateLocal(p, plate.center));
+
+        const stroke: PaintStroke = {
+            id: generateId(),
+            color: this.paintConfig.color,
+            width: this.paintConfig.width,
+            opacity: this.paintConfig.opacity,
+            points: localPoints,
+            timestamp: Date.now()
+        };
+
+        if (!plate.paintStrokes) {
+            plate.paintStrokes = [];
+        }
+        plate.paintStrokes.push(stroke);
+        this.currentPaintStroke = [];
+    }
+
+    private renderPaintStrokes(strokes: PaintStroke[], plate: any): void {
+        // Enable clipping to plate boundaries so paint only appears within the plate
+        // Use d3-geo path generator for accurate clipping of curved plate boundaries
+        this.ctx.save();
+        
+        // Create clipping region from projected plate polygons
+        this.ctx.beginPath();
+        const pathGen = this.projectionManager.getPathGenerator();
+        
+        for (const poly of plate.polygons) {
+            const geojson = toGeoJSON(poly);
+
+            // Fix Winding: If area > Hemisphere, invert winding
+            // This ensures we clip to the plate INTERIOR, not the rest of the world
+            if (geoArea(geojson) > 2 * Math.PI) {
+                geojson.geometry.coordinates[0].reverse();
+            }
+
+            pathGen(geojson);
+        }
+        
+        this.ctx.clip();
+
+        for (const stroke of strokes) {
+            if (stroke.points.length < 2) continue;
+
+            this.ctx.globalAlpha = stroke.opacity;
+
+            if (stroke.isFilled) {
+                // Render filled polygon
+                this.ctx.fillStyle = stroke.color;
+                this.ctx.beginPath();
+                let isFirstPoint = true;
+
+                for (const point of stroke.points) {
+                    // Convert from plate-local to world coordinates
+                    const worldCoord = this.plateLocalToWorld(point, plate.center);
+                    const proj = this.projectionManager.project(worldCoord);
+                    if (!proj) continue;
+
+                    if (isFirstPoint) {
+                        this.ctx.moveTo(proj[0], proj[1]);
+                        isFirstPoint = false;
+                    } else {
+                        this.ctx.lineTo(proj[0], proj[1]);
+                    }
+                }
+
+                this.ctx.closePath();
+                this.ctx.fill();
+            } else {
+                // Render line stroke
+                this.ctx.strokeStyle = stroke.color;
+                this.ctx.lineWidth = stroke.width;
+                this.ctx.lineCap = 'round';
+                this.ctx.lineJoin = 'round';
+
+                this.ctx.beginPath();
+                let isFirstPoint = true;
+
+                for (const point of stroke.points) {
+                    // Convert from plate-local to world coordinates
+                    const worldCoord = this.plateLocalToWorld(point, plate.center);
+                    const proj = this.projectionManager.project(worldCoord);
+                    if (!proj) continue; // Skip points on globe backside
+
+                    if (isFirstPoint) {
+                        this.ctx.moveTo(proj[0], proj[1]);
+                        isFirstPoint = false;
+                    } else {
+                        this.ctx.lineTo(proj[0], proj[1]);
+                    }
+                }
+
+                this.ctx.stroke();
+            }
+        }
+        this.ctx.globalAlpha = 1.0;
+        this.ctx.restore();
+    }
+
+    private applyPolyFillPaint(): void {
+        const state = this.getState();
+        if (!state.world.selectedPlateId || this.polyFillPoints.length < 3) {
+            return;
+        }
+
+        const plate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
+        if (!plate) return;
+
+        // Convert to plate-local coordinates so paint moves with the plate
+        const localPoints = this.polyFillPoints.map(p => this.worldToPlateLocal(p, plate.center));
+
+        // Create a filled polygon stroke
+        const stroke: PaintStroke = {
+            id: generateId(),
+            color: this.polyFillConfig.color,
+            width: 0, // 0 width indicates fill-only
+            opacity: this.polyFillConfig.opacity,
+            points: localPoints,
+            timestamp: Date.now(),
+            isFilled: true  // Mark as filled polygon
+        };
+
+        if (!plate.paintStrokes) {
+            plate.paintStrokes = [];
+        }
+        plate.paintStrokes.push(stroke);
+        this.polyFillPoints = [];
+        this.render();
+    }
+
+    private drawBrushPreview(position: Coordinate): void {
+        const proj = this.projectionManager.project(position);
+        if (!proj) return;
+
+        // Draw solid filled circle gizmo showing exact brush size and color
+        this.ctx.fillStyle = this.paintConfig.color;
+        this.ctx.globalAlpha = this.paintConfig.opacity * 0.6;
+        this.ctx.beginPath();
+        this.ctx.arc(proj[0], proj[1], this.paintConfig.width / 2, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Draw outline to make it more visible
+        this.ctx.strokeStyle = 'white';
+        this.ctx.lineWidth = 1;
+        this.ctx.globalAlpha = 1.0;
+        this.ctx.stroke();
+    }
+
+    private drawPolyFillPreview(points: Coordinate[]): void {
+        if (points.length < 1) return;
+
+        // Project all points
+        const projectedPoints: ([number, number] | null)[] = points.map(p => this.projectionManager.project(p));
+        
+        // Draw connection lines between placed points
+        if (this.polyFillPoints.length >= 2) {
+            this.ctx.strokeStyle = this.polyFillConfig.color;
+            this.ctx.lineWidth = 2;
+            this.ctx.globalAlpha = this.polyFillConfig.opacity * 0.6;
+            this.ctx.setLineDash([4, 4]);
+            this.ctx.beginPath();
+
+            let isFirstPoint = true;
+            for (let i = 0; i < this.polyFillPoints.length; i++) {
+                const proj = projectedPoints[i];
+                if (!proj) continue;
+
+                if (isFirstPoint) {
+                    this.ctx.moveTo(proj[0], proj[1]);
+                    isFirstPoint = false;
+                } else {
+                    this.ctx.lineTo(proj[0], proj[1]);
+                }
+            }
+
+            this.ctx.stroke();
+            this.ctx.setLineDash([]);
+        }
+
+        // Draw preview line from last placed point to mouse cursor (white dashed)
+        if (this.polyFillPoints.length > 0) {
+            const lastProj = projectedPoints[this.polyFillPoints.length - 1];
+            const cursorProj = projectedPoints[projectedPoints.length - 1];
+            
+            if (lastProj && cursorProj && (lastProj !== cursorProj)) {
+                this.ctx.strokeStyle = 'white';
+                this.ctx.lineWidth = 2;
+                this.ctx.globalAlpha = 0.7;
+                this.ctx.setLineDash([2, 2]);
+                this.ctx.beginPath();
+                this.ctx.moveTo(lastProj[0], lastProj[1]);
+                this.ctx.lineTo(cursorProj[0], cursorProj[1]);
+                this.ctx.stroke();
+                this.ctx.setLineDash([]);
+            }
+        }
+
+        this.ctx.globalAlpha = 1.0;
+
+        // Draw placed vertices as large, highly visible gizmo dots
+        for (let i = 0; i < this.polyFillPoints.length; i++) {
+            const proj = projectedPoints[i];
+            if (!proj) continue;
+            
+            // Large filled circle in poly fill color (fully opaque)
+            this.ctx.fillStyle = this.polyFillConfig.color;
+            this.ctx.globalAlpha = 1.0;
+            this.ctx.beginPath();
+            this.ctx.arc(proj[0], proj[1], 10, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Thick white outline for maximum visibility
+            this.ctx.strokeStyle = 'white';
+            this.ctx.lineWidth = 3;
+            this.ctx.stroke();
+            
+            // Inner highlight circle for depth
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            this.ctx.lineWidth = 1;
+            this.ctx.beginPath();
+            this.ctx.arc(proj[0], proj[1], 7, 0, Math.PI * 2);
+            this.ctx.stroke();
+        }
+
+        // Draw cursor/next point preview as a very large, prominent gizmo
+        if (this.polyFillPoints.length > 0 && projectedPoints.length > this.polyFillPoints.length) {
+            const cursorProj = projectedPoints[projectedPoints.length - 1];
+            if (cursorProj) {
+                // Very large circle showing next point (fully opaque)
+                this.ctx.fillStyle = this.polyFillConfig.color;
+                this.ctx.globalAlpha = 0.9;
+                this.ctx.beginPath();
+                this.ctx.arc(cursorProj[0], cursorProj[1], 14, 0, Math.PI * 2);
+                this.ctx.fill();
+                
+                // Thick white dashed outline for visibility
+                this.ctx.strokeStyle = 'white';
+                this.ctx.lineWidth = 2.5;
+                this.ctx.globalAlpha = 1.0;
+                this.ctx.setLineDash([4, 3]);
+                this.ctx.stroke();
+                this.ctx.setLineDash([]);
+                
+                // Center dot for reference
+                this.ctx.fillStyle = 'white';
+                this.ctx.globalAlpha = 0.7;
+                this.ctx.beginPath();
+                this.ctx.arc(cursorProj[0], cursorProj[1], 3, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+        }
+    }
+
+    private drawPolyFillGizmo(): void {
+        // Draw the placed poly fill points as prominent gizmos on top of everything
+        // This is called at the end of render() to ensure they're always visible
+        const projectedPoints = this.polyFillPoints.map(p => this.projectionManager.project(p));
+
+        // Draw connection lines between placed points
+        if (this.polyFillPoints.length >= 2) {
+            this.ctx.strokeStyle = this.polyFillConfig.color;
+            this.ctx.lineWidth = 2;
+            this.ctx.globalAlpha = this.polyFillConfig.opacity * 0.6;
+            this.ctx.setLineDash([4, 4]);
+            this.ctx.beginPath();
+
+            let isFirstPoint = true;
+            for (const proj of projectedPoints) {
+                if (!proj) continue;
+
+                if (isFirstPoint) {
+                    this.ctx.moveTo(proj[0], proj[1]);
+                    isFirstPoint = false;
+                } else {
+                    this.ctx.lineTo(proj[0], proj[1]);
+                }
+            }
+
+            this.ctx.stroke();
+            this.ctx.setLineDash([]);
+        }
+
+        // Draw placed vertices as large, highly visible gizmo dots
+        for (const proj of projectedPoints) {
+            if (!proj) continue;
+            
+            // Large filled circle in poly fill color (fully opaque)
+            this.ctx.fillStyle = this.polyFillConfig.color;
+            this.ctx.globalAlpha = 1.0;
+            this.ctx.beginPath();
+            this.ctx.arc(proj[0], proj[1], 10, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Thick white outline for maximum visibility
+            this.ctx.strokeStyle = 'white';
+            this.ctx.lineWidth = 3;
+            this.ctx.stroke();
+            
+            // Inner highlight circle for depth
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            this.ctx.lineWidth = 1;
+            this.ctx.beginPath();
+            this.ctx.arc(proj[0], proj[1], 7, 0, Math.PI * 2);
+            this.ctx.stroke();
+        }
+
+        this.ctx.globalAlpha = 1.0;
     }
 
     public startRenderLoop(): void {

@@ -23,6 +23,16 @@ export interface Polygon {
 
 export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'flowline' | 'seafloor';
 
+export interface PaintStroke {
+  id: string;
+  color: string;        // Hex color (e.g., "#ff0000")
+  width: number;        // Brush width in pixels (0 for filled polygons)
+  opacity: number;      // 0.0 to 1.0
+  points: Coordinate[]; // Array of [lon, lat] positions
+  timestamp: number;    // For undo/redo ordering
+  isFilled?: boolean;   // True for polygon fill, false/undefined for brush strokes
+}
+
 export interface Feature {
   id: string;
   type: FeatureType;
@@ -106,6 +116,9 @@ export interface TectonicPlate {
   motion: PlateMotion;
   events: PlateEvent[];
 
+  // Paint system
+  paintStrokes?: PaintStroke[];
+
   visible: boolean;
   locked: boolean;
 }
@@ -124,6 +137,7 @@ export interface WorldState {
   showEulerPoles: boolean;
   showFeatures: boolean;
   showFutureFeatures: boolean;  // Show features outside current timeline (future/past)
+  showPaint: boolean;  // Show paint strokes
   globalOptions: {
     // Simulation
 
@@ -156,7 +170,9 @@ export interface Boundary {
   velocity?: number; // Relative velocity magnitude
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit' | 'paint';
+
+export type PaintMode = 'brush' | 'poly_fill';
 
 export type OverlayMode = 'fixed' | 'projection';
 
@@ -218,6 +234,7 @@ export function createDefaultWorldState(): WorldState {
     showEulerPoles: false,
     showFeatures: true,
     showFutureFeatures: false,  // Hide future/past features by default
+    showPaint: true,             // Show paint by default
     globalOptions: {
       planetRadius: 6371, // Earth radius in km
       customPlanetRadius: 6371,

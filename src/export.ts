@@ -17,6 +17,7 @@ export interface PNGExportOptions {
     waterMode: 'transparent' | 'color' | 'white';
     plateColorMode: 'native' | 'land';
     showGrid: boolean;
+    includePaint?: boolean;
 }
 
 export function exportToPNG(
@@ -106,6 +107,37 @@ export function exportToPNG(
         // Features
         for (const feature of plate.features) {
             drawFeature(ctx, pm, feature, ratio);
+        }
+
+        // Paint Strokes
+        if (options.includePaint && plate.paintStrokes) {
+            for (const stroke of plate.paintStrokes) {
+                if (stroke.points.length < 2) continue;
+
+                ctx.strokeStyle = stroke.color;
+                ctx.lineWidth = stroke.width * ratio;
+                ctx.globalAlpha = stroke.opacity;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                ctx.beginPath();
+                let isFirstPoint = true;
+
+                for (const point of stroke.points) {
+                    const proj = pm.project(point);
+                    if (!proj) continue;
+
+                    if (isFirstPoint) {
+                        ctx.moveTo(proj[0], proj[1]);
+                        isFirstPoint = false;
+                    } else {
+                        ctx.lineTo(proj[0], proj[1]);
+                    }
+                }
+
+                ctx.stroke();
+                ctx.globalAlpha = 1.0;
+            }
         }
     }
 
@@ -286,6 +318,9 @@ export function showPNGExportDialog(currentProjection: ProjectionType): Promise<
                 <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
                     <input type="checkbox" id="export-grid" checked> Show Grid
                 </label>
+                <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
+                    <input type="checkbox" id="export-include-paint" checked> Include Paint
+                </label>
             </div>
             
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
@@ -316,9 +351,10 @@ export function showPNGExportDialog(currentProjection: ProjectionType): Promise<
             const waterMode = (dialog.querySelector('input[name="water-mode"]:checked') as HTMLInputElement).value as any;
             const plateColorMode = (dialog.querySelector('input[name="plate-color"]:checked') as HTMLInputElement).value as any;
             const showGrid = (dialog.querySelector('#export-grid') as HTMLInputElement).checked;
+            const includePaint = (dialog.querySelector('#export-include-paint') as HTMLInputElement).checked;
 
             cleanup();
-            resolve({ projection, waterMode, plateColorMode, showGrid });
+            resolve({ projection, waterMode, plateColorMode, showGrid, includePaint });
         });
     });
 }
