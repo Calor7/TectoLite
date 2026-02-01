@@ -91,7 +91,7 @@ export class CanvasManager {
         private setState: (updater: (state: AppState) => AppState) => void,
         private onDrawComplete: (points: Coordinate[]) => void,
         private onFeaturePlace: (position: Coordinate, type: FeatureType) => void,
-        private onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[]) => void,
+        private onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[], plumeId?: string | null) => void,
         private onSplitApply: (points: Coordinate[]) => void,
         private onSplitPreviewChange: (active: boolean) => void,
         private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void,
@@ -652,7 +652,11 @@ export class CanvasManager {
                         }
                     } else {
                         // Single click selection (clears previous selection)
-                        this.onSelect(hit?.plateId ?? null, hit?.featureId ?? null);
+                        if (hit && 'plumeId' in hit && hit.plumeId) {
+                            this.onSelect(null, null, [], hit.plumeId);
+                        } else {
+                            this.onSelect(hit?.plateId ?? null, hit?.featureId ?? null);
+                        }
                     }
                     break;
 
@@ -1016,15 +1020,22 @@ export class CanvasManager {
         this.render();
     }
 
-    private hitTest(mousePos: Point): { plateId: string; featureId?: string } | null {
+    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string } | null {
         const state = this.getState();
         // Naive hit test using Project -> Distance for features
-        // For polygons, d3-geo doesn't expose easy "contains" without importing d3-geo
-        // Note: Using d3.geoContains is ideal but requires complex import setup if not using modules perfectly.
-        // Let's rely on visual approximation:
-        // Project polygon vertexes to screen, use pointInPolygon on screen.
-        // This fails if polygon wraps around backside of globe.
-        // But for MVP spherical update, it's okay.
+
+        // 0. Check Plumes (Global features) - highest priority
+        if (state.world.mantlePlumes) {
+            for (const plume of state.world.mantlePlumes) {
+                // if (!plume.active) continue; // Allow selecting inactive plumes
+                const proj = this.projectionManager.project(plume.position);
+                if (proj) {
+                    const dist = Math.hypot(proj[0] - mousePos.x, proj[1] - mousePos.y);
+                    // Plumes are large targets
+                    if (dist < 20) return { plumeId: plume.id };
+                }
+            }
+        }
 
         // Check features first
         for (const plate of state.world.plates) {
@@ -1119,10 +1130,15 @@ export class CanvasManager {
         }
 
         // Draw Plates
-        // Sort plates by zIndex (default to 0 if undefined)
+        // Sort plates by zIndex (default to 0 if undefined) WITH Continental Modifier (+1)
         const sortedPlates = [...state.world.plates].sort((a, b) => {
-            const zA = a.zIndex ?? 0;
-            const zB = b.zIndex ?? 0;
+            let zA = a.zIndex ?? 0;
+            let zB = b.zIndex ?? 0;
+            
+            // Continental plates get visually bumped up by 1 layer relative to oceanic if not manually overridden heavily
+            if (a.crustType === 'continental') zA += 1;
+            if (b.crustType === 'continental') zB += 1;
+            
             return zA - zB;
         });
 
@@ -1226,11 +1242,8 @@ export class CanvasManager {
             }
 
             // Update/render motion gizmo for selected plate
-            if (isSelected && state.activeTool === 'select') {
-                this.motionGizmo.setPlate(plate.id, plate.motion.eulerPole);
-                const radiusKm = state.world.globalOptions.planetRadius || 6371;
-                this.motionGizmo.render(this.ctx, this.projectionManager, plate.center, radiusKm);
-            }
+            // MOVED OUTSIDE LOOP to render on top of all plates
+            // if (isSelected && state.activeTool === 'select') { ... }
 
             // Draw Fine-Tuning Rotation Widget
             if (this.isFineTuning && this.ghostPlateId === plate.id) {
@@ -1241,6 +1254,50 @@ export class CanvasManager {
         // Draw Boundaries
         if (state.world.globalOptions.enableBoundaryVisualization && state.world.boundaries) {
             this.drawBoundaries(state.world.boundaries, path);
+        }
+
+        // Draw Mantle Plumes (Global Features)
+        if (state.world.mantlePlumes) {
+            for (const plume of state.world.mantlePlumes) {
+                const proj = this.projectionManager.project(plume.position);
+                if (proj) {
+                    const isSelected = plume.id === state.world.selectedFeatureId; // Using featureID slot for plumes
+                    
+                    this.ctx.save();
+                    this.ctx.translate(proj[0], proj[1]);
+                    
+                    // Draw Plume Icon (Star/Diamond)
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, 8, 0, Math.PI * 2);
+                    
+                    // Visual state: Inactive = Grey, Active = Magenta
+                    if (plume.active) {
+                        this.ctx.fillStyle = '#ff00aa'; // Magenta/Hot Pink
+                    } else {
+                        this.ctx.fillStyle = '#888888'; // Grey
+                    }
+                    this.ctx.fill();
+                    
+                    this.ctx.strokeStyle = isSelected ? '#ffffff' : (plume.active ? '#550033' : '#333333');
+                    this.ctx.lineWidth = isSelected ? 3 : 2;
+                    this.ctx.stroke();
+                    
+                    // Inner dot
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, 3, 0, Math.PI * 2);
+                    this.ctx.fillStyle = '#ffffff';
+                    this.ctx.fill();
+                    
+                    // Label
+                    if (isSelected) {
+                        this.ctx.fillStyle = 'white';
+                        this.ctx.font = '12px sans-serif';
+                        this.ctx.fillText(plume.active ? 'Plume' : 'Plume (Inactive)', 12, 4);
+                    }
+                    
+                    this.ctx.restore();
+                }
+            }
         }
 
         // Draw Links (if tool active or always?)
@@ -1254,9 +1311,13 @@ export class CanvasManager {
             this.drawFeature(feature, isSelected, isGhosted);
         }
 
-        // Clear gizmo if no plate selected
+        // Render Motion Gizmo (On Top of Plates)
         const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
-        if (!selectedPlate || state.activeTool !== 'select') {
+        if (selectedPlate && state.activeTool === 'select' && selectedPlate.visible) {
+             this.motionGizmo.setPlate(selectedPlate.id, selectedPlate.motion.eulerPole);
+             const radiusKm = state.world.globalOptions.planetRadius || 6371;
+             this.motionGizmo.render(this.ctx, this.projectionManager, selectedPlate.center, radiusKm);
+        } else {
             this.motionGizmo.clear();
         }
 
@@ -2130,6 +2191,13 @@ export class CanvasManager {
         this.ctx.restore();
     }
 
+
+    public getViewportCenter(): Coordinate | null {
+        // Return screen center projected to Lon/Lat
+        const rect = this.canvas.getBoundingClientRect();
+        return this.projectionManager.invert(rect.width / 2, rect.height / 2);
+    }
+    
     public destroy(): void {
         this.stopRenderLoop();
         window.removeEventListener('resize', () => this.resizeCanvas());

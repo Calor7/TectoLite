@@ -14,7 +14,8 @@ import {
     getNextPlateColor,
     Coordinate,
     ProjectionType,
-    MotionKeyframe
+    MotionKeyframe,
+    MantlePlume
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -39,7 +40,7 @@ class TectoLiteApp {
     private activeToolText: string = "INFO LOADING...";
     private fusionFirstPlateId: string | null = null; // Track first plate for fusion
     private activeLinkSourceId: string | null = null; // Track first plate for linking
-    private momentumClipboard: { eulerPole: { position: Coordinate; rate: number } } | null = null; // Clipboard for momentum
+    private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
     private timelineSystem: TimelineSystem | null = null;
 
     constructor() {
@@ -62,7 +63,7 @@ class TectoLiteApp {
             },
             (points) => this.handleDrawComplete(points),
             (pos, type) => this.handleFeaturePlace(pos, type),
-            (plateId, featureId, featureIds) => this.handleSelect(plateId, featureId, featureIds),
+            (plateId, featureId, featureIds, plumeId) => this.handleSelect(plateId, featureId, featureIds, plumeId),
             (points) => this.handleSplitApply(points),
             (active) => this.handleSplitPreviewChange(active),
             (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
@@ -289,12 +290,6 @@ class TectoLiteApp {
                                  <input type="checkbox" id="check-enable-hotspots" ${this.state.world.globalOptions.enableHotspots ? 'checked' : ''}> Hotspot Tracking <span class="info-icon" data-tooltip="Stationary plumes create volcanic trails on moving plates">(i)</span>
                             </label>
                             
-                            <div class="view-dropdown-subitem" style="${this.state.world.globalOptions.enableHotspots ? 'display:flex' : 'display:none'}; align-items:center; gap:8px;">
-                                <span style="font-size:11px;">Spawn every:</span>
-                                <input type="number" id="input-hotspot-rate" value="${this.state.world.globalOptions.hotspotSpawnRate || 1.0}" step="0.1" min="0.1" style="width:50px; font-size:11px; padding:2px;">
-                                <span style="font-size:11px;">Ma</span>
-                            </div>
-                            
                             <label class="view-dropdown-item">
                                  <input type="checkbox" id="check-enable-orogeny" ${this.state.world.globalOptions.enableOrogeny ? 'checked' : ''}> Orogeny Detection <span class="info-icon" data-tooltip="Spawns mountains and trenches at plate collisions based on crust type">(i)</span>
                             </label>
@@ -303,15 +298,6 @@ class TectoLiteApp {
                                 <label class="view-dropdown-item">
                                     <input type="checkbox" id="check-boundary-vis"> Visualize Boundaries <span class="info-icon" data-tooltip="Show Convergent (Red) and Divergent (Blue) lines">(i)</span>
                                 </label>
-                            </div>
-
-                            <div style="margin-top: 8px; border-top: 1px solid var(--border-default); padding-top: 8px;">
-                                <button id="btn-debug-spawn-plume" class="btn btn-secondary" style="width: 100%; font-size: 11px;">
-                                    + Add Test Plume (Center)
-                                </button>
-                                <div style="font-size: 10px; color: var(--text-secondary); margin-top: 4px; text-align: center;">
-                                    Use 'Add Test Plume' to spawn a stationary mantle plume at the center of the viewport for testing.
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -533,6 +519,10 @@ class TectoLiteApp {
                             <input type="number" id="speed-input-deg" class="property-input" step="0.05" style="width:70px;">
                             <span style="font-size:10px; color:var(--text-secondary);">deg/Ma</span>
                         </div>
+                    </div>
+                    <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
+                        <button id="btn-reposition-pole-north" class="btn btn-secondary" style="width:100%; font-size:10px;">Reposition Pole to North</button>
+                        <button id="btn-reposition-pole-south" class="btn btn-secondary" style="width:100%; font-size:10px;">Reposition Pole to South</button>
                     </div>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -1241,7 +1231,7 @@ class TectoLiteApp {
             }
             this.state.world.mantlePlumes.push(newPlume);
             
-            alert(`Created Mantle Plume at [${centerLon.toFixed(1)}, ${centerLat.toFixed(1)}]. If you move a plate over this location, 'Hotspot Track' volcanoes will appear.`);
+            // alert(`Created Mantle Plume at [${centerLon.toFixed(1)}, ${centerLat.toFixed(1)}]. If you move a plate over this location, 'Hotspot Track' volcanoes will appear.`);
             this.canvasManager?.render();
         });
 
@@ -1339,6 +1329,40 @@ class TectoLiteApp {
                 if (speedCmInput) speedCmInput.value = cm.toFixed(2);
                 this.applySpeedToSelected(val);
             }
+        });
+
+        document.getElementById('btn-reposition-pole-north')?.addEventListener('click', () => {
+             const selectedPlateId = this.state.world.selectedPlateId;
+             if (!selectedPlateId) {
+                 alert("Please select a plate first.");
+                 return;
+             }
+             
+             const plate = this.state.world.plates.find(p => p.id === selectedPlateId);
+             if (plate) {
+                 // Move pole to North Pole [0, 90]
+                 const northPole: Coordinate = [0, 90];
+                 this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: northPole });
+                 this.updatePropertiesPanel();
+                 this.canvasManager?.render();
+             }
+        });
+
+        document.getElementById('btn-reposition-pole-south')?.addEventListener('click', () => {
+             const selectedPlateId = this.state.world.selectedPlateId;
+             if (!selectedPlateId) {
+                 alert("Please select a plate first.");
+                 return;
+             }
+             
+             const plate = this.state.world.plates.find(p => p.id === selectedPlateId);
+             if (plate) {
+                 // Move pole to South Pole [0, -90]
+                 const southPole: Coordinate = [0, -90];
+                 this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: southPole });
+                 this.updatePropertiesPanel();
+                 this.canvasManager?.render();
+             }
         });
 
         // Edit Tool Controls
@@ -2455,10 +2479,47 @@ class TectoLiteApp {
     }
 
     private handleFeaturePlace(position: Coordinate, type: FeatureType): void {
+        // Special case: Hotspots are effectively Mantle Plumes (Global Features)
+        // If the user selects "Hotspot", they likely want to create a Mantle Plume Source.
+        if (type === 'hotspot') {
+            const plume: MantlePlume = {
+                id: generateId(),
+                position: position,
+                radius: 50, // Default radius
+                strength: 1.0,
+                active: true,
+                spawnRate: this.state.world.globalOptions.hotspotSpawnRate || 1.0
+            };
+            
+            // Add to World State
+            this.pushState();
+            this.state = {
+                ...this.state,
+                world: {
+                    ...this.state.world,
+                    mantlePlumes: [...(this.state.world.mantlePlumes || []), plume],
+                    // Auto-select the new plume?
+                    selectedPlateId: null
+                }
+            };
+            
+            // Note: We need a way to SELECT the plume.
+            // Currently selection only supports "selectedPlateId" and "selectedFeatureId".
+            // We should add "selectedPlumeId" to state or handle it via UI.
+            // For now, let's just render.
+            this.canvasManager?.render();
+            // alert(`Created Mantle Plume at [${position[0].toFixed(1)}, ${position[1].toFixed(1)}].`);
+            
+            return;
+        }
+
         // Use the selected plate for feature placement
         const plateId = this.state.world.selectedPlateId;
 
-        if (!plateId) return;
+        if (!plateId) {
+             alert("For Plate features (Mountains, Volcanoes), please select a plate first.");
+             return;
+        }
         this.pushState(); // Save state for undo
 
         const feature: Feature = {
@@ -2489,15 +2550,12 @@ class TectoLiteApp {
         this.canvasManager?.render();
     }
 
-    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = []): void {
-        // Legacy fusion logic removed
-
-
-        // Reset fusion state if switching away from fuse tool
+    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null): void {
         // Reset fusion/link state if switching away
         if (this.state.activeTool !== 'fuse') this.fusionFirstPlateId = null;
         if (this.state.activeTool !== 'link') this.activeLinkSourceId = null;
 
+        // Tool Logic Interception
         if (this.state.activeTool === 'fuse') {
             if (plateId) this.handleFuseTool(plateId);
             return;
@@ -2508,27 +2566,35 @@ class TectoLiteApp {
             return;
         }
 
+        // Selection Logic
         if (this.state.activeTool === 'select') {
-            if (plateId) {
-                const plate = this.state.world.plates.find(p => p.id === plateId);
-                this.updateHint(`Selected ${plate?.name || 'Plate'}. Choose movement mode and manipulate speed leveler and Euler pole to initiate movement.`);
-            } else {
-                this.updateHint("Click a plate or feature to select it.");
-            }
-        } else {
-            // Clear or update based on tool logic
+             if (plateId) {
+                 const plate = this.state.world.plates.find(p => p.id === plateId);
+                 this.updateHint(`Selected ${plate?.name || 'Plate'}.`);
+             } else if (plumeId) {
+                 this.updateHint("Selected Mantle Plume.");
+             } else {
+                 this.updateHint(null);
+             }
         }
-
-        this.state.world.selectedPlateId = plateId;
-        this.state.world.selectedFeatureId = featureId ?? null;
-
-        // Handle multi-selection
-        if (featureIds.length > 0) {
-            this.state.world.selectedFeatureIds = featureIds;
-        } else if (featureId) {
-            this.state.world.selectedFeatureIds = [featureId];
+        
+        if (plumeId) {
+             // If plume selected, deselect others and set ID to selectedFeatureId for UI binding
+             this.state.world.selectedPlateId = null;
+             this.state.world.selectedFeatureId = plumeId;
+             this.state.world.selectedFeatureIds = [plumeId];
         } else {
-            this.state.world.selectedFeatureIds = [];
+             this.state.world.selectedPlateId = plateId;
+             this.state.world.selectedFeatureId = featureId ?? null;
+    
+             // Handle multi-selection
+             if (featureIds.length > 0) {
+                 this.state.world.selectedFeatureIds = featureIds;
+             } else if (featureId) {
+                 this.state.world.selectedFeatureIds = [featureId];
+             } else {
+                 this.state.world.selectedFeatureIds = [];
+             }
         }
 
         this.updateUI();
@@ -2746,6 +2812,11 @@ class TectoLiteApp {
             if (selectedFeatureId) idsToDelete.add(selectedFeatureId);
             if (selectedFeatureIds) selectedFeatureIds.forEach(id => idsToDelete.add(id));
 
+            // Remove from Mantle Plumes if present
+            if (this.state.world.mantlePlumes) {
+                this.state.world.mantlePlumes = this.state.world.mantlePlumes.filter(p => !idsToDelete.has(p.id));
+            }
+
             // Remove these features from all plates and their history
             this.state.world.plates = this.state.world.plates.map(p => ({
                 ...p,
@@ -2850,6 +2921,70 @@ class TectoLiteApp {
         const content = document.getElementById('properties-content');
         if (!content) return;
 
+        // Check for Mantle Plume Selection (No Plate, but Feature ID set)
+        if (!this.state.world.selectedPlateId && this.state.world.selectedFeatureId && this.state.world.mantlePlumes) {
+            const plumeId = this.state.world.selectedFeatureId;
+            const plume = this.state.world.mantlePlumes.find(p => p.id === plumeId);
+            
+            if (plume) {
+                const globalRate = this.state.world.globalOptions.hotspotSpawnRate || 1.0;
+                const isGlobal = plume.spawnRate === undefined;
+                const displayRate = isGlobal ? globalRate : plume.spawnRate;
+
+                content.innerHTML = `
+                    <h3 class="panel-section-title">Mantle Plume</h3>
+                    
+                    <div class="property-group">
+                        <label class="property-label">ID</label>
+                        <span class="property-value">${plume.id.substring(0,6)}</span>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Position</label>
+                        <span class="property-value">[${plume.position[0].toFixed(1)}, ${plume.position[1].toFixed(1)}]</span>
+                    </div>
+
+                    <div class="property-group">
+                        <label class="property-label">Active</label>
+                         <input type="checkbox" id="prop-plume-active" ${plume.active ? 'checked' : ''}>
+                    </div>
+                    
+                    <div class="property-group">
+                         <label class="property-label">Spawn Rate (Ma)</label>
+                         <input type="number" id="prop-plume-rate-main" class="property-input" value="${displayRate}" step="0.1" min="0.1">
+                    </div>
+
+                    <div class="property-group" style="margin-top:20px;">
+                        <button id="btn-delete-plume" class="btn btn-danger" style="width:100%">Delete Plume</button>
+                    </div>
+                `;
+
+                // Bind events for Plume
+                document.getElementById('prop-plume-active')?.addEventListener('change', (e) => {
+                    plume.active = (e.target as HTMLInputElement).checked;
+                });
+                
+                const propPlumeRate = document.getElementById('prop-plume-rate-main') as HTMLInputElement;
+                
+                if (propPlumeRate) {
+                     propPlumeRate.addEventListener('change', (e) => {
+                         const val = parseFloat((e.target as HTMLInputElement).value);
+                         if (!isNaN(val) && val > 0) plume.spawnRate = val;
+                     });
+                }
+                
+                document.getElementById('btn-delete-plume')?.addEventListener('click', () => {
+                     this.state.world.mantlePlumes = this.state.world.mantlePlumes?.filter(p => p.id !== plumeId);
+                     this.state.world.selectedFeatureId = null;
+                     this.state.world.selectedFeatureIds = [];
+                     this.updateUI();
+                     this.canvasManager?.render();
+                });
+                
+                return;
+            }
+        }
+
         const plate = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
 
         if (!plate) {
@@ -2896,7 +3031,7 @@ class TectoLiteApp {
       </div>
       
       <div class="property-group">
-        <label class="property-label">Layer (Z-Index)</label>
+        <label class="property-label">Layer (Z-Index) <span class="info-icon" data-tooltip="Visual stacking order. Continental plates get an automatic +1 bonus.">(i)</span></label>
         <input type="number" id="prop-z-index" class="property-input" value="${plate.zIndex || 0}" step="1" style="width: 60px;">
       </div>
 
@@ -2976,6 +3111,17 @@ class TectoLiteApp {
            <input type="checkbox" id="prop-pole-vis" ${pole.visible ? 'checked' : ''}> Show Pole
         </label>
       </div>
+
+      <!-- Selective Copy Options -->
+      <div style="font-size: 11px; margin-bottom: 4px; display:flex; gap: 8px; align-items: center;">
+          <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" title="Include angular rate in copy/paste">
+               <input type="checkbox" id="cb-copy-speed" checked> Speed
+          </label>
+          <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" title="Include pole location in copy/paste">
+               <input type="checkbox" id="cb-copy-pole" checked> Pole/Dir
+          </label>
+      </div>
+
       <div class="property-group" style="flex-direction: row; gap: 8px;">
           <button id="btn-copy-momentum" class="btn btn-secondary" style="flex:1" title="Copy speed, direction, and pole">📋 Copy</button>
           <button id="btn-paste-momentum" class="btn btn-secondary" style="flex:1" title="Paste motion settings" ${this.momentumClipboard ? '' : 'disabled'}>📋 Paste</button>
@@ -3073,31 +3219,46 @@ class TectoLiteApp {
             pole.visible = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
         });
-
+        
         document.getElementById('btn-copy-momentum')?.addEventListener('click', () => {
+            const cbSpeed = document.getElementById('cb-copy-speed') as HTMLInputElement;
+            const cbPole = document.getElementById('cb-copy-pole') as HTMLInputElement;
+
             this.momentumClipboard = {
                 eulerPole: {
-                    position: [...plate.motion.eulerPole.position],
-                    rate: plate.motion.eulerPole.rate
+                    position: cbPole && cbPole.checked ? [...plate.motion.eulerPole.position] : undefined,
+                    rate: cbSpeed && cbSpeed.checked ? plate.motion.eulerPole.rate : undefined
                 }
             };
             const pasteBtn = document.getElementById('btn-paste-momentum') as HTMLButtonElement;
             if (pasteBtn) pasteBtn.disabled = false;
-            alert('Momentum copied to clipboard');
+            // alert('Momentum copied to clipboard');
         });
 
         document.getElementById('btn-paste-momentum')?.addEventListener('click', () => {
             if (!this.momentumClipboard) return;
+            const cbSpeed = document.getElementById('cb-copy-speed') as HTMLInputElement;
+            const cbPole = document.getElementById('cb-copy-pole') as HTMLInputElement;
+            
+            // Check checkboxes again for PASTE filtering (allowing user to uncheck before paste)
+            // Or rely on clipboard content? 
+            // User request: "add default on checkboxes ... so that the user can also only copy selective attributes"
+            // Interpreting this as: Checkboxes affect what gets applied/pasted.
+            
+            const doPasteSpeed = cbSpeed && cbSpeed.checked;
+            const doPastePole = cbPole && cbPole.checked;
+            const clip = this.momentumClipboard.eulerPole;
 
-            // Apply clipboard to current plate
-            const newPole = this.momentumClipboard.eulerPole;
+            const newRate = (doPasteSpeed && clip.rate !== undefined) ? clip.rate : plate.motion.eulerPole.rate;
+            const newPos = (doPastePole && clip.position !== undefined) ? clip.position : plate.motion.eulerPole.position;
+
             this.addMotionKeyframe(plate.id, {
-                position: newPole.position,
-                rate: newPole.rate
+                position: newPos,
+                rate: newRate
             });
 
             this.updatePropertiesPanel(); // Refresh UI to show new values
-            alert('Momentum pasted');
+            // alert('Momentum pasted');
         });
 
         document.getElementById('btn-delete-plate')?.addEventListener('click', () => {
@@ -3122,14 +3283,51 @@ class TectoLiteApp {
             : (selectedFeatureIds.length === 0 ? selectedFeatureId : null);
 
         if (!singleFeatureId) {
+            let html = '';
+            
             if (selectedFeatureIds.length > 1) {
-                return `
-          <hr class="property-divider">
-          <h4 class="property-section-title">Features</h4>
-          <p class="empty-message">${selectedFeatureIds.length} features selected</p>
-        `;
+                 html += `
+                  <hr class="property-divider">
+                  <h4 class="property-section-title">Features</h4>
+                  <p class="empty-message">${selectedFeatureIds.length} features selected</p>
+                 `;
+            } else {
+                 html += '<hr class="property-divider"><h4 class="property-section-title">Features</h4>';
             }
-            return '';
+            
+            // Plate Bound
+            html += '<h5 style="margin:4px 0; font-size: 11px; color:var(--text-secondary);">Plate Bound</h5>';
+            const features = plate.features;
+            if (features.length > 0) {
+                html += '<div style="max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:2px;">';
+                features.forEach(f => {
+                    const name = f.name || this.getFeatureTypeName(f.type);
+                    html += `<div class="feature-list-item" data-id="${f.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size:11px; display:flex; justify-content:space-between;">
+                        <span>${name}</span>
+                        <span style="color:var(--text-secondary);">${this.getFeatureTypeName(f.type)}</span>
+                    </div>`;
+                });
+                html += '</div>';
+            } else {
+                html += '<div style="font-size:10px; color:var(--text-secondary); padding:4px;">None</div>';
+            }
+
+            // Independent (Mantle Plumes)
+            const plumes = this.state.world.mantlePlumes || [];
+            if (plumes.length > 0) {
+                html += '<h5 style="margin:8px 0 4px 0; font-size: 11px; color:var(--text-secondary);">Independent</h5>';
+                html += '<div style="max-height:100px; overflow-y:auto; display:flex; flex-direction:column; gap:2px;">';
+                plumes.forEach(p => {
+                    const activeColor = p.active ? '#ff00aa' : '#888888';
+                    html += `<div class="plume-list-item" data-id="${p.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size:11px; border-left: 2px solid ${activeColor}; display:flex; justify-content:space-between;">
+                        <span>Mantle Plume</span>
+                        <span style="color:var(--text-secondary);">${p.id.substring(0,6)}</span>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+
+            return html;
         }
 
         const feature = plate.features.find(f => f.id === singleFeatureId);
@@ -3205,7 +3403,33 @@ class TectoLiteApp {
             ? selectedFeatureIds[0]
             : (selectedFeatureIds.length === 0 ? selectedFeatureId : null);
 
-        if (!singleFeatureId) return;
+        if (!singleFeatureId) {
+             // Bind list events
+             document.querySelectorAll('.feature-list-item').forEach(el => {
+                 el.addEventListener('click', () => {
+                     const id = el.getAttribute('data-id');
+                     if (id) {
+                         this.state.world.selectedFeatureId = id;
+                         this.state.world.selectedFeatureIds = [id];
+                         this.updateUI();
+                         this.canvasManager?.render();
+                     }
+                 });
+             });
+             document.querySelectorAll('.plume-list-item').forEach(el => {
+                 el.addEventListener('click', () => {
+                     const id = el.getAttribute('data-id');
+                     if (id) {
+                         this.state.world.selectedPlateId = null; 
+                         this.state.world.selectedFeatureId = id;
+                         this.state.world.selectedFeatureIds = [];
+                         this.updateUI();
+                         this.canvasManager?.render();
+                     }
+                 });
+             });
+             return;
+        }
 
         document.getElementById('feature-name')?.addEventListener('change', (e) => {
             this.updateFeature(singleFeatureId, { name: (e.target as HTMLInputElement).value });

@@ -176,12 +176,19 @@ export class SimulationEngine {
                 return this.calculatePlateAtTime(plate, newTime, state.world.plates);
             });
 
+            // Calculate Boundaries if enabled
+            let boundaries = state.world.boundaries;
+            if (state.world.globalOptions.enableBoundaryVisualization || state.world.globalOptions.enableDynamicFeatures) {
+                boundaries = BoundarySystem.detectBoundaries(newPlates);
+            }
+
             // Phase 3: Geological Automation (during tick)
             const tempState = {
                 ...state,
                 world: {
                     ...state.world,
                     plates: newPlates,
+                    boundaries: boundaries,
                     currentTime: newTime
                 }
             };
