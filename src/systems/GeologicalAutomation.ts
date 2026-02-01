@@ -185,10 +185,8 @@ export class GeologicalAutomationSystem {
                 return state; // No boundaries = no processing. Don't call detectBoundaries here.
             }
             
-            // Filter for active boundaries - ONLY CONVERGENT for now
-            // Divergent boundary processing is disabled due to polygon-clipping library freezes
-            // when plates are nearly separated. TODO: Implement proper fix.
-            const collisions = boundaries.filter(b => b.type === 'convergent');
+            // Filter for active boundaries (convergent and divergent)
+            const collisions = boundaries.filter(b => b.type === 'convergent' || b.type === 'divergent');
             
             if (collisions.length === 0) return state;
 
