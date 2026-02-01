@@ -1340,6 +1340,7 @@ class TectoLiteApp {
              
              const plate = this.state.world.plates.find(p => p.id === selectedPlateId);
              if (plate) {
+                 this.pushState(); // Save state for undo
                  // Move pole to North Pole [0, 90]
                  const northPole: Coordinate = [0, 90];
                  this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: northPole });
@@ -1357,6 +1358,7 @@ class TectoLiteApp {
              
              const plate = this.state.world.plates.find(p => p.id === selectedPlateId);
              if (plate) {
+                 this.pushState(); // Save state for undo
                  // Move pole to South Pole [0, -90]
                  const southPole: Coordinate = [0, -90];
                  this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: southPole });
@@ -3208,10 +3210,12 @@ class TectoLiteApp {
         });
 
         document.getElementById('prop-pole-lon')?.addEventListener('change', (e) => {
+            this.pushState(); // Save state for undo
             const newLon = parseFloat((e.target as HTMLInputElement).value);
             this.addMotionKeyframe(plate.id, { ...pole, position: [newLon, pole.position[1]] });
         });
         document.getElementById('prop-pole-lat')?.addEventListener('change', (e) => {
+            this.pushState(); // Save state for undo
             const newLat = parseFloat((e.target as HTMLInputElement).value);
             this.addMotionKeyframe(plate.id, { ...pole, position: [pole.position[0], newLat] });
         });
@@ -3252,6 +3256,7 @@ class TectoLiteApp {
             const newRate = (doPasteSpeed && clip.rate !== undefined) ? clip.rate : plate.motion.eulerPole.rate;
             const newPos = (doPastePole && clip.position !== undefined) ? clip.position : plate.motion.eulerPole.position;
 
+            this.pushState(); // Save state for undo
             this.addMotionKeyframe(plate.id, {
                 position: newPos,
                 rate: newRate
