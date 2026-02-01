@@ -492,20 +492,22 @@ export class GeologicalAutomationSystem {
             const velocity = boundary.velocity || 0.001;
             
             // Paint cooldown based on velocity:
-            // Fast (>0.005): paint every 0.02 Ma
-            // Medium (0.002-0.005): paint every 0.05 Ma
-            // Slow (<0.002): paint every 0.1 Ma
-            let paintInterval = 0.1;
-            if (velocity > 0.005) paintInterval = 0.02;
-            else if (velocity > 0.002) paintInterval = 0.05;
+            // OPTIMIZATION v2: Aggressive reduction for "Helper Line" usage
+            // Fast (>0.005): paint every 0.25 Ma (was 0.06)
+            // Medium (0.002-0.005): paint every 0.6 Ma (was 0.15)
+            // Slow (<0.002): paint every 1.5 Ma (was 0.3)
+            let paintInterval = 1.5;
+            if (velocity > 0.005) paintInterval = 0.25;
+            else if (velocity > 0.002) paintInterval = 0.6;
 
             // Check cooldown
             const cooldownKey = boundary.id;
             const lastPaint = this.paintCooldowns.get(cooldownKey) || -9999;
             if (currentTime - lastPaint < paintInterval) continue;
 
-            // Stroke width based on velocity (1-4 pixels)
-            const strokeWidth = Math.min(4, Math.max(1, Math.floor(velocity * 500)));
+            // Stroke width based on velocity (Way thicker for helper lines)
+            // Range: 10-30 pixels (was 3-8)
+            const strokeWidth = Math.min(30, Math.max(10, Math.floor(velocity * 4000)));
             
             // Color based on boundary type
             const color = boundary.type === 'convergent' ? convergentColor : divergentColor;
