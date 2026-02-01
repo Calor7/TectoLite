@@ -89,6 +89,7 @@ export interface Landmass {
   birthTime: number;             // Geological time when created
   deathTime?: number;            // Geological time when destroyed (undefined = active)
   zIndex?: number;               // Visual layering within plate (higher = on top)
+  lastEditedTime?: number;       // Geological time when last edited
 }
 
 export interface Feature {

@@ -126,6 +126,19 @@ export class TimelineSystem {
                     originalRef: evt
                 });
             });
+
+            plate.events.filter(e => e.type === 'fusion').forEach(evt => {
+                list.push({
+                    id: evt.id,
+                    time: evt.time,
+                    type: 'fuse',
+                    label: 'Plate Fusion',
+                    details: 'Plate fused',
+                    isEditable: true,
+                    isDeletable: true,
+                    originalRef: evt
+                });
+            });
         }
 
         // Sort by time

@@ -18,6 +18,8 @@ export interface PNGExportOptions {
     plateColorMode: 'native' | 'land';
     showGrid: boolean;
     includePaint?: boolean;
+    includeFeatures?: boolean;
+    includeLandmasses?: boolean;
 }
 
 export function exportToPNG(
@@ -104,9 +106,20 @@ export function exportToPNG(
             ctx.stroke();
         }
 
+        // Landmasses
+        if (options.includeLandmasses && plate.landmasses) {
+            for (const landmass of plate.landmasses) {
+                if (state.world.currentTime < landmass.birthTime) continue;
+                if (landmass.deathTime !== undefined && state.world.currentTime >= landmass.deathTime) continue;
+                drawLandmass(ctx, pm, landmass, ratio);
+            }
+        }
+
         // Features
-        for (const feature of plate.features) {
-            drawFeature(ctx, pm, feature, ratio);
+        if (options.includeFeatures !== false) {
+            for (const feature of plate.features) {
+                drawFeature(ctx, pm, feature, ratio);
+            }
         }
 
         // Paint Strokes
@@ -172,6 +185,35 @@ function drawFeature(
         case 'island': drawIslandIcon(ctx, size); break;
     }
 
+    ctx.restore();
+}
+
+function drawLandmass(
+    ctx: CanvasRenderingContext2D,
+    pm: ProjectionManager,
+    landmass: { polygon: [number, number][]; fillColor: string; strokeColor?: string; opacity: number },
+    scaleRatio: number
+): void {
+    if (!landmass.polygon || landmass.polygon.length < 3) return;
+
+    const ring = [...landmass.polygon, landmass.polygon[0]];
+    const geojson = {
+        type: 'Polygon',
+        coordinates: [ring]
+    } as any;
+
+    ctx.save();
+    ctx.globalAlpha = landmass.opacity;
+    ctx.beginPath();
+    pm.getPathGenerator()(geojson);
+    ctx.fillStyle = landmass.fillColor || '#8B4513';
+    ctx.fill();
+
+    if (landmass.strokeColor) {
+        ctx.strokeStyle = landmass.strokeColor;
+        ctx.lineWidth = 1 * scaleRatio;
+        ctx.stroke();
+    }
     ctx.restore();
 }
 
@@ -319,7 +361,13 @@ export function showPNGExportDialog(currentProjection: ProjectionType): Promise<
                     <input type="checkbox" id="export-grid" checked> Show Grid
                 </label>
                 <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
+                    <input type="checkbox" id="export-include-features" checked> Include Features
+                </label>
+                <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
                     <input type="checkbox" id="export-include-paint" checked> Include Paint
+                </label>
+                <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 500;">
+                    <input type="checkbox" id="export-include-landmasses" checked> Include Landmasses
                 </label>
             </div>
             
@@ -352,9 +400,11 @@ export function showPNGExportDialog(currentProjection: ProjectionType): Promise<
             const plateColorMode = (dialog.querySelector('input[name="plate-color"]:checked') as HTMLInputElement).value as any;
             const showGrid = (dialog.querySelector('#export-grid') as HTMLInputElement).checked;
             const includePaint = (dialog.querySelector('#export-include-paint') as HTMLInputElement).checked;
+            const includeFeatures = (dialog.querySelector('#export-include-features') as HTMLInputElement).checked;
+            const includeLandmasses = (dialog.querySelector('#export-include-landmasses') as HTMLInputElement).checked;
 
             cleanup();
-            resolve({ projection, waterMode, plateColorMode, showGrid, includePaint });
+            resolve({ projection, waterMode, plateColorMode, showGrid, includePaint, includeFeatures, includeLandmasses });
         });
     });
 }
@@ -518,7 +568,9 @@ export async function exportToJSON(state: AppState): Promise<void> {
         exportMode: options.mode,
         exportedAtTime: state.world.currentTime,
         world: worldToSave,
-        viewport: state.viewport
+        viewport: state.viewport,
+        activeTool: state.activeTool,
+        activeFeatureType: state.activeFeatureType
     };
 
     const json = JSON.stringify(saveData, null, 2);
@@ -531,7 +583,7 @@ export async function exportToJSON(state: AppState): Promise<void> {
     URL.revokeObjectURL(link.href);
 }
 
-export type ImportMode = 'at_beginning' | 'at_current_time';
+export type ImportMode = 'replace_current' | 'at_beginning' | 'at_current_time';
 
 export interface ImportResult {
     world: WorldState;
@@ -570,7 +622,15 @@ export function showImportDialog(filename: string, plateCount: number, currentTi
                 <div style="display: flex; flex-direction: column; gap: 8px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; 
                         background: #313244; border-radius: 6px; border: 1px solid #45475a;">
-                        <input type="radio" name="import-mode" value="at_beginning" checked>
+                        <input type="radio" name="import-mode" value="replace_current" checked>
+                        <div>
+                            <div style="font-weight: 500;">♻️ Replace Current Simulation</div>
+                            <div style="font-size: 12px; color: #a6adc8;">Fully restore the saved state</div>
+                        </div>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; 
+                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        <input type="radio" name="import-mode" value="at_beginning">
                         <div>
                             <div style="font-weight: 500;">⏮️ At Beginning (Time 0)</div>
                             <div style="font-size: 12px; color: #a6adc8;">Add plates starting from the beginning</div>
@@ -651,7 +711,7 @@ export function importFromJSON(file: File): Promise<WorldState> {
 }
 
 // Parse file to get metadata without full import
-export function parseImportFile(file: File): Promise<{ world: WorldState; viewport?: any; name: string }> {
+export function parseImportFile(file: File): Promise<{ world: WorldState; viewport?: any; name: string; activeTool?: string; activeFeatureType?: string }> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -670,7 +730,9 @@ export function parseImportFile(file: File): Promise<{ world: WorldState; viewpo
                 resolve({
                     world: data.world as WorldState,
                     viewport: data.viewport as any, // Optional
-                    name: data.name || file.name
+                    name: data.name || file.name,
+                    activeTool: data.activeTool,
+                    activeFeatureType: data.activeFeatureType
                 });
             } catch (err) {
                 reject(err);
@@ -777,10 +839,28 @@ export interface UnifiedExportOptions {
     width?: number;
     height?: number;
     includeHeightmap?: boolean;
+    showGrid?: boolean;
+    includePaint?: boolean;
+    includeFeatures?: boolean;
+    includeLandmasses?: boolean;
 }
 
-export function showUnifiedExportDialog(): Promise<UnifiedExportOptions | null> {
+export function showUnifiedExportDialog(defaults?: {
+    projection?: ProjectionType;
+    showGrid?: boolean;
+    includePaint?: boolean;
+    includeFeatures?: boolean;
+    includeLandmasses?: boolean;
+}): Promise<UnifiedExportOptions | null> {
     return new Promise((resolve) => {
+        const pngDefaults = {
+            projection: defaults?.projection || 'orthographic',
+            showGrid: defaults?.showGrid ?? true,
+            includePaint: defaults?.includePaint ?? true,
+            includeFeatures: defaults?.includeFeatures ?? true,
+            includeLandmasses: defaults?.includeLandmasses ?? true
+        };
+
         const overlay = document.createElement('div');
         overlay.style.cssText = `
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -825,6 +905,25 @@ export function showUnifiedExportDialog(): Promise<UnifiedExportOptions | null> 
                     <option value="mollweide">Mollweide</option>
                     <option value="robinson">Robinson</option>
                 </select>
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Layers:</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="png-show-grid" ${pngDefaults.showGrid ? 'checked' : ''}>
+                        <span>Show Grid</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="png-include-features" ${pngDefaults.includeFeatures ? 'checked' : ''}>
+                        <span>Features</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="png-include-paint" ${pngDefaults.includePaint ? 'checked' : ''}>
+                        <span>Paint</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="png-include-landmasses" ${pngDefaults.includeLandmasses ? 'checked' : ''}>
+                        <span>Landmasses</span>
+                    </label>
+                </div>
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution:</label>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                     <div>
@@ -922,6 +1021,9 @@ export function showUnifiedExportDialog(): Promise<UnifiedExportOptions | null> 
             });
         });
 
+        const select = dialog.querySelector('#export-projection') as HTMLSelectElement | null;
+        if (select) select.value = pngDefaults.projection;
+
         const cleanup = () => document.body.removeChild(overlay);
         const onCancel = () => { cleanup(); resolve(null); };
 
@@ -935,8 +1037,21 @@ export function showUnifiedExportDialog(): Promise<UnifiedExportOptions | null> 
                 const w = parseInt((dialog.querySelector('#export-width') as HTMLInputElement).value);
                 const h = parseInt((dialog.querySelector('#export-height') as HTMLInputElement).value);
                 const proj = (dialog.querySelector('#export-projection') as HTMLSelectElement).value as ProjectionType;
+                const showGrid = (dialog.querySelector('#png-show-grid') as HTMLInputElement).checked;
+                const includeFeatures = (dialog.querySelector('#png-include-features') as HTMLInputElement).checked;
+                const includePaint = (dialog.querySelector('#png-include-paint') as HTMLInputElement).checked;
+                const includeLandmasses = (dialog.querySelector('#png-include-landmasses') as HTMLInputElement).checked;
                 if (w > 0 && h > 0) {
-                    resolve({ format: 'png', projection: proj, width: w, height: h });
+                    resolve({
+                        format: 'png',
+                        projection: proj,
+                        width: w,
+                        height: h,
+                        showGrid,
+                        includeFeatures,
+                        includePaint,
+                        includeLandmasses
+                    });
                 }
             } else if (selectedFormat === 'heightmap') {
                 const w = parseInt((dialog.querySelector('#hm-width') as HTMLInputElement).value);

@@ -21,7 +21,7 @@ import {
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
-import { exportToPNG, showPNGExportDialog } from './export';
+import { exportToPNG } from './export';
 import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
 import { vectorToLatLon, latLonToVector, rotateVector, Vector3 } from './utils/sphericalMath';
@@ -1772,7 +1772,7 @@ class TectoLiteApp {
                              ...p,
                              landmasses: p.landmasses.map(l => {
                                  if (l.id === landmassResult.landmassId) {
-                                     return { ...l, polygon: newPolygon };
+                                         return { ...l, polygon: newPolygon, lastEditedTime: this.state.world.currentTime };
                                  }
                                  return l;
                              })
@@ -2269,17 +2269,16 @@ class TectoLiteApp {
             }
         });
 
-        document.getElementById('btn-export')?.addEventListener('click', async () => {
-            const options = await showPNGExportDialog(this.state.world.projection);
-            if (options) {
-                exportToPNG(this.state, options);
-            }
-        });
-
         // Unified Export Handler
         document.getElementById('btn-export')?.addEventListener('click', async () => {
             try {
-                const options = await showUnifiedExportDialog();
+                const options = await showUnifiedExportDialog({
+                    projection: this.state.world.projection,
+                    showGrid: this.state.world.showGrid,
+                    includePaint: this.state.world.showPaint,
+                    includeFeatures: this.state.world.showFeatures,
+                    includeLandmasses: true
+                });
                 if (!options) return;
 
                 if (options.format === 'png') {
@@ -2288,7 +2287,10 @@ class TectoLiteApp {
                         projection: options.projection || 'orthographic',
                         waterMode: 'color' as const,
                         plateColorMode: 'native' as const,
-                        showGrid: false
+                        showGrid: options.showGrid ?? this.state.world.showGrid,
+                        includePaint: options.includePaint ?? this.state.world.showPaint,
+                        includeFeatures: options.includeFeatures ?? this.state.world.showFeatures,
+                        includeLandmasses: options.includeLandmasses ?? true
                     };
                     exportToPNG(this.state, pngOptions, options.width || 1920, options.height || 1080);
                 } else if (options.format === 'heightmap') {
@@ -2360,7 +2362,7 @@ class TectoLiteApp {
             if (file) {
                 try {
                     // Parse file first to get metadata for the dialog
-                    const { world: importedWorld, viewport: importedViewport, name: filename } = await parseImportFile(file);
+                    const { world: importedWorld, viewport: importedViewport, name: filename, activeTool, activeFeatureType } = await parseImportFile(file);
                     const currentTime = this.state.world.currentTime;
 
                     // Show import dialog
@@ -2376,7 +2378,28 @@ class TectoLiteApp {
                         return;
                     }
 
-                    this.pushState(); // Save current state before adding
+                    this.pushState(); // Save current state before adding/restoring
+
+                    if (importMode === 'replace_current') {
+                        this.state = {
+                            ...this.state,
+                            world: importedWorld,
+                            viewport: importedViewport || this.state.viewport,
+                            activeTool: (activeTool as ToolType) ?? this.state.activeTool,
+                            activeFeatureType: (activeFeatureType as FeatureType) ?? this.state.activeFeatureType
+                        };
+
+                        this.updateExplorer();
+                        this.updateUI();
+                        this.syncUIToState();
+                        this.simulation?.setTime(this.state.world.currentTime);
+                        this.canvasManager?.render();
+
+                        alert(`Successfully restored ${importedWorld.plates.length} plate(s) from ${filename}!`);
+
+                        (e.target as HTMLInputElement).value = '';
+                        return;
+                    }
 
                     // Calculate time offset based on import mode
                     const timeOffset = importMode === 'at_current_time' ? currentTime : 0;
@@ -3588,8 +3611,14 @@ class TectoLiteApp {
         }
 
         // --- 2. ACTIONS SECTION (Previously Events) ---
-        // Aggregate all plate events
+        // Aggregate all plate events + user actions
         let allEvents: {time: number, desc: string, plateName: string, plateId: string}[] = [];
+
+        const addAction = (time: number | undefined, desc: string, plate: TectonicPlate) => {
+            if (time === undefined || isNaN(time)) return;
+            allEvents.push({ time, desc, plateName: plate.name, plateId: plate.id });
+        };
+
         this.state.world.plates.forEach(p => {
              if(p.events) {
                  p.events.forEach(ev => {
@@ -3597,16 +3626,34 @@ class TectoLiteApp {
                      if(ev.type === 'motion_change') desc = 'Motion Change';
                      if(ev.type === 'split') desc = 'Plate Split';
                      if(ev.type === 'fusion') desc = 'Fusion';
-                     allEvents.push({
-                         time: ev.time, 
-                         desc: desc,
-                         plateName: p.name,
-                         plateId: p.id
-                     });
+                     addAction(ev.time, desc, p);
                  });
              }
              // Also add creation time as event
-             allEvents.push({time: p.birthTime, desc: 'Created', plateName: p.name, plateId: p.id});
+             addAction(p.birthTime, 'Created', p);
+
+             // Feature placements
+             p.features.forEach(f => {
+                 if (typeof f.generatedAt === 'number') {
+                     const label = f.name ? `Feature Placed: ${f.name}` : `Feature Placed: ${f.type}`;
+                     addAction(f.generatedAt, label, p);
+                 }
+             });
+
+             // Plate edits captured as explicit Edit keyframes
+             p.motionKeyframes?.forEach(kf => {
+                 if (kf.label === 'Edit') {
+                     addAction(kf.time, 'Plate Edited', p);
+                 }
+             });
+
+             // Landmass actions
+             p.landmasses?.forEach(l => {
+                 addAction(l.birthTime, `Landmass Created: ${l.name || 'Landmass'}`, p);
+                 if (typeof l.lastEditedTime === 'number' && l.lastEditedTime !== l.birthTime) {
+                     addAction(l.lastEditedTime, `Landmass Edited: ${l.name || 'Landmass'}`, p);
+                 }
+             });
         });
         
         // Sort by time
@@ -5195,6 +5242,20 @@ class TectoLiteApp {
 
                 const otherKeyframes = (p.motionKeyframes || []).filter(k => Math.abs(k.time - currentTime) > 0.001);
                 updated.motionKeyframes = [...otherKeyframes, newKeyframe].sort((a, b) => a.time - b.time);
+
+                // Record motion change event for Actions timeline
+                const existingEvents = updated.events || [];
+                const existingIndex = existingEvents.findIndex(e => e.type === 'motion_change' && Math.abs(e.time - currentTime) < 0.001);
+                const motionEvent = {
+                    id: existingIndex >= 0 ? existingEvents[existingIndex].id : generateId(),
+                    time: currentTime,
+                    type: 'motion_change',
+                    description: 'Motion Change'
+                } as any;
+                const nextEvents = [...existingEvents];
+                if (existingIndex >= 0) nextEvents[existingIndex] = { ...existingEvents[existingIndex], ...motionEvent };
+                else nextEvents.push(motionEvent);
+                updated.events = nextEvents;
 
                 processedPlate = updated;
             }
