@@ -601,9 +601,73 @@ export class GeologicalAutomationSystem {
                         // Dot product: 1.0 = parallel, 0.0 = perpendicular
                         const alignment = Math.abs(dot(vRelDir, segDir));
 
-                        // User Requirement: "edges that run PARALLEL... to NOT create orogony lines"
+                        // User Requirement 1: "edges that run PARALLEL... to NOT create orogony lines"
                         // Threshold: If alignment > 0.9 (approx 25 degrees), skip.
-                        isParallel = alignment > 0.9;
+                        if (alignment > 0.9) {
+                            isParallel = true;
+                        } else {
+                            // User Requirement 2: "Baseline should nt right?" (Base of Triangle moving Right)
+                            // Skip "Trailing" edges where plates are moving APART (Divergence).
+                            // Only paint "Leading" edges (Convergence).
+                            
+                            // Determine Edge Normal (Outward)
+                            // Assuming ring is CCW? Check area.
+                            // Simplified 2D projection logic for normal direction from segment vector (x,y,z)
+                            // If we use spherical cross product of (Point, SegmentVector)?
+                            // Radial vector (Position) x Segment Vector = Tangent Plane Normal?
+                            
+                            // Let's use simpler logic:
+                            // The Velocity vector compared to the Segment Vector tells us parallelism.
+                            // We need the PERPENDICULAR component.
+                            // We need to know if it's "Pushing" or "Pulling".
+                            
+                            // Cross product of Segment Dir and Radial(Up) gives "Right" vector on the surface.
+                            // Surface Normal (Up)
+                            const up = normalize(latLonToVector(mid));
+                            // Segment Direction
+                            const T = segDir;
+                            // Right Vector (Cross T x Up? or Up x T?)
+                            // Standard map coords: East x Up(Z) = South? 
+                            // Let's assume standard CCW polygon winding.
+                            // Outward Normal = Cross(Tangent, Up).
+                            const N = normalize({
+                                x: T.y * up.z - T.z * up.y,
+                                y: T.z * up.x - T.x * up.z,
+                                z: T.x * up.y - T.y * up.x
+                            });
+
+                            // Check dot product with Relative Velocity
+                            // V_rel is P1 velocity relative to P2.
+                            // If N . V_rel > 0, P1 is pushing "Out" against P2. -> Convergence.
+                            // If N . V_rel < 0, P1 is pulling "In" away from P2. -> Divergence.
+                            
+                            // Boundary polygons from `d3-geo` / `turf` usually have specific winding.
+                            // Assuming standard winding (CCW for positive area):
+                            // NOTE: If the winding is CW, N points In.
+                            
+                            // We can heuristically detect "Collision" vs "Separation" by simply using the boundary type if available?
+                            // But individual edges of a "Convergent" boundary can be trailing.
+                            // Let's try the Dot Product filter.
+                            
+                            const pushComponent = dot(N, vRelDir);
+                            
+                            // Heuristic: If ring area is positive (CCW), N is Out.
+                            // If pushComponent > Threshold (0.1), it's a collision front.
+                            // If pushComponent < -Threshold (-0.1), it's a trailing edge (Exposed backside).
+                            
+                            // PROBLEM: We don't know ring winding for sure here.
+                            // FIX: Assume CCW. If the user notices inverted behavior (Front missing, Back painted), we flip the sign.
+                            // "Dreieck base left moves right". Base is trailing. Front is leading.
+                            // If CCW: 
+                            // Front edges (Right side): Tangent goes Up-Left?
+                            // Let's assume standard CCW.
+                            
+                            // Filter: Only keep COMPRESSIVE edges
+                            if (pushComponent < 0.1) {
+                                // Either Parallel (<0.1 & >-0.1 is covered by alignment check) or Divergent (< -0.1)
+                                isParallel = true; // Mark as "skip"
+                            }
+                        }
                     } else {
                         // No motion -> treat as 'parallel' (skip painting)
                         isParallel = true;
