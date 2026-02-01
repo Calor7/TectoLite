@@ -1,5 +1,5 @@
 // Elevation System - Physical mesh-based topography simulation
-// Replaces visual paint-based orogeny with actual elevation data
+// Implements realistic orogeny physics: isostasy, asymmetric uplift, subduction
 
 import { AppState, TectonicPlate, CrustVertex, Coordinate, generateId } from '../types';
 import { distance } from '../utils/sphericalMath';
@@ -7,14 +7,40 @@ import { Delaunay } from 'd3-delaunay';
 import { geoBounds, geoContains } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
 
+// Physical constants
+const MANTLE_DENSITY = 3.3;           // g/cm³
+const CONTINENTAL_DENSITY = 2.7;      // g/cm³
+const OCEANIC_DENSITY = 3.0;          // g/cm³
+const REFERENCE_THICKNESS_CONT = 35;  // km - standard continental crust
+const REFERENCE_THICKNESS_OCEAN = 7;  // km - standard oceanic crust
+const SEA_LEVEL_OFFSET = 0;           // meters - reference datum
+
 export class ElevationSystem {
-    private neighborCache: Map<string, Map<string, Set<string>>> = new Map(); // plateId -> neighborGraph
+    private neighborCache: Map<string, Map<string, Set<string>>> = new Map();
     
     constructor() {}
     
     /**
+     * Calculate equilibrium elevation from crustal thickness (Airy Isostasy)
+     * Thicker crust floats higher on the mantle
+     */
+    private calculateIsostasyElevation(thickness: number, isOceanic: boolean): number {
+        const density = isOceanic ? OCEANIC_DENSITY : CONTINENTAL_DENSITY;
+        const refThickness = isOceanic ? REFERENCE_THICKNESS_OCEAN : REFERENCE_THICKNESS_CONT;
+        
+        // Isostatic equilibrium: elevation = (thickness - refThickness) * (1 - density/mantleDensity) * 1000
+        const buoyancyFactor = 1 - (density / MANTLE_DENSITY);
+        const elevation = (thickness - refThickness) * buoyancyFactor * 1000; // Convert km to m
+        
+        // Oceanic crust sits ~2.5km below sea level at reference thickness
+        // Continental crust sits ~0.8km above sea level at reference thickness
+        const baseElevation = isOceanic ? -2500 : 800;
+        
+        return baseElevation + elevation + SEA_LEVEL_OFFSET;
+    }
+    
+    /**
      * Main update loop - runs each simulation tick
-     * Handles both forward simulation and backward timeline scrubbing
      */
     public update(state: AppState, deltaT: number): AppState {
         if (!state.world.globalOptions.enableElevationSimulation) {
@@ -31,84 +57,45 @@ export class ElevationSystem {
                 const initializedPlate = this.initializePlateMesh(plate, resolution);
                 return {
                     ...initializedPlate,
-                    elevationSimulatedTime: plate.birthTime // Start from birth
+                    elevationSimulatedTime: plate.birthTime
                 };
             }
             return plate;
         });
         
-        // Step 2: Handle timeline scrubbing
-        // If current time is before last simulated time, we need to recalculate from birthTime
+        // Step 2: Handle timeline scrubbing (regenerate mesh if going backward)
         newState.world.plates = newState.world.plates.map(plate => {
             if (!plate.crustMesh || plate.crustMesh.length === 0) return plate;
             
             const lastSimTime = plate.elevationSimulatedTime ?? plate.birthTime;
             
-            // If moving backward in time, reset and recalculate to current time
             if (currentTime < lastSimTime) {
-                // Reset all elevations to zero (birthTime state)
-                const resetMesh = plate.crustMesh.map(v => ({
-                    ...v,
-                    elevation: 0,
-                    sediment: 0
-                }));
-                
+                // Regenerate mesh at current plate position
+                const resolution = state.world.globalOptions.meshResolution || 150;
+                const resetPlate = this.initializePlateMesh(plate, resolution);
                 return {
-                    ...plate,
-                    crustMesh: resetMesh,
-                    elevationSimulatedTime: plate.birthTime
+                    ...resetPlate,
+                    elevationSimulatedTime: currentTime
                 };
             }
             
             return plate;
         });
         
-        // Step 3: Simulate from last simulated time to current time
-        // When scrubbing backward, this recalculates from birthTime to currentTime
-        // When moving forward, this continues from lastSimulatedTime
-        const timeDiff = currentTime - (newState.world.plates[0]?.elevationSimulatedTime ?? currentTime);
-        
-        if (Math.abs(timeDiff) > 0.01) { // Significant time jump (scrubbing)
-            // Need to simulate the gap - do it in steps for accuracy
-            const simulationSteps = Math.ceil(Math.abs(timeDiff) / 1.0); // 1 Ma per step
-            const stepSize = timeDiff / simulationSteps;
+        // Step 3: Apply physics if moving forward
+        if (deltaT > 0) {
+            // Apply collision physics (asymmetric uplift, subduction)
+            newState = this.applyCollisionPhysics(newState, deltaT);
             
-            for (let step = 0; step < simulationSteps; step++) {
-                const stepDeltaT = stepSize;
-                
-                // Apply uplift
-                if (stepDeltaT > 0) {
-                    newState = this.applyUplift(newState, stepDeltaT);
-                    newState = this.applyErosion(newState, stepDeltaT);
-                    
-                    // Apply decay
-                    newState.world.plates = newState.world.plates.map(plate => ({
-                        ...plate,
-                        crustMesh: plate.crustMesh?.map(v => ({
-                            ...v,
-                            elevation: v.elevation * 0.999
-                        }))
-                    }));
-                }
-            }
-            
-            // Update simulated time
-            newState.world.plates = newState.world.plates.map(plate => ({
-                ...plate,
-                elevationSimulatedTime: currentTime
-            }));
-            
-        } else if (deltaT > 0) {
-            // Normal forward tick - single step
-            newState = this.applyUplift(newState, deltaT);
+            // Apply erosion (slope-based, transfers sediment)
             newState = this.applyErosion(newState, deltaT);
             
-            // Apply global decay
+            // Recalculate elevations from thickness (isostasy)
             newState.world.plates = newState.world.plates.map(plate => ({
                 ...plate,
                 crustMesh: plate.crustMesh?.map(v => ({
                     ...v,
-                    elevation: v.elevation * 0.999
+                    elevation: this.calculateIsostasyElevation(v.crustalThickness, v.isOceanic)
                 })),
                 elevationSimulatedTime: currentTime
             }));
@@ -123,7 +110,6 @@ export class ElevationSystem {
     public initializePlateMesh(plate: TectonicPlate, resolution: number = 150): TectonicPlate {
         if (plate.polygons.length === 0) return plate;
         
-        // Convert to GeoJSON Feature for robust spherical bounds/contains check
         const polys = plate.polygons.map(p => toGeoJSON(p).geometry);
         const multiPoly: GeoJSON.MultiPolygon = {
             type: 'MultiPolygon',
@@ -135,107 +121,94 @@ export class ElevationSystem {
             properties: {} 
         };
         
-        // Calculate bounds using d3-geo (handles poles and date line correctly)
         const [[bMinLon, bMinLat], [bMaxLon, bMaxLat]] = geoBounds(feature);
         
-        // Convert resolution from km to degrees (approximate)
-        const spacing = resolution / 111.0; // 1 degree ≈ 111 km
-        const rowOffset = spacing * 0.866; // sqrt(3)/2 for hex pattern
+        const spacing = resolution / 111.0;
+        const rowOffset = spacing * 0.866;
         
         const vertices: CrustVertex[] = [];
+        const isOceanic = plate.crustType === 'oceanic';
+        const baseThickness = isOceanic ? REFERENCE_THICKNESS_OCEAN : REFERENCE_THICKNESS_CONT;
         
         let row = 0;
         for (let lat = bMinLat; lat <= bMaxLat; lat += rowOffset) {
-            const lonOffset = (row % 2) * (spacing / 2); // Offset every other row
-            
-            // Handle longitude wrapping for date-line crossing plates
+            const lonOffset = (row % 2) * (spacing / 2);
             const startLon = bMinLon;
             const endLon = bMinLon <= bMaxLon ? bMaxLon : bMaxLon + 360;
             
             for (let l = startLon; l <= endLon; l += spacing) {
-                // Normalize longitude to -180..180
                 let lon = l + lonOffset;
                 if (lon > 180) lon -= 360;
                 if (lon < -180) lon += 360;
                 
                 const pos: Coordinate = [lon, lat];
                 
-                // Use robust d3-geo contains check
                 if (geoContains(feature, pos)) {
+                    const elevation = this.calculateIsostasyElevation(baseThickness, isOceanic);
                     vertices.push({
                         id: generateId(),
                         pos: pos,
                         originalPos: pos,
-                        elevation: 0,
-                        sediment: 0
+                        elevation: elevation,
+                        crustalThickness: baseThickness,
+                        sediment: 0,
+                        isOceanic: isOceanic
                     });
                 }
             }
             row++;
         }
 
-        // Add boundary vertices to ensure exact edge coverage
-        // This fixes graphical gaps at plate boundaries
-        
+        // Add boundary vertices
         for (const poly of plate.polygons) {
-            // Sample polygon points (don't take every single one if super dense, but ensure structure)
-            // For now, take points that are at least 'spacing/3' apart to keep shape but reduce count
-            const minDistInfo = spacing * 0.3; 
-            
+            const minDistInfo = spacing * 0.3;
             let lastAdded: Coordinate | null = null;
             
             for (let i = 0; i < poly.points.length; i++) {
                 const p = poly.points[i];
                 
-                // Always add corners/sharp turns? 
-                // Simple distance filter:
                 if (lastAdded) {
                     const d = Math.hypot(p[0] - lastAdded[0], p[1] - lastAdded[1]);
                     if (d < minDistInfo) continue;
                 }
                 
+                const elevation = this.calculateIsostasyElevation(baseThickness, isOceanic);
                 vertices.push({
                     id: generateId(),
                     pos: p,
                     originalPos: p,
-                    elevation: 0,
-                    sediment: 0
+                    elevation: elevation,
+                    crustalThickness: baseThickness,
+                    sediment: 0,
+                    isOceanic: isOceanic
                 });
                 lastAdded = p;
             }
         }
         
-        // Enforce maximum vertex count for performance
-        // Increase limit to accommodate boundary points
+        // Limit vertices
         const maxVertices = 1000;
         if (vertices.length > maxVertices) {
-            // Randomly sample to reduce count
             const sampled: CrustVertex[] = [];
             const step = Math.floor(vertices.length / maxVertices);
             for (let i = 0; i < vertices.length; i += step) {
                 sampled.push(vertices[i]);
             }
-            return {
-                ...plate,
-                crustMesh: sampled
-            };
+            return { ...plate, crustMesh: sampled };
         }
         
-        return {
-            ...plate,
-            crustMesh: vertices
-        };
+        return { ...plate, crustMesh: vertices };
     }
     
     /**
-     * Apply uplift in collision zones
+     * Apply collision physics with realistic asymmetric behavior
      */
-    private applyUplift(state: AppState, deltaT: number): AppState {
+    private applyCollisionPhysics(state: AppState, deltaT: number): AppState {
         if (!state.world.boundaries || state.world.boundaries.length === 0) {
             return state;
         }
         
-        const upliftRate = state.world.globalOptions.upliftRate || 1000; // m/Ma
+        const thickeningRate = (state.world.globalOptions.upliftRate || 1000) / 1000; // Convert m/Ma to km/Ma
         const convergentBoundaries = state.world.boundaries.filter(b => b.type === 'convergent');
         
         if (convergentBoundaries.length === 0) return state;
@@ -248,136 +221,253 @@ export class ElevationSystem {
             const p2Index = plates.findIndex(p => p.id === id2);
             
             if (p1Index === -1 || p2Index === -1) continue;
-            if (!plates[p1Index].crustMesh && !plates[p2Index].crustMesh) continue;
             
-            // Get boundary polygon (approximate overlap zone)
+            const plate1 = plates[p1Index];
+            const plate2 = plates[p2Index];
+            
+            if (!plate1.crustMesh && !plate2.crustMesh) continue;
+            
             const boundaryPoints = boundary.points.flat();
             if (boundaryPoints.length < 3) continue;
             
-            // Calculate collision intensity based on velocity
+            // Determine collision type and which plate subducts
+            const collision = this.classifyCollision(plate1, plate2);
+            
+            // Apply appropriate physics based on collision type
             const velocity = boundary.velocity || 0.001;
-            const intensityFactor = Math.min(velocity / 0.01, 1.0); // Normalize to 0-1
+            const intensityFactor = Math.min(velocity / 0.005, 1.0); // Normalize: 5 cm/yr = full intensity
+            const thickeningAmount = thickeningRate * deltaT * intensityFactor;
             
-            // Apply uplift to vertices near boundary
-            const upliftAmount = upliftRate * deltaT * intensityFactor;
-            const proximityThreshold = 5.0; // degrees (~550 km)
-            
-            // Update plate 1 vertices
-            if (plates[p1Index].crustMesh) {
-                plates[p1Index] = {
-                    ...plates[p1Index],
-                    crustMesh: plates[p1Index].crustMesh!.map(vertex => {
-                        // Check proximity to boundary
-                        const minDist = Math.min(
-                            ...boundaryPoints.map(bp => distance(vertex.pos, bp))
-                        );
-                        
-                        if (minDist < proximityThreshold / 111.0) { // Convert to radians approx
-                            // Apply uplift with distance falloff
-                            const falloff = 1.0 - (minDist / (proximityThreshold / 111.0));
-                            return {
-                                ...vertex,
-                                elevation: vertex.elevation + upliftAmount * falloff
-                            };
-                        }
-                        return vertex;
-                    })
-                };
-            }
-            
-            // Update plate 2 vertices
-            if (plates[p2Index].crustMesh) {
-                plates[p2Index] = {
-                    ...plates[p2Index],
-                    crustMesh: plates[p2Index].crustMesh!.map(vertex => {
-                        const minDist = Math.min(
-                            ...boundaryPoints.map(bp => distance(vertex.pos, bp))
-                        );
-                        
-                        if (minDist < proximityThreshold / 111.0) {
-                            const falloff = 1.0 - (minDist / (proximityThreshold / 111.0));
-                            return {
-                                ...vertex,
-                                elevation: vertex.elevation + upliftAmount * falloff
-                            };
-                        }
-                        return vertex;
-                    })
-                };
+            if (collision.type === 'continent-continent') {
+                // Both plates thicken (bilateral orogeny - Himalayas)
+                this.applyBilateralThickening(plates, p1Index, p2Index, boundaryPoints, thickeningAmount);
+            } else if (collision.type === 'ocean-continent' || collision.type === 'ocean-ocean') {
+                // Subduction: overriding plate gets volcanic arc, subducting gets trench
+                this.applySubductionPhysics(plates, p1Index, p2Index, boundaryPoints, thickeningAmount, collision);
             }
         }
         
         return {
             ...state,
-            world: {
-                ...state.world,
-                plates
-            }
+            world: { ...state.world, plates }
         };
     }
     
     /**
-     * Apply erosion via neighbor transport
+     * Classify collision type based on crust types
+     */
+    private classifyCollision(p1: TectonicPlate, p2: TectonicPlate): {
+        type: 'continent-continent' | 'ocean-continent' | 'ocean-ocean';
+        subductingPlateId: string;
+        overridingPlateId: string;
+    } {
+        const p1Oceanic = p1.crustType === 'oceanic';
+        const p2Oceanic = p2.crustType === 'oceanic';
+        
+        if (!p1Oceanic && !p2Oceanic) {
+            // Continent-Continent: slower/smaller plate "loses" (arbitrary)
+            const p1Rate = Math.abs(p1.motion.eulerPole.rate);
+            const p2Rate = Math.abs(p2.motion.eulerPole.rate);
+            return {
+                type: 'continent-continent',
+                subductingPlateId: p1Rate > p2Rate ? p1.id : p2.id,
+                overridingPlateId: p1Rate > p2Rate ? p2.id : p1.id
+            };
+        } else if (p1Oceanic && p2Oceanic) {
+            // Ocean-Ocean: older/denser plate subducts
+            return {
+                type: 'ocean-ocean',
+                subductingPlateId: p1.birthTime < p2.birthTime ? p1.id : p2.id,
+                overridingPlateId: p1.birthTime < p2.birthTime ? p2.id : p1.id
+            };
+        } else {
+            // Ocean-Continent: ocean always subducts
+            return {
+                type: 'ocean-continent',
+                subductingPlateId: p1Oceanic ? p1.id : p2.id,
+                overridingPlateId: p1Oceanic ? p2.id : p1.id
+            };
+        }
+    }
+    
+    /**
+     * Apply bilateral thickening for continent-continent collisions (Himalaya model)
+     */
+    private applyBilateralThickening(
+        plates: TectonicPlate[],
+        p1Index: number,
+        p2Index: number,
+        boundaryPoints: Coordinate[],
+        thickeningAmount: number
+    ): void {
+        const proximityThreshold = 5.0 / 111.0; // ~5 degrees
+        
+        for (const pIndex of [p1Index, p2Index]) {
+            if (!plates[pIndex].crustMesh) continue;
+            
+            plates[pIndex] = {
+                ...plates[pIndex],
+                crustMesh: plates[pIndex].crustMesh!.map(vertex => {
+                    const minDist = Math.min(...boundaryPoints.map(bp => distance(vertex.pos, bp)));
+                    
+                    if (minDist < proximityThreshold) {
+                        // Gaussian falloff for natural mountain profile
+                        const falloff = Math.exp(-(minDist / proximityThreshold) * 2);
+                        const newThickness = vertex.crustalThickness + thickeningAmount * falloff;
+                        
+                        // Cap at realistic maximum (~70km for Himalayas/Tibet)
+                        return {
+                            ...vertex,
+                            crustalThickness: Math.min(newThickness, 70)
+                        };
+                    }
+                    return vertex;
+                })
+            };
+        }
+    }
+    
+    /**
+     * Apply subduction physics (volcanic arc on overriding, trench on subducting)
+     */
+    private applySubductionPhysics(
+        plates: TectonicPlate[],
+        p1Index: number,
+        p2Index: number,
+        boundaryPoints: Coordinate[],
+        thickeningAmount: number,
+        collision: { subductingPlateId: string; overridingPlateId: string }
+    ): void {
+        const trenchProximity = 1.5 / 111.0;  // ~1.5 degrees - immediate boundary
+        const arcProximity = 3.0 / 111.0;     // ~3 degrees - volcanic arc zone
+        const arcInnerLimit = 1.0 / 111.0;    // Inner edge of arc
+        
+        for (const pIndex of [p1Index, p2Index]) {
+            const plate = plates[pIndex];
+            if (!plate.crustMesh) continue;
+            
+            const isSubducting = plate.id === collision.subductingPlateId;
+            
+            plates[pIndex] = {
+                ...plate,
+                crustMesh: plate.crustMesh.map(vertex => {
+                    const minDist = Math.min(...boundaryPoints.map(bp => distance(vertex.pos, bp)));
+                    
+                    if (isSubducting) {
+                        // Subducting plate: create trench (thin the crust near boundary)
+                        if (minDist < trenchProximity) {
+                            const falloff = 1 - (minDist / trenchProximity);
+                            const thinning = thickeningAmount * 0.5 * falloff;
+                            return {
+                                ...vertex,
+                                crustalThickness: Math.max(vertex.crustalThickness - thinning, 5)
+                            };
+                        }
+                    } else {
+                        // Overriding plate: volcanic arc inland from boundary
+                        if (minDist > arcInnerLimit && minDist < arcProximity) {
+                            const normalizedDist = (minDist - arcInnerLimit) / (arcProximity - arcInnerLimit);
+                            const arcProfile = Math.sin(normalizedDist * Math.PI);
+                            const newThickness = vertex.crustalThickness + thickeningAmount * arcProfile * 0.7;
+                            
+                            return {
+                                ...vertex,
+                                crustalThickness: Math.min(newThickness, 55)
+                            };
+                        }
+                    }
+                    return vertex;
+                })
+            };
+        }
+    }
+    
+    /**
+     * Apply slope-based erosion with sediment transport
      */
     private applyErosion(state: AppState, deltaT: number): AppState {
-        const erosionRate = state.world.globalOptions.erosionRate || 0.001;
+        const erosionRate = state.world.globalOptions.erosionRate || 0.003; // km/Ma
         const plates = [...state.world.plates];
         
         for (let i = 0; i < plates.length; i++) {
             const plate = plates[i];
             if (!plate.crustMesh || plate.crustMesh.length < 3) continue;
             
-            // Build neighbor graph (cached)
             const neighbors = this.getOrBuildNeighborGraph(plate);
-            
-            // Calculate transfers (two-pass to avoid order dependency)
-            const transfers = new Map<string, number>(); // vertexId -> net elevation change
+            const transfers = new Map<string, { thickness: number; sediment: number }>();
             
             for (const vertex of plate.crustMesh) {
                 const neighborIds = neighbors.get(vertex.id);
                 if (!neighborIds || neighborIds.size === 0) continue;
                 
-                // Find lower neighbors
-                const lowerNeighbors = Array.from(neighborIds)
-                    .map(nId => plate.crustMesh!.find(v => v.id === nId))
-                    .filter((n): n is CrustVertex => n !== undefined && n.elevation < vertex.elevation);
+                // Find lower neighbors and calculate slope
+                const lowerNeighbors: { vertex: CrustVertex; slope: number }[] = [];
+                
+                for (const nId of neighborIds) {
+                    const neighbor = plate.crustMesh!.find(v => v.id === nId);
+                    if (!neighbor || neighbor.elevation >= vertex.elevation) continue;
+                    
+                    const dist = distance(vertex.pos, neighbor.pos) * 111; // Convert to km
+                    const elevDiff = (vertex.elevation - neighbor.elevation) / 1000; // Convert to km
+                    const slope = dist > 0 ? elevDiff / dist : 0;
+                    
+                    if (slope > 0.001) { // Minimum slope threshold
+                        lowerNeighbors.push({ vertex: neighbor, slope });
+                    }
+                }
                 
                 if (lowerNeighbors.length === 0) continue;
                 
-                // Calculate total elevation difference
-                const totalDiff = lowerNeighbors.reduce(
-                    (sum, n) => sum + (vertex.elevation - n.elevation), 
-                    0
-                );
+                // Erosion rate increases with slope (steeper = faster)
+                const totalSlope = lowerNeighbors.reduce((sum, n) => sum + n.slope, 0);
+                const avgSlope = totalSlope / lowerNeighbors.length;
                 
-                // Transfer fraction of elevation to each lower neighbor
-                for (const neighbor of lowerNeighbors) {
-                    const diff = vertex.elevation - neighbor.elevation;
-                    const fraction = diff / totalDiff;
-                    const transferAmount = diff * erosionRate * deltaT * fraction;
+                // Non-linear erosion: E = k * slope^1.5 (stream power law approximation)
+                const effectiveErosion = erosionRate * Math.pow(avgSlope * 10, 1.5) * deltaT;
+                
+                // Don't erode below minimum thickness
+                const minThickness = vertex.isOceanic ? 5 : 20;
+                const availableToErode = Math.max(0, vertex.crustalThickness - minThickness);
+                const actualErosion = Math.min(effectiveErosion, availableToErode * 0.1);
+                
+                if (actualErosion <= 0) continue;
+                
+                // Transfer to lower neighbors proportionally
+                for (const { vertex: neighbor, slope } of lowerNeighbors) {
+                    const fraction = slope / totalSlope;
+                    const transferAmount = actualErosion * fraction;
                     
-                    // Record transfers
-                    transfers.set(vertex.id, (transfers.get(vertex.id) || 0) - transferAmount);
-                    transfers.set(neighbor.id, (transfers.get(neighbor.id) || 0) + transferAmount);
+                    // Record thickness loss from source
+                    const srcTransfer = transfers.get(vertex.id) || { thickness: 0, sediment: 0 };
+                    srcTransfer.thickness -= transferAmount;
+                    transfers.set(vertex.id, srcTransfer);
+                    
+                    // Record sediment gain at destination
+                    const dstTransfer = transfers.get(neighbor.id) || { thickness: 0, sediment: 0 };
+                    dstTransfer.sediment += transferAmount * 1000; // Convert km to m for sediment
+                    transfers.set(neighbor.id, dstTransfer);
                 }
             }
             
             // Apply transfers
             plates[i] = {
                 ...plate,
-                crustMesh: plate.crustMesh.map(vertex => ({
-                    ...vertex,
-                    elevation: vertex.elevation + (transfers.get(vertex.id) || 0)
-                }))
+                crustMesh: plate.crustMesh.map(vertex => {
+                    const transfer = transfers.get(vertex.id);
+                    if (!transfer) return vertex;
+                    
+                    return {
+                        ...vertex,
+                        crustalThickness: vertex.crustalThickness + transfer.thickness,
+                        sediment: vertex.sediment + transfer.sediment
+                    };
+                })
             };
         }
         
         return {
             ...state,
-            world: {
-                ...state.world,
-                plates
-            }
+            world: { ...state.world, plates }
         };
     }
     

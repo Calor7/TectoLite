@@ -249,9 +249,9 @@ function splitPolygonWithPolyline(
 function sampleNearestVertexAttributes(
     parentMesh: CrustVertex[],
     position: Coordinate
-): Pick<CrustVertex, 'elevation' | 'sediment'> {
+): Pick<CrustVertex, 'elevation' | 'sediment' | 'crustalThickness' | 'isOceanic'> {
     if (parentMesh.length === 0) {
-        return { elevation: 0, sediment: 0 };
+        return { elevation: 0, sediment: 0, crustalThickness: 35, isOceanic: false };
     }
 
     let nearest = parentMesh[0];
@@ -268,7 +268,9 @@ function sampleNearestVertexAttributes(
 
     return {
         elevation: nearest.elevation ?? 0,
-        sediment: nearest.sediment ?? 0
+        sediment: nearest.sediment ?? 0,
+        crustalThickness: nearest.crustalThickness ?? (nearest.isOceanic ? 7 : 35),
+        isOceanic: nearest.isOceanic ?? false
     };
 }
 
@@ -289,7 +291,9 @@ function rebuildMeshFromParent(
         return {
             ...vertex,
             elevation: attrs.elevation,
-            sediment: attrs.sediment
+            sediment: attrs.sediment,
+            crustalThickness: attrs.crustalThickness,
+            isOceanic: attrs.isOceanic
         };
     });
 }
