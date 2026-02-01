@@ -3442,8 +3442,26 @@ class TectoLiteApp {
     private deleteSelected(): void {
         this.pushState(); // Save state for undo
 
-        const { selectedFeatureId, selectedFeatureIds, selectedPlateId } = this.state.world;
+        const { selectedFeatureId, selectedFeatureIds, selectedPlateId, selectedLandmassId } = this.state.world;
         const paintIds = this.state.world.selectedPaintStrokeIds || (this.state.world.selectedPaintStrokeId ? [this.state.world.selectedPaintStrokeId] : []);
+
+        // Delete landmass if selected (priority over plate)
+        if (selectedLandmassId && selectedPlateId) {
+            this.state.world.plates = this.state.world.plates.map(p => {
+                if (p.id === selectedPlateId && p.landmasses) {
+                    return {
+                        ...p,
+                        landmasses: p.landmasses.filter(l => l.id !== selectedLandmassId)
+                    };
+                }
+                return p;
+            });
+            this.state.world.selectedLandmassId = null;
+            this.state.world.selectedLandmassIds = [];
+            this.updateUI();
+            this.canvasManager?.render();
+            return;
+        }
 
         if (paintIds.length > 0) {
             // Delete selected paint strokes

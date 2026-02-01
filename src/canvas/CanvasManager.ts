@@ -1030,9 +1030,17 @@ export class CanvasManager {
             const dx = e.clientX - this.lastMousePos.x;
             const dy = e.clientY - this.lastMousePos.y;
 
-            // Handle Edit Mode Dragging
+            // Handle Edit Mode Dragging (plate)
             if (this.editDragState && state.activeTool === 'edit' && geoPos) {
                  this.updateEditDrag(geoPos);
+                 this.render();
+                 this.lastMousePos = { x: e.clientX, y: e.clientY };
+                 return;
+            }
+
+            // Handle Edit Mode Dragging (landmass)
+            if (this.editLandmassDragState && state.activeTool === 'edit' && geoPos) {
+                 this.updateLandmassEditDrag(geoPos);
                  this.render();
                  this.lastMousePos = { x: e.clientX, y: e.clientY };
                  return;
@@ -1570,7 +1578,17 @@ export class CanvasManager {
                 this.ctx.stroke();
             }
 
-            // Draw Features (if visible)
+            // Draw Paint Strokes (if visible) - underneath landmasses and features
+            if (state.world.showPaint && plate.paintStrokes && plate.paintStrokes.length > 0) {
+                this.renderPaintStrokes(plate.paintStrokes, plate);
+            }
+
+            // Draw Landmasses (artistic layer - between paint strokes and features)
+            if (plate.landmasses && plate.landmasses.length > 0) {
+                this.renderLandmasses(plate.landmasses, plate, isSelected);
+            }
+
+            // Draw Features (if visible) - ON TOP of landmasses
             if (state.world.showFeatures) {
                 const currentTime = state.world.currentTime;
                 const showFuture = state.world.showFutureFeatures;
@@ -1595,16 +1613,6 @@ export class CanvasManager {
                         this.drawFeature(feature, isFeatureSelected, !isInTimeline);
                     }
                 }
-            }
-
-            // Draw Paint Strokes (if visible)
-            if (state.world.showPaint && plate.paintStrokes && plate.paintStrokes.length > 0) {
-                this.renderPaintStrokes(plate.paintStrokes, plate);
-            }
-
-            // Draw Landmasses (artistic layer on top of paint)
-            if (plate.landmasses && plate.landmasses.length > 0) {
-                this.renderLandmasses(plate.landmasses, plate, isSelected);
             }
 
             // Euler Pole Visualization
