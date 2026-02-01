@@ -98,10 +98,15 @@ export class SimulationEngine {
             });
 
             // Calculate Boundaries if enabled
-            let boundaries = state.world.boundaries;
-            if (state.world.globalOptions.enableBoundaryVisualization || state.world.globalOptions.enableDynamicFeatures) {
-                boundaries = BoundarySystem.detectBoundaries(newPlates);
-            }
+            // ALWAYS update boundaries if dynamicFeatures (Orogeny) is enabled, or if visualization is on.
+            // If neither is on, clear boundaries to prevent stale artifacts.
+            let boundaries: any[] = [];
+            
+            if (state.world.globalOptions.enableBoundaryVisualization || state.world.globalOptions.enableOrogeny) {
+                 boundaries = BoundarySystem.detectBoundaries(newPlates);
+            } else {
+                boundaries = [];
+            }   
 
             // Phase 3: Dynamic Feature Spawning - DISABLED
             let finalPlates = newPlates;
@@ -177,11 +182,16 @@ export class SimulationEngine {
             });
 
             // Calculate Boundaries if enabled
-            let boundaries = state.world.boundaries;
-            if (state.world.globalOptions.enableBoundaryVisualization || state.world.globalOptions.enableDynamicFeatures) {
-                boundaries = BoundarySystem.detectBoundaries(newPlates);
+            // ALWAYS update boundaries if dynamicFeatures (Orogeny) is enabled, or if visualization is on.
+            // If neither is on, clear boundaries to prevent stale artifacts.
+            let boundaries: any[] = [];
+            
+            if (state.world.globalOptions.enableBoundaryVisualization || state.world.globalOptions.enableOrogeny) {
+                 boundaries = BoundarySystem.detectBoundaries(newPlates);
+            } else {
+                boundaries = [];
             }
-
+            
             // Phase 3: Geological Automation (during tick)
             const tempState = {
                 ...state,

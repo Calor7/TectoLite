@@ -9,10 +9,17 @@ export class BoundarySystem {
         const boundaries: Boundary[] = [];
         const activePlates = plates.filter(p => !p.deathTime); // Only check active plates
 
+        // Pre-calculate BBoxes for performance
+        const bboxes = activePlates.map(p => this.getPlateBBox(p));
+
         for (let i = 0; i < activePlates.length; i++) {
             for (let j = i + 1; j < activePlates.length; j++) {
                 const p1 = activePlates[i];
                 const p2 = activePlates[j];
+                
+                // Fast BBox Overlap Check
+                // If bounding boxes don't overlap, skip expensive polygon clipping
+                if (!this.bboxesOverlap(bboxes[i], bboxes[j])) continue;
 
                 // 1. Check for basic Overlap (Convergent)
                 const overlap = this.checkOverlap(p1, p2);
@@ -48,10 +55,33 @@ export class BoundarySystem {
             const intersection = polygonClipping.intersection(coords1 as any, coords2 as any);
             if (intersection.length > 0) {
                 // Store as list of rings for proper rendering
-                const rings: Coordinate[][] = [];
+                let rings: Coordinate[][] = [];
                 intersection.forEach(multi => multi.forEach(ring => {
+                    // Filter "Dust": Remove tiny artifacts from clipping
+                    // Minimum 4 points (triangle + closing point)
+                    if (ring.length < 4) return;
+
+                    // Area Check (Shoelace Formula approximation)
+                    // Discard slivers with negligible area
+                    let area = 0;
+                    for (let i = 0; i < ring.length - 1; i++) {
+                        area += ring[i][0] * ring[i+1][1] - ring[i+1][0] * ring[i][1];
+                    }
+                    area = Math.abs(area / 2);
+                    
+                    // Threshold: 0.005 deg^2 (approx 50km^2) 
+                    // INCREASED from 0.001 to more aggressively filter ghost overlaps during divergence
+                    if (area < 0.005) return;
+
                     rings.push(ring.map(pt => [pt[0], pt[1]] as Coordinate));
                 }));
+                
+                // Limit to top 5 largest rings to prevent performance explosion on fragmentation
+                if (rings.length > 5) {
+                    // Sort by complexity/length estimation as proxy for importance
+                    rings.sort((a,b) => b.length - a.length);
+                    rings = rings.slice(0, 5);
+                }
 
                 // Approximate center
                 if (rings.length === 0 || rings[0].length === 0) return null;
@@ -63,6 +93,31 @@ export class BoundarySystem {
             // Ignore clipping errors
         }
         return null;
+    }
+
+    private static getPlateBBox(p: TectonicPlate) {
+        let minX = 180, maxX = -180, minY = 90, maxY = -90;
+        let hasPoints = false;
+        
+        for (const poly of p.polygons) {
+            for (const pt of poly.points) {
+                if (pt[0] < minX) minX = pt[0];
+                if (pt[0] > maxX) maxX = pt[0];
+                if (pt[1] < minY) minY = pt[1];
+                if (pt[1] > maxY) maxY = pt[1];
+                hasPoints = true;
+            }
+        }
+        
+        // Edge case handling for wrapping? (Ignored for now, standard -180/180 check)
+        
+        if (!hasPoints) return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+        // Expand slightly to catch edge cases
+        return { minX: minX - 0.1, maxX: maxX + 0.1, minY: minY - 0.1, maxY: maxY + 0.1 };
+    }
+
+    private static bboxesOverlap(b1: any, b2: any): boolean {
+        return !(b1.maxX < b2.minX || b1.minX > b2.maxX || b1.maxY < b2.minY || b1.minY > b2.maxY);
     }
 
     private static polyToRing(poly: Polygon): number[][] {

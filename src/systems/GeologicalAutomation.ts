@@ -110,30 +110,37 @@ export class GeologicalAutomationSystem {
         };
     }
 
-    private getRandomBoundaryPoint(rings: Coordinate[][]): Coordinate {
+    private getRandomBoundaryPoint(rings: Coordinate[][]): Coordinate | null {
         // Collect all segments with their lengths to ensure uniform distribution
         // This fixes "bunching" where areas with many small vertices (corners) got disproportionate spawns
         const segments: { p1: Coordinate, p2: Coordinate, length: number }[] = [];
         let totalLength = 0;
+        
+        // Safety: Limit processing of super-detailed rings to prevent loop hang
+        // Downsample rings if they have excessive vertex count (> 200)
+        // This is purely for performance during complex boundary interactions
 
         for (const ring of rings) {
             if (ring.length < 2) continue;
-            for (let i = 0; i < ring.length - 1; i++) {
+            
+            const step = ring.length > 200 ? Math.ceil(ring.length / 100) : 1;
+
+            for (let i = 0; i < ring.length - step; i += step) {
                 const p1 = ring[i];
-                const p2 = ring[i+1];
+                const p2 = ring[i+step]; // Skip to next step
                 
                 // Calculate distance in radians (great circle)
                 const d = distance(p1, p2);
                 
                 // Skip effectively zero-length segments or artifacts
-                if (d > 0.000001) { 
+                if (d > 0.000001 && !isNaN(d)) { 
                     segments.push({ p1, p2, length: d });
                     totalLength += d;
                 }
             }
         }
 
-        if (segments.length === 0) return [0, 0]; // Fallback
+        if (segments.length === 0 || totalLength === 0) return null;
 
         // Weighted Random Selection: Likelihood is proportional to physical length
         let target = Math.random() * totalLength;
@@ -169,8 +176,8 @@ export class GeologicalAutomationSystem {
              boundaries = BoundarySystem.detectBoundaries(state.world.plates);
         }
         
-        // Filter for convergent
-        const collisions = boundaries.filter(b => b.type === 'convergent');
+        // Filter for active boundaries (Convergent or Divergent)
+        const collisions = boundaries.filter(b => b.type === 'convergent' || b.type === 'divergent');
         
         if (collisions.length === 0) return state;
 
@@ -194,6 +201,22 @@ export class GeologicalAutomationSystem {
 
              // Intersection Center
              if (boundary.points.length === 0 || boundary.points[0].length === 0) continue;
+
+             // PHYSICAL LENGTH THRESHOLD CHECK
+             // Calculate the actual length of the collision/divergence boundary in radians
+             let boundaryLengthRad = 0;
+             for (const ring of boundary.points) {
+                 for (let k = 0; k < ring.length - 1; k++) {
+                     // Quick approx distance is fine for threshold check to avoid heavy trig
+                     // But we use real distance to be safe
+                     boundaryLengthRad += distance(ring[k], ring[k+1]);
+                 }
+             }
+
+             // Threshold: 0.01 radians (~60km). 
+             // If the entire interaction length is smaller than this, it's a "last frame" artifact
+             // or a single point contact. Skip processing to prevent freeze/glitches.
+             if (boundaryLengthRad < 0.01) continue;
              
              // Rate Limit / Existence Check
              // Avoid spamming features every tick. Check if we SPAWNED something for this boundary recently (e.g. within last 1 Ma).
@@ -255,20 +278,26 @@ export class GeologicalAutomationSystem {
 
                  // Generate a distributed point
                  const seedPoint = this.getRandomBoundaryPoint(boundary.points);
+                 if (!seedPoint) {
+                     failCount++;
+                     continue;
+                 }
                  
                  // Spatial Density Check against EXISTING features on relevant plates
                  // We only check if the NEW point is too close to ANY existing mountain on that plate.
                  
                  // Check P1
                  let p1Clear = true;
-                 if (t1 === 'continental') { // Only care if we are spawning here
+                 // For rifts, we check feature type 'rift' too
+                 if (t1 === 'continental' || boundary.type === 'divergent') { // Only care if we are spawning here
                      p1Clear = this.checkClearance(plates[p1Index], seedPoint, minSpacingRad);
                  }
                  
                  // Check P2
                  let p2Clear = true;
                  const isContCont = t1 === 'continental' && t2 === 'continental';
-                 if (isContCont) {
+                 // For divergence, we generally want symmetry
+                 if (isContCont || boundary.type === 'divergent') {
                      p2Clear = this.checkClearance(plates[p2Index], seedPoint, minSpacingRad);
                  }
 
@@ -276,49 +305,58 @@ export class GeologicalAutomationSystem {
                      failCount++;
                      continue; 
                  }
-                 if (isContCont && (!p1Clear || !p2Clear)) {
-                     // Strict Mode: Need space on both sides for nice shared belt?
-                     // Nah, let's just count it as half-fail but proceed if one side is open?
-                     // Actually, usually users want symmetry. Let's count it as fail if one side blocks.
+                 if ((isContCont || boundary.type === 'divergent') && (!p1Clear || !p2Clear)) {
+                     // Strict Mode: Need space on both sides for nice shared belt/rift
                      failCount++;
                      continue; 
                  }
 
-                 if (!p1Clear && t1 === 'continental') { failCount++; continue; }
+                 if (!p1Clear && t1 === 'continental' && boundary.type === 'convergent') { failCount++; continue; }
                  
                  // If we got here, we have clearance
                  let didSpawn = false;
 
-                 if (t1 === 'continental' && t2 === 'continental') {
-                     // Cont-Cont Collision -> Mountains on BOTH
-                     if (p1Clear) plates[p1Index] = this.addFeature(plates[p1Index], 'mountain', seedPoint, boundary.id, currentTime, 'Orogeny Belt');
-                     if (p2Clear) plates[p2Index] = this.addFeature(plates[p2Index], 'mountain', seedPoint, boundary.id, currentTime, 'Orogeny Belt');
+                 if (boundary.type === 'convergent') {
+                     if (t1 === 'continental' && t2 === 'continental') {
+                         // Cont-Cont Collision -> Mountains on BOTH
+                         if (p1Clear) plates[p1Index] = this.addFeature(plates[p1Index], 'mountain', seedPoint, boundary.id, currentTime, 'Orogeny Belt');
+                         if (p2Clear) plates[p2Index] = this.addFeature(plates[p2Index], 'mountain', seedPoint, boundary.id, currentTime, 'Orogeny Belt');
+                         didSpawn = true;
+                     }
+                     else if (t1 === 'oceanic' && t2 === 'oceanic') {
+                         // Oce-Oce -> Older/Denser subducts.
+                         const d1 = p1.density || 3.0;
+                         const d2 = p2.density || 3.0;
+                         const p1Denser = d1 > d2;
+                         const overridingIndex = p1Denser ? p2Index : p1Index; 
+                         
+                         if (this.checkClearance(plates[overridingIndex], seedPoint, minSpacingRad)) {
+                            plates[overridingIndex] = this.addFeature(plates[overridingIndex], 'volcano', seedPoint, boundary.id, currentTime, 'Island Arc');
+                            didSpawn = true;
+                         } else {
+                             failCount++;
+                         }
+                     }
+                     else {
+                         // Mix -> Oceanic Subducts
+                         const contIdx = t1 === 'continental' ? p1Index : p2Index;
+                         
+                         if (this.checkClearance(plates[contIdx], seedPoint, minSpacingRad)) {
+                            plates[contIdx] = this.addFeature(plates[contIdx], 'volcano', seedPoint, boundary.id, currentTime, 'Continental Arc');
+                            didSpawn = true;
+                         } else {
+                             failCount++;
+                         }
+                     }
+                 } else if (boundary.type === 'divergent') {
+                     // Divergence -> Spreading Center / Rift
+                     // Generally symmetrical
+                     const featureType = 'rift';
+                     const desc = (t1 === 'oceanic' && t2 === 'oceanic') ? 'Mid-Ocean Ridge' : 'Rift Zone';
+
+                     if (p1Clear) plates[p1Index] = this.addFeature(plates[p1Index], featureType, seedPoint, boundary.id, currentTime, desc);
+                     if (p2Clear) plates[p2Index] = this.addFeature(plates[p2Index], featureType, seedPoint, boundary.id, currentTime, desc);
                      didSpawn = true;
-                 }
-                 else if (t1 === 'oceanic' && t2 === 'oceanic') {
-                     // Oce-Oce -> Older/Denser subducts.
-                     const d1 = p1.density || 3.0;
-                     const d2 = p2.density || 3.0;
-                     const p1Denser = d1 > d2;
-                     const overridingIndex = p1Denser ? p2Index : p1Index; 
-                     
-                     if (this.checkClearance(plates[overridingIndex], seedPoint, minSpacingRad)) {
-                        plates[overridingIndex] = this.addFeature(plates[overridingIndex], 'volcano', seedPoint, boundary.id, currentTime, 'Island Arc');
-                        didSpawn = true;
-                     } else {
-                         failCount++;
-                     }
-                 }
-                 else {
-                     // Mix -> Oceanic Subducts
-                     const contIdx = t1 === 'continental' ? p1Index : p2Index;
-                     
-                     if (this.checkClearance(plates[contIdx], seedPoint, minSpacingRad)) {
-                        plates[contIdx] = this.addFeature(plates[contIdx], 'volcano', seedPoint, boundary.id, currentTime, 'Continental Arc');
-                        didSpawn = true;
-                     } else {
-                         failCount++;
-                     }
                  }
 
                  if (didSpawn) {
@@ -344,7 +382,8 @@ export class GeologicalAutomationSystem {
         // Simple linear scan of features. Optimization: Spatial index if needed later.
         for (const f of plate.features) {
             // Only care about orogeny features for spacing
-            if (f.type !== 'mountain' && f.type !== 'volcano') continue;
+            // FIX: include 'rift' to prevent infinite spawning loop
+            if (f.type !== 'mountain' && f.type !== 'volcano' && f.type !== 'rift') continue;
             
             const d = distance(pos, f.position);
             if (d < minRad) return false;
