@@ -214,13 +214,14 @@ export class GeoPackageExporter {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?);
     `);
 
+    const currentTime = this.state.world.currentTime;
     for (const plate of this.state.world.plates) {
       for (const feature of plate.features) {
         // Filter: only export features active at current time
-        if (feature.generatedAt && feature.generatedAt > this.state.world.currentTime) {
+        if (feature.generatedAt && feature.generatedAt > currentTime) {
           continue; // Feature not yet created
         }
-        if (feature.deathTime !== undefined && feature.deathTime !== null && feature.deathTime <= this.state.world.currentTime) {
+        if (feature.deathTime !== undefined && feature.deathTime !== null && feature.deathTime <= currentTime) {
           continue; // Feature already dead
         }
 
@@ -248,10 +249,11 @@ export class GeoPackageExporter {
     if (!this.db) throw new Error('Database not initialized');
 
     // Generate heightmap as PNG canvas
+    const { width, height, projection } = this.options;
     const hmOptions: HeightmapOptions = {
-      width: this.options.width,
-      height: this.options.height,
-      projection: this.options.projection,
+      width,
+      height,
+      projection,
       smooth: false
     };
 
@@ -324,10 +326,10 @@ export class GeoPackageExporter {
       0,
       1,
       1,
-      this.options.width,
-      this.options.height,
-      360.0 / this.options.width,
-      180.0 / this.options.height
+      width,
+      height,
+      360.0 / width,
+      180.0 / height
     ]);
     insertMatrix.step();
     insertMatrix.free();
