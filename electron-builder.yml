@@ -8,6 +8,14 @@ win:
   target:
     - portable
 
+mac:
+  target:
+    - dmg
+
+linux:
+  target:
+    - AppImage
+
 portable:
   artifactName: ${productName}-${version}.exe
 

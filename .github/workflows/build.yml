@@ -10,6 +10,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -34,12 +37,14 @@ jobs:
       - name: Build application
         run: npm run build
       
-      - name: Package Electron app
-        run: npm run electron-build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Upload artifacts
+      - name: Package Electron app (all OS)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          npm run build
+          npx electron-builder --publish=never
+
+      - name: Upload artifacts (per OS)
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: TectoLite-${{ matrix.os }}
@@ -47,19 +52,24 @@ jobs:
             release/*.exe
             release/*.dmg
             release/*.AppImage
-            release/*.deb
-            release/*.rpm
           if-no-files-found: warn
-      
-      - name: Release
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Release (exe + dmg + AppImage)
         uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            release/*.exe
-            release/*.dmg
-            release/*.AppImage
-            release/*.deb
-            release/*.rpm
+            release-artifacts/**/*.exe
+            release-artifacts/**/*.dmg
+            release-artifacts/**/*.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
