@@ -2,6 +2,7 @@
 import { AppState, TectonicPlate, Feature, Polygon, Coordinate, generateId, MotionKeyframe } from './types';
 import { calculateSphericalCentroid, latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize } from './utils/sphericalMath';
 import polygonClipping from 'polygon-clipping';
+import { isPointInPolygon } from './SplitTool';
 
 interface FuseResult {
     success: boolean;
@@ -140,17 +141,48 @@ export function fusePlates(
                     plate.center[1] + pt[1]
                 ] as Coordinate);
                 
-                // Convert from world coordinates to fused plate's local coordinates
-                const fusedLocalPoints = worldPoints.map(pt => [
-                    pt[0] - newCenter[0],
-                    pt[1] - newCenter[1]
-                ] as Coordinate);
+                // DESTRUCTIVE FILTER: Only keep points that are actually inside the source plate's polygons
+                // This "cuts off" the invisible part of the paint stroke so it doesn't reappear after fusion
+                // We create new strokes for every continuous segment inside the boundary
                 
-                mergedPaintStrokes.push({
-                    ...stroke,
-                    points: fusedLocalPoints,
-                    id: generateId()
-                });
+                const insideSegments: Coordinate[][] = [];
+                let currentSegment: Coordinate[] = [];
+
+                for (const pt of worldPoints) {
+                    const isInside = plate.polygons.some(poly => isPointInPolygon(pt, poly.points));
+                    
+                    if (isInside) {
+                        currentSegment.push(pt);
+                    } else if (currentSegment.length > 0) {
+                         // End of a valid segment
+                         if (currentSegment.length >= 2 || stroke.width > 0) { // allow single points if not a line? usually width > 0 for brush
+                             insideSegments.push([...currentSegment]);
+                         }
+                         currentSegment = [];
+                    }
+                }
+                
+                // Catch the last segment
+                if (currentSegment.length > 0) {
+                     insideSegments.push([...currentSegment]);
+                }
+
+                // Add all valid clamped segments to the new merged plate
+                for (const segment of insideSegments) {
+                    if (segment.length < 1) continue;
+
+                    // Convert from world coordinates to fused plate's local coordinates
+                    const fusedLocalPoints = segment.map(pt => [
+                        pt[0] - newCenter[0],
+                        pt[1] - newCenter[1]
+                    ] as Coordinate);
+                    
+                    mergedPaintStrokes.push({
+                        ...stroke,
+                        points: fusedLocalPoints,
+                        id: generateId()
+                    });
+                }
             }
         }
     }

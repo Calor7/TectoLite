@@ -21,7 +21,7 @@ interface SplitPolyline {
 }
 
 // Check if a point is inside a spherical polygon using ray casting
-function isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
+export function isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
     if (polygon.length < 3) return false;
 
     let windingNumber = 0;
