@@ -4,7 +4,8 @@ import {
     latLonToVector,
     vectorToLatLon,
     rotateVector,
-    calculateSphericalCentroid
+    calculateSphericalCentroid,
+    Vector3
 } from './utils/sphericalMath';
 import { BoundarySystem } from './BoundarySystem';
 import { GeologicalAutomationSystem } from './systems/GeologicalAutomation';
@@ -232,6 +233,21 @@ export class SimulationEngine {
     }
 
     private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {
+        // console.log('[CALC_PLATE] Calculating plate:', plate.id, 'at time:', time);
+        
+        // Check if this plate is linked to a parent plate - if so, inherit parent motion
+        let parentLinkedPlate: TectonicPlate | undefined;
+        
+        if (plate.linkedToPlateId) {
+            parentLinkedPlate = allPlates.find(p => p.id === plate.linkedToPlateId);
+            
+            // Prevent infinite recursion: if parent is also linked back to this plate, break the cycle
+            if (parentLinkedPlate && parentLinkedPlate.linkedToPlateId === plate.id) {
+                console.warn(`Circular link detected between ${plate.id} and ${parentLinkedPlate.id}, breaking link`);
+                parentLinkedPlate = undefined;
+            }
+        }
+
         // First, check if we need to inherit features from parent plate(s)
         let inheritedFeatures: Feature[] = [];
         const parentIds = plate.parentPlateIds || (plate.parentPlateId ? [plate.parentPlateId] : []);
@@ -298,8 +314,72 @@ export class SimulationEngine {
         const pole = activeKeyframe.eulerPole;
         const elapsed = time - activeKeyframe.time;
 
-        if (!pole || pole.rate === 0 || elapsed === 0) {
-            // No motion from this keyframe, use snapshot geometry but preserve dynamic features
+        // Prepare parent motion if this plate is linked to another
+        let parentAxis: Vector3 | null = null;
+        let parentAngle: number = 0;
+        let relativeAxis: Vector3 | null = null;
+        let relativeAngle: number = 0;
+
+        if (parentLinkedPlate) {
+            // Get parent plate's motion at this time
+            const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
+            const parentActiveKeyframe = parentKeyframes
+                .filter(kf => kf.time <= time)
+                .sort((a, b) => b.time - a.time)[0];
+
+            if (parentActiveKeyframe && parentActiveKeyframe.eulerPole) {
+                const parentPole = parentActiveKeyframe.eulerPole;
+                parentAxis = latLonToVector(parentPole.position);
+                parentAngle = toRad(parentPole.rate * (time - parentActiveKeyframe.time));
+            }
+
+            // Get relative motion (if any)
+            const relativeEuler = plate.relativeEulerPole;
+            if (relativeEuler) {
+                relativeAxis = latLonToVector(relativeEuler.position);
+                relativeAngle = toRad(relativeEuler.rate * (time - plate.birthTime)); // Start from when plate was born/linked
+            }
+        }
+
+        // Prepare own motion (only if not fully inherited)
+        let ownAxis: Vector3 | null = null;
+        let ownAngle: number = 0;
+        if (pole && pole.rate !== 0 && elapsed !== 0) {
+            ownAxis = latLonToVector(pole.position);
+            ownAngle = toRad(pole.rate * elapsed);
+        }
+
+        // Helper to apply a single rotation
+        const applyRotation = (coord: Coordinate, axis: Vector3, angle: number): Coordinate => {
+            if (angle === 0) return coord;
+            const v = latLonToVector(coord);
+            const vRot = rotateVector(v, axis, angle);
+            return vectorToLatLon(vRot);
+        };
+
+        // Helper to apply all active rotations in sequence: parent -> relative -> own
+        const applyAllRotations = (coord: Coordinate): Coordinate => {
+            let result = coord;
+            if (parentAxis && parentAngle !== 0) {
+                result = applyRotation(result, parentAxis, parentAngle);
+            }
+            if (relativeAxis && relativeAngle !== 0) {
+                result = applyRotation(result, relativeAxis, relativeAngle);
+            }
+            if (ownAxis && ownAngle !== 0) {
+                result = applyRotation(result, ownAxis, ownAngle);
+            }
+            return result;
+        };
+
+        // Check if we have any motion at all
+        const hasParentMotion = parentAxis && parentAngle !== 0;
+        const hasRelativeMotion = relativeAxis && relativeAngle !== 0;
+        const hasOwnMotion = ownAxis && ownAngle !== 0;
+        const hasAnyMotion = hasParentMotion || hasRelativeMotion || hasOwnMotion;
+
+        // No motion case
+        if (!hasAnyMotion) {
             const snapshotFeatureIds = new Set(activeKeyframe.snapshotFeatures.map(f => f.id));
             const dynamicFeatures = plate.features.filter(f =>
                 !snapshotFeatureIds.has(f.id) &&
@@ -316,37 +396,55 @@ export class SimulationEngine {
             };
         }
 
-        // Rotate from the keyframe's snapshot geometry
-        const axis = latLonToVector(pole.position);
-        const elapsedFromKeyframe = time - activeKeyframe.time;
-        const angle = toRad(pole.rate * elapsedFromKeyframe);
+        // Transform with all accumulated rotations
+        const transform = (coord: Coordinate): Coordinate => applyAllRotations(coord);
 
-        const transform = (coord: Coordinate): Coordinate => {
-            const v = latLonToVector(coord);
-            const vRot = rotateVector(v, axis, angle);
-            return vectorToLatLon(vRot);
-        };
-
-        // Transform helper: STRICTLY uses the provided startTime for rotation calculation.
-        // Does NOT fall back to feat.generatedAt automatically, to prevent stale timestamps
-        // (like inherited features) from causing over-rotation.
-        // useOriginal: If true, uses feat.originalPosition as source (if available)
+        // Helper: Transform feature with time-aware rotation
+        // Features rotate from their creation time, not from keyframe time
         const transformFeature = (feat: Feature, startTime: number, useOriginal: boolean = false): Feature => {
             const featureElapsed = Math.max(0, time - startTime);
-            const featureAngle = toRad(pole.rate * featureElapsed);
-
-            if (featureAngle === 0) {
-                return feat;
+            
+            // Calculate rotation for this specific feature based on its lifetime
+            let result = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
+            
+            // Apply parent motion if linked (for the feature's lifetime)
+            if (parentAxis && parentLinkedPlate) {
+                const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
+                const parentActiveKeyframe = parentKeyframes
+                    .filter(kf => kf.time <= startTime)
+                    .sort((a, b) => b.time - a.time)[0];
+                    
+                if (parentActiveKeyframe && parentActiveKeyframe.eulerPole) {
+                    const parentPole = parentActiveKeyframe.eulerPole;
+                    const parentFeatureAngle = toRad(parentPole.rate * featureElapsed);
+                    if (parentFeatureAngle !== 0) {
+                        result = applyRotation(result, parentAxis, parentFeatureAngle);
+                    }
+                }
             }
-
-            const sourcePos = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
-            const v = latLonToVector(sourcePos);
-            const vRot = rotateVector(v, axis, featureAngle);
+            
+            // Apply relative motion if any
+            if (relativeAxis && plate.relativeEulerPole) {
+                const relativeEuler = plate.relativeEulerPole;
+                const relativeFeatureElapsed = Math.max(0, time - Math.max(startTime, plate.birthTime));
+                const relativeFeatureAngle = toRad(relativeEuler.rate * relativeFeatureElapsed);
+                if (relativeFeatureAngle !== 0) {
+                    result = applyRotation(result, relativeAxis, relativeFeatureAngle);
+                }
+            }
+            
+            // Apply own motion
+            if (ownAxis && pole) {
+                const ownFeatureAngle = toRad(pole.rate * featureElapsed);
+                if (ownFeatureAngle !== 0) {
+                    result = applyRotation(result, ownAxis, ownFeatureAngle);
+                }
+            }
 
             return {
                 ...feat,
-                position: vectorToLatLon(vRot),
-                originalPosition: feat.originalPosition // Explicitly preserve originalPosition
+                position: result,
+                originalPosition: feat.originalPosition
             };
         };
 
@@ -389,6 +487,8 @@ export class SimulationEngine {
 
         // Helper for Point Arrays (Paint Strokes)
         const transformStroke = (stroke: PaintStroke, startTime: number, useOriginal: boolean = false): PaintStroke => {
+             if (!ownAxis || !pole) return stroke; // No own axis or pole means no rotation to apply
+             
              const strokeElapsed = Math.max(0, time - startTime);
              const strokeAngle = toRad(pole.rate * strokeElapsed);
 
@@ -396,13 +496,10 @@ export class SimulationEngine {
 
              // Source points: use originalPoints if available and requested
              const sourcePoints = (useOriginal && stroke.originalPoints) ? stroke.originalPoints : stroke.points;
-             
-             // Optimize rotation: Single axis object
-             const strokeAxis = axis; 
 
              const newPoints = sourcePoints.map(p => {
                  const v = latLonToVector(p);
-                 const vRot = rotateVector(v, strokeAxis, strokeAngle);
+                 const vRot = rotateVector(v, ownAxis!, strokeAngle);
                  return vectorToLatLon(vRot);
              });
 
@@ -436,7 +533,7 @@ export class SimulationEngine {
         // Transform mesh vertices to follow plate rotation
         // CHANGED: Use incremental update from last simulated time to prevent history rewriting issues
         let newCrustMesh = plate.crustMesh;
-        if (plate.crustMesh && plate.crustMesh.length > 0) {
+        if (plate.crustMesh && plate.crustMesh.length > 0 && ownAxis && pole) {
             // Determine the time the current mesh positions are valid for
             const meshTime = plate.elevationSimulatedTime !== undefined ? plate.elevationSimulatedTime : plate.birthTime;
             
@@ -449,7 +546,7 @@ export class SimulationEngine {
                 newCrustMesh = plate.crustMesh.map(vertex => {
                     // Always use current 'pos' as the source for incremental update
                     const v = latLonToVector(vertex.pos);
-                    const vRot = rotateVector(v, axis, meshAngle);
+                    const vRot = rotateVector(v, ownAxis!, meshAngle);
                     return {
                         ...vertex,
                         pos: vectorToLatLon(vRot)

@@ -1694,7 +1694,7 @@ export class CanvasManager {
 
         // Draw Links (if tool active or always?)
         // Let's draw if Link tool is active OR if a linked plate is selected
-        if (state.activeTool === 'link' || (state.world.selectedPlateId && state.world.plates.find(p => p.id === state.world.selectedPlateId)?.linkedPlateIds?.length)) {
+        if (state.activeTool === 'link' || (state.world.selectedPlateId && state.world.plates.find(p => p.id === state.world.selectedPlateId)?.linkedToPlateId)) {
             this.drawLinks(state, path);
         }
 
@@ -1793,33 +1793,33 @@ export class CanvasManager {
     }
 
     private drawLinks(state: AppState, path: any): void {
-        const drawnPairs = new Set<string>();
         this.ctx.save();
         this.ctx.strokeStyle = '#00ffcc'; // Cyan/Teal for links
         this.ctx.lineWidth = 2;
         this.ctx.setLineDash([8, 4]);
 
         for (const plate of state.world.plates) {
-            if (!plate.linkedPlateIds || plate.linkedPlateIds.length === 0) continue;
-
-            for (const linkedId of plate.linkedPlateIds) {
-                const partner = state.world.plates.find(p => p.id === linkedId);
-                if (partner) {
-                    // Unique key for pair
-                    const key = [plate.id, linkedId].sort().join('-');
-                    if (drawnPairs.has(key)) continue;
-                    drawnPairs.add(key);
-
-                    // Draw line
+            // Draw link from child to parent
+            if (plate.linkedToPlateId) {
+                const parent = state.world.plates.find(p => p.id === plate.linkedToPlateId);
+                if (parent) {
+                    // Draw arrow from child to parent
                     this.ctx.beginPath();
                     path({
                         type: 'LineString',
-                        coordinates: [plate.center, partner.center]
+                        coordinates: [plate.center, parent.center]
                     } as any);
                     this.ctx.stroke();
 
-                    // Draw Link Icon at midpoint?
-                    // Maybe just the line is enough for now.
+                    // Draw arrowhead pointing to parent (indicating direction of inheritance)
+                    const midpoint: Coordinate = [(plate.center[0] + parent.center[0]) / 2, (plate.center[1] + parent.center[1]) / 2];
+                    this.ctx.fillStyle = '#00ffcc';
+                    this.ctx.beginPath();
+                    const proj = this.projectionManager.project(midpoint);
+                    if (proj) {
+                        this.ctx.arc(proj[0], proj[1], 4, 0, 2 * Math.PI);
+                        this.ctx.fill();
+                    }
                 }
             }
         }

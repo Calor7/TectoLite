@@ -90,6 +90,8 @@ export interface Landmass {
   deathTime?: number;            // Geological time when destroyed (undefined = active)
   zIndex?: number;               // Visual layering within plate (higher = on top)
   lastEditedTime?: number;       // Geological time when last edited
+  linkedToLandmassId?: string;  // Parent landmass id this is linked to (inherits parent motion + optional relative)
+  relativeEulerPole?: { position: Coordinate; rate: number }; // Optional relative rotation on top of parent motion
 }
 
 export interface Feature {
@@ -348,7 +350,9 @@ export interface TectonicPlate {
   name: string;
   description?: string; // User-defined description
   inheritDescription?: boolean; // Whether children inherit this description on split
-  linkedPlateIds?: string[]; // IDs of plates linked to this one (synchronized motion)
+  linkedToPlateId?: string; // Parent plate id this plate's motion is linked to (inherits parent motion + optional relative)
+  relativeEulerPole?: { position: Coordinate; rate: number }; // Optional relative rotation on top of parent motion
+  motionClusterParentId?: string; // Parent plate id for motion clusters
   zIndex?: number; // Visual layering order (higher = on top)
   color: string;
 

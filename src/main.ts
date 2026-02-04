@@ -44,7 +44,10 @@ class TectoLiteApp {
     private historyManager: HistoryManager = new HistoryManager();
     private activeToolText: string = "INFO LOADING...";
     private fusionFirstPlateId: string | null = null; // Track first plate for fusion
+    private fuseMotionClusterMode: boolean = false; // Fuse tool sub-option
     private activeLinkSourceId: string | null = null; // Track first plate for linking
+    private activeLinkSourceLandmassId: string | null = null; // Track first landmass for linking (landmass-to-landmass)
+    private activeLinkSourcePlateId: string | null = null; // Track parent plate of first landmass when linking
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
     private timelineSystem: TimelineSystem | null = null;
     private lastFusionSuggestionKey: string | null = null;
@@ -623,6 +626,17 @@ class TectoLiteApp {
                      <button class="btn btn-secondary" id="btn-split-cancel">✗ Cancel</button>
                  </div>
 
+                 <div id="fuse-controls" style="display: none; flex-direction:column; gap:6px; margin-top: 8px; padding: 8px; border: 1px solid var(--border-default); border-radius: 4px;">
+                     <div style="font-size: 12px; font-weight: bold; color: var(--text-primary);">🧬 Fuse Tool</div>
+                     <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer;">
+                         <input type="checkbox" id="check-fuse-motion-cluster"> Motion Cluster (Lock Motion)
+                         <span class="info-icon" data-tooltip="Locks the child plate's Euler pole to the parent plate's motion. Example: Africa–Somalia or Australia–Zealandia motion clusters.">(i)</span>
+                     </label>
+                     <div style="font-size: 10px; color: var(--text-secondary);">
+                         Parent plate motion is applied first, then the child’s own Euler motion.
+                     </div>
+                 </div>
+
                  <div id="motion-controls" style="display: none; flex-direction:column; gap:4px;">
                       <div style="font-size: 11px; color: var(--text-secondary);">Confirm Motion?</div>
                       <button class="btn btn-success" id="btn-motion-apply">✓ Apply</button>
@@ -1026,6 +1040,15 @@ class TectoLiteApp {
     public showEventPopup(event: TectonicEvent): void {
         const [snap1, snap2] = event.plateSnapshots;
         const isCollision = event.eventType === 'collision';
+
+        // Clear pending event ID immediately so simulation can continue updating in background
+        this.state = {
+            ...this.state,
+            world: {
+                ...this.state.world,
+                pendingEventId: null
+            }
+        };
 
         // Pause simulation while popup is open
         const wasPlaying = this.state.world.isPlaying;
@@ -1667,6 +1690,15 @@ class TectoLiteApp {
         document.getElementById('check-show-paint')?.addEventListener('change', (e) => {
             this.state.world.showPaint = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
+        });
+
+        document.getElementById('check-fuse-motion-cluster')?.addEventListener('change', (e) => {
+            this.fuseMotionClusterMode = (e.target as HTMLInputElement).checked;
+            if (this.state.activeTool === 'fuse') {
+                this.updateHint(this.fuseMotionClusterMode
+                    ? "Select parent plate to create a motion cluster."
+                    : "Select first plate to fuse.");
+            }
         });
 
         document.getElementById('check-show-event-icons')?.addEventListener('change', (e) => {
@@ -3227,6 +3259,11 @@ class TectoLiteApp {
             paintControls.style.display = tool === 'paint' ? 'flex' : 'none';
         }
 
+        const fuseControls = document.getElementById('fuse-controls');
+        if (fuseControls) {
+            fuseControls.style.display = tool === 'fuse' ? 'flex' : 'none';
+        }
+
         const editControls = document.getElementById('edit-controls');
         if (editControls && tool !== 'edit') {
             editControls.style.display = 'none';
@@ -3261,10 +3298,12 @@ class TectoLiteApp {
                 hintText = "Click a plate to start splitting.";
                 break;
             case 'fuse':
-                hintText = "Select first plate to fuse.";
+                hintText = this.fuseMotionClusterMode
+                    ? "Select parent plate to create a motion cluster."
+                    : "Select first plate to fuse.";
                 break;
             case 'link':
-                hintText = "Select first plate to link.";
+                hintText = "Select a plate or landmass to link it with another.";
                 break;
             case 'paint':
                 hintText = "Select a plate, then draw on it with the brush. Adjust size and color in Tool Options.";
@@ -3549,7 +3588,11 @@ class TectoLiteApp {
     private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null, paintStrokeId: string | null = null, landmassId: string | null = null): void {
         // Reset fusion/link state if switching away
         if (this.state.activeTool !== 'fuse') this.fusionFirstPlateId = null;
-        if (this.state.activeTool !== 'link') this.activeLinkSourceId = null;
+        if (this.state.activeTool !== 'link') {
+            this.activeLinkSourceId = null;
+            this.activeLinkSourceLandmassId = null;
+            this.activeLinkSourcePlateId = null;
+        }
 
         // Tool Logic Interception
         if (this.state.activeTool === 'fuse') {
@@ -3558,6 +3601,10 @@ class TectoLiteApp {
         }
 
         if (this.state.activeTool === 'link') {
+            if (landmassId) {
+                this.handleLandmassLinkTool(landmassId, plateId!);
+                return;
+            }
             if (plateId) this.handleLinkTool(plateId);
             return;
         }
@@ -3636,12 +3683,63 @@ class TectoLiteApp {
 
         if (!this.fusionFirstPlateId) {
             this.fusionFirstPlateId = plateId;
-            this.updateHint(`Selected Plate ${plate.name} select another plate to fuse it with`);
+            this.updateHint(this.fuseMotionClusterMode
+                ? `Selected parent ${plate.name}. Select child plate to lock.`
+                : `Selected Plate ${plate.name} select another plate to fuse it with`);
         } else if (this.fusionFirstPlateId !== plateId) {
             // Stage 3 - Confirmation
             const firstPlate = this.state.world.plates.find(p => p.id === this.fusionFirstPlateId);
             if (!firstPlate) {
                 this.fusionFirstPlateId = null;
+                return;
+            }
+
+            if (this.fuseMotionClusterMode) {
+                const isClustered = plate.motionClusterParentId === firstPlate.id;
+                const actionText = isClustered ? 'Unlock Motion Cluster' : 'Create Motion Cluster';
+                const subText = isClustered
+                    ? 'Child plate will move independently.'
+                    : 'Child plate inherits parent motion and keeps its own Euler motion.';
+
+                this.showModal({
+                    title: actionText,
+                    content: `Do you want to ${isClustered ? 'unlock' : 'lock'} plate <strong>${plate.name}</strong> to parent <strong>${firstPlate.name}</strong>?`,
+                    buttons: [
+                        {
+                            text: actionText,
+                            subtext: subText,
+                            onClick: () => {
+                                this.pushState();
+                                this.state.world.plates = this.state.world.plates.map(p => {
+                                    if (p.id === plate.id) {
+                                        return {
+                                            ...p,
+                                            motionClusterParentId: isClustered ? undefined : firstPlate.id
+                                        };
+                                    }
+                                    return p;
+                                });
+
+                                this.fusionFirstPlateId = null;
+                                this.updatePropertiesPanel();
+                                this.updateUI();
+                                this.canvasManager?.render();
+                                this.updateHint(isClustered
+                                    ? `Unlocked ${plate.name} from ${firstPlate.name}.`
+                                    : `Locked ${plate.name} to ${firstPlate.name}.`);
+                            }
+                        },
+                        {
+                            text: 'Cancel',
+                            isSecondary: true,
+                            onClick: () => {
+                               this.fusionFirstPlateId = null;
+                               this.updateHint("Select parent plate to create a motion cluster.");
+                            }
+                        }
+                    ]
+                });
+                // We exit here because modal is async
                 return;
             }
 
@@ -3688,94 +3786,290 @@ class TectoLiteApp {
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
 
-        // Step 1: Select first plate
+        // Step 1: Select parent/anchor plate
         if (!this.activeLinkSourceId) {
             this.activeLinkSourceId = plateId;
-            // Visual feedback - select it temporarily
             this.state.world.selectedPlateId = plateId;
 
-            this.updateHint(`Selected Plate ${plate.name} select another plate to link it with`);
+            this.updateHint(`Selected PARENT (Anchor) ${plate.name} - now select child plate to link to it`);
 
             this.updateUI();
             this.canvasManager?.render();
             return;
         }
 
-        // Step 2: Select second plate
+        // Step 2: Select child plate
         if (this.activeLinkSourceId === plateId) {
             // Deselect if clicking same plate
             this.activeLinkSourceId = null;
             this.state.world.selectedPlateId = null;
-            this.updateHint("Select first plate to link");
+            this.updateHint("Select parent (anchor) plate");
             this.updateUI();
             this.canvasManager?.render();
             return;
         }
 
-        // Apply Link
-        const sourceId = this.activeLinkSourceId;
-        const targetId = plateId;
-        const sourcePlate = this.state.world.plates.find(p => p.id === sourceId);
+        // Apply Link: source is PARENT, target is CHILD
+        const parentId = this.activeLinkSourceId;
+        const childId = plateId;
+        const parentPlate = this.state.world.plates.find(p => p.id === parentId);
 
-        if (!sourcePlate) {
+        if (!parentPlate) {
             this.activeLinkSourceId = null;
             return;
         }
 
-        const isLinked = sourcePlate.linkedPlateIds?.includes(targetId);
-        const actionText = isLinked ? "Unlink" : "Link";
+        // Check if already linked
+        const isLinked = plate.linkedToPlateId === parentId;
 
-        this.showModal({
-            title: `${actionText} Plates`,
-            content: `Do you want to <strong>${actionText.toLowerCase()}</strong> plate <strong>${sourcePlate.name}</strong> and <strong>${plate.name}</strong>?`,
-            buttons: [
-                 {
-                    text: actionText,
-                    subtext: isLinked ? 'Plates will move independently.' : 'Plates will move together.',
-                    onClick: () => {
-                        // Logic
-                         this.pushState();
-                        this.state.world.plates = this.state.world.plates.map(p => {
-                            if (p.id === sourceId) {
-                                let links = p.linkedPlateIds || [];
-                                if (isLinked) links = links.filter(id => id !== targetId);
-                                else links = [...links, targetId];
-                                return { ...p, linkedPlateIds: links };
-                            }
-                            if (p.id === targetId) {
-                                let links = p.linkedPlateIds || [];
-                                if (isLinked) links = links.filter(id => id !== sourceId);
-                                else links = [...links, sourceId];
-                                return { ...p, linkedPlateIds: links };
-                            }
-                            return p;
-                        });
+        // Check for circular link
+        if (!isLinked && parentPlate.linkedToPlateId === childId) {
+            this.showToast("Cannot create circular link! Parent is already linked to child.");
+            this.activeLinkSourceId = null;
+            this.updateHint("Select parent (anchor) plate");
+            this.updateUI();
+            this.canvasManager?.render();
+            return;
+        }
 
-                        this.updateHint(`${isLinked ? 'Unlinked' : 'Linked'} ${sourcePlate.name} and ${plate.name}`);
-                        setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+        if (isLinked) {
+            // Unlink
+            this.showModal({
+                title: `Unlink Plates`,
+                content: `Do you want to <strong>unlink</strong> child plate <strong>${plate.name}</strong> from parent <strong>${parentPlate.name}</strong>?<br><br>
+                    <small>${plate.name} will move independently.</small>`,
+                buttons: [
+                     {
+                        text: "Unlink",
+                        onClick: () => {
+                            this.pushState();
+                            this.state.world.plates = this.state.world.plates.map(p => {
+                                if (p.id === childId) {
+                                    return { ...p, linkedToPlateId: undefined, relativeEulerPole: undefined };
+                                }
+                                return p;
+                            });
 
-                        // Reset
-                        this.activeLinkSourceId = null;
-                        this.state.world.selectedPlateId = plateId; // Select the target
-                        this.activeToolText = "Select first plate to link"; // Reset for next use
-                        this.updateRetroStatusBox(this.activeToolText);
-                        this.updateUI();
-                        this.canvasManager?.render();
-                    }
-                 },
-                 {
-                    text: 'Cancel',
-                    isSecondary: true,
-                    onClick: () => {
-                        // User cancelled - reset to Stage 1
-                        this.activeLinkSourceId = null;
-                        this.updateHint("Select first plate to link");
-                        this.updateUI();
-                        this.canvasManager?.render();
-                    }
-                 }
-            ]
-        });
+                            this.updateHint(`Unlinked ${plate.name} from ${parentPlate.name}`);
+                            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+
+                            this.activeLinkSourceId = null;
+                            this.state.world.selectedPlateId = childId;
+                            this.updateUI();
+                            this.canvasManager?.render();
+                        }
+                     },
+                     {
+                        text: 'Cancel',
+                        isSecondary: true,
+                        onClick: () => {
+                            this.activeLinkSourceId = null;
+                            this.updateHint("Select parent (anchor) plate");
+                            this.updateUI();
+                            this.canvasManager?.render();
+                        }
+                     }
+                ]
+            });
+        } else {
+            // Link child to parent
+            this.showModal({
+                title: `Link Plates`,
+                content: `Link <strong>${plate.name}</strong> (child) to <strong>${parentPlate.name}</strong> (parent/anchor).<br><br>
+                    <small>Child inherits parent motion. Add relative rotation in properties panel later if needed (e.g., Somalia relative to Africa).</small>`,
+                buttons: [
+                     {
+                        text: "Link",
+                        onClick: () => {
+                            this.pushState();
+                            this.state.world.plates = this.state.world.plates.map(p => {
+                                if (p.id === childId) {
+                                    return { ...p, linkedToPlateId: parentId };
+                                }
+                                return p;
+                            });
+
+                            this.updateHint(`Linked ${plate.name} to ${parentPlate.name} (edit relative motion in properties if needed)`);
+                            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+
+                            this.activeLinkSourceId = null;
+                            this.state.world.selectedPlateId = childId;
+                            this.updateUI();
+                            this.canvasManager?.render();
+                        }
+                     },
+                     {
+                        text: 'Cancel',
+                        isSecondary: true,
+                        onClick: () => {
+                            this.activeLinkSourceId = null;
+                            this.updateHint("Select parent (anchor) plate");
+                            this.updateUI();
+                            this.canvasManager?.render();
+                        }
+                     }
+                ]
+            });
+        }
+    }
+
+    private handleLandmassLinkTool(landmassId: string, plateId: string): void {
+        const plate = this.state.world.plates.find(p => p.id === plateId);
+        if (!plate) return;
+
+        const landmass = plate.landmasses?.find(l => l.id === landmassId);
+        if (!landmass) return;
+
+        // Step 1: Select parent landmass
+        if (!this.activeLinkSourceLandmassId) {
+            this.activeLinkSourceLandmassId = landmassId;
+            this.activeLinkSourcePlateId = plateId;
+            this.state.world.selectedLandmassId = landmassId;
+
+            this.updateHint(`Selected PARENT ${landmass.name || 'Unnamed'} - select child landmass to link to it`);
+
+            this.updateUI();
+            this.canvasManager?.render();
+            return;
+        }
+
+        // Step 2: Select child landmass
+        if (this.activeLinkSourceLandmassId === landmassId) {
+            // Deselect if clicking same landmass
+            this.activeLinkSourceLandmassId = null;
+            this.activeLinkSourcePlateId = null;
+            this.state.world.selectedLandmassId = null;
+            this.updateHint("Select parent landmass");
+            this.updateUI();
+            this.canvasManager?.render();
+            return;
+        }
+
+        // Check if both landmasses are on the same plate
+        if (this.activeLinkSourcePlateId !== plateId) {
+            this.showToast("Landmasses must be on the same plate to link them!");
+            this.activeLinkSourceLandmassId = null;
+            this.activeLinkSourcePlateId = null;
+            this.state.world.selectedLandmassId = null;
+            this.updateHint("Select parent landmass");
+            this.updateUI();
+            this.canvasManager?.render();
+            return;
+        }
+
+        // Apply Link: source is PARENT, target is CHILD
+        const parentId = this.activeLinkSourceLandmassId;
+        const childId = landmassId;
+        const sourcePlate = this.state.world.plates.find(p => p.id === this.activeLinkSourcePlateId!);
+        const parentLandmass = sourcePlate?.landmasses?.find(l => l.id === parentId);
+
+        if (!sourcePlate || !parentLandmass) {
+            this.activeLinkSourceLandmassId = null;
+            this.activeLinkSourcePlateId = null;
+            return;
+        }
+
+        const isLinked = landmass.linkedToLandmassId === parentId;
+
+        if (isLinked) {
+            // Unlink
+            this.showModal({
+                title: `Unlink Landmasses`,
+                content: `Unlink ${landmass.name || 'Unnamed'} from ${parentLandmass.name || 'Unnamed'}? They will move independently.`,
+                buttons: [
+                     {
+                        text: "Unlink",
+                        onClick: () => {
+                            this.pushState();
+                            this.state.world.plates = this.state.world.plates.map(p => {
+                                if (p.id === this.activeLinkSourcePlateId) {
+                                    return {
+                                        ...p,
+                                        landmasses: p.landmasses?.map(l => {
+                                            if (l.id === childId) {
+                                                return { ...l, linkedToLandmassId: undefined, relativeEulerPole: undefined };
+                                            }
+                                            return l;
+                                        }) || []
+                                    };
+                                }
+                                return p;
+                            });
+
+                            this.updateHint(`Unlinked ${landmass.name || 'Unnamed'} from ${parentLandmass.name || 'Unnamed'}`);
+                            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+
+                            this.activeLinkSourceLandmassId = null;
+                            this.activeLinkSourcePlateId = null;
+                            this.state.world.selectedLandmassId = childId;
+                            this.updateUI();
+                            this.canvasManager?.render();
+                        }
+                     },
+                     {
+                        text: 'Cancel',
+                        isSecondary: true,
+                        onClick: () => {
+                            this.activeLinkSourceLandmassId = null;
+                            this.activeLinkSourcePlateId = null;
+                            this.state.world.selectedLandmassId = null;
+                            this.updateHint("Select parent landmass");
+                            this.updateUI();
+                            this.canvasManager?.render();
+                        }
+                     }
+                ]
+            });
+        } else {
+            // Link child to parent
+            this.showModal({
+                title: `Link Landmasses`,
+                content: `Link ${landmass.name || 'Unnamed'} (child) to ${parentLandmass.name || 'Unnamed'} (parent) on the plate.`,
+                buttons: [
+                     {
+                        text: "Link",
+                        onClick: () => {
+                            this.pushState();
+                            this.state.world.plates = this.state.world.plates.map(p => {
+                                if (p.id === this.activeLinkSourcePlateId) {
+                                    return {
+                                        ...p,
+                                        landmasses: p.landmasses?.map(l => {
+                                            if (l.id === childId) {
+                                                return { ...l, linkedToLandmassId: parentId };
+                                            }
+                                            return l;
+                                        }) || []
+                                    };
+                                }
+                                return p;
+                            });
+
+                            this.updateHint(`Linked ${landmass.name || 'Unnamed'} to ${parentLandmass.name || 'Unnamed'}`);
+                            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+
+                            this.activeLinkSourceLandmassId = null;
+                            this.activeLinkSourcePlateId = null;
+                            this.state.world.selectedLandmassId = childId;
+                            this.updateUI();
+                            this.canvasManager?.render();
+                        }
+                     },
+                     {
+                        text: 'Cancel',
+                        isSecondary: true,
+                        onClick: () => {
+                            this.activeLinkSourceLandmassId = null;
+                            this.activeLinkSourcePlateId = null;
+                            this.state.world.selectedLandmassId = null;
+                            this.updateHint("Select parent landmass");
+                            this.updateUI();
+                            this.canvasManager?.render();
+                        }
+                     }
+                ]
+            });
+        }
     }
 
     private handleSplitApply(points: Coordinate[]): void {
@@ -5962,14 +6256,8 @@ class TectoLiteApp {
         this.pushState();
         const newEulerPole = { position: pole, rate };
 
-        // Find linked plates
-        const plate = this.state.world.plates.find(p => p.id === plateId);
-        const linkedIds = plate?.linkedPlateIds || [];
-        const allIds = [plateId, ...linkedIds];
-        // Deduplicate
-        const uniqueIds = Array.from(new Set(allIds));
-
-        uniqueIds.forEach(id => this.addMotionKeyframe(id, newEulerPole));
+        // Only update this plate's motion (linked children inherit automatically)
+        this.addMotionKeyframe(plateId, newEulerPole);
         
         // Refresh property panel to show updated Euler pole position
         this.updatePropertiesPanel();
