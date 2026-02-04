@@ -351,6 +351,8 @@ export interface TectonicPlate {
   description?: string; // User-defined description
   inheritDescription?: boolean; // Whether children inherit this description on split
   linkedToPlateId?: string; // Parent plate id this plate's motion is linked to (inherits parent motion + optional relative)
+  linkTime?: number; // Geological time when this plate was linked to parent (child motion independent before this)
+  unlinkTime?: number; // Geological time when this plate was unlinked from parent (child motion independent after this)
   relativeEulerPole?: { position: Coordinate; rate: number }; // Optional relative rotation on top of parent motion
   motionClusterParentId?: string; // Parent plate id for motion clusters
   zIndex?: number; // Visual layering order (higher = on top)

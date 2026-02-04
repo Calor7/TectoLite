@@ -3837,20 +3837,63 @@ class TectoLiteApp {
             this.showModal({
                 title: `Unlink Plates`,
                 content: `Do you want to <strong>unlink</strong> child plate <strong>${plate.name}</strong> from parent <strong>${parentPlate.name}</strong>?<br><br>
-                    <small>${plate.name} will move independently.</small>`,
+                    <small>${plate.name} will move independently with the combined motion it currently has.</small>`,
                 buttons: [
                      {
                         text: "Unlink",
                         onClick: () => {
                             this.pushState();
+                            
+                            const currentTime = this.state.world.currentTime;
+                            
+                            // Get parent's current Euler pole
+                            const parentKeyframes = parentPlate.motionKeyframes || [];
+                            const parentActiveKeyframe = parentKeyframes
+                                .filter(kf => kf.time <= currentTime)
+                                .sort((a, b) => b.time - a.time)[0];
+                            
+                            const parentPole = parentActiveKeyframe?.eulerPole || { position: [0, 90], rate: 0 };
+                            
                             this.state.world.plates = this.state.world.plates.map(p => {
                                 if (p.id === childId) {
-                                    return { ...p, linkedToPlateId: undefined, relativeEulerPole: undefined };
+                                    // Bake in the parent's motion as the child's new base motion
+                                    const childKeyframes = p.motionKeyframes || [];
+                                    
+                                    // Add a new keyframe with parent's pole (the combined motion at unlink time)
+                                    const newKeyframes = [...childKeyframes];
+                                    
+                                    // Find if there's already a keyframe at this time
+                                    const existingIndex = newKeyframes.findIndex(kf => Math.abs(kf.time - currentTime) < 0.001);
+                                    
+                                    if (existingIndex >= 0) {
+                                        // Update existing keyframe to use parent's pole
+                                        newKeyframes[existingIndex] = {
+                                            ...newKeyframes[existingIndex],
+                                            eulerPole: parentPole
+                                        };
+                                    } else {
+                                        // Create new keyframe with parent's pole
+                                        newKeyframes.push({
+                                            time: currentTime,
+                                            eulerPole: parentPole,
+                                            snapshotPolygons: p.polygons, // Current position becomes the snapshot
+                                            snapshotFeatures: p.features,
+                                            snapshotPaintStrokes: p.paintStrokes,
+                                            snapshotLandmasses: p.landmasses
+                                        });
+                                    }
+                                    
+                                    return { 
+                                        ...p, 
+                                        linkedToPlateId: undefined,
+                                        unlinkTime: currentTime,  // Mark when link ended
+                                        motionKeyframes: newKeyframes
+                                    };
                                 }
                                 return p;
                             });
 
-                            this.updateHint(`Unlinked ${plate.name} from ${parentPlate.name}`);
+                            this.updateHint(`Unlinked ${plate.name} from ${parentPlate.name} at ${currentTime.toFixed(1)} Ma - motion baked in`);
                             setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
 
                             this.activeLinkSourceId = null;
@@ -3872,44 +3915,136 @@ class TectoLiteApp {
                 ]
             });
         } else {
-            // Link child to parent
-            this.showModal({
-                title: `Link Plates`,
-                content: `Link <strong>${plate.name}</strong> (child) to <strong>${parentPlate.name}</strong> (parent/anchor).<br><br>
-                    <small>Child inherits parent motion. Add relative rotation in properties panel later if needed (e.g., Somalia relative to Africa).</small>`,
-                buttons: [
-                     {
-                        text: "Link",
-                        onClick: () => {
-                            this.pushState();
-                            this.state.world.plates = this.state.world.plates.map(p => {
-                                if (p.id === childId) {
-                                    return { ...p, linkedToPlateId: parentId };
-                                }
-                                return p;
-                            });
+            // Check if this exact pair is already linked
+            const isAlreadyLinked = plate.linkedToPlateId === parentId;
+            
+            if (isAlreadyLinked) {
+                // Auto-unlink: if you try to link an already-linked pair, unlink them instead
+                this.showModal({
+                    title: `Unlink Plates`,
+                    content: `<strong>${plate.name}</strong> is already linked to <strong>${parentPlate.name}</strong>.<br><br>
+                        Do you want to <strong>unlink</strong> them? Motion will be baked in.`,
+                    buttons: [
+                         {
+                            text: "Unlink",
+                            onClick: () => {
+                                this.pushState();
+                                
+                                const currentTime = this.state.world.currentTime;
+                                
+                                // Get parent's current Euler pole
+                                const parentKeyframes = parentPlate.motionKeyframes || [];
+                                const parentActiveKeyframe = parentKeyframes
+                                    .filter(kf => kf.time <= currentTime)
+                                    .sort((a, b) => b.time - a.time)[0];
+                                
+                                const parentPole = parentActiveKeyframe?.eulerPole || { position: [0, 90], rate: 0 };
+                                
+                                this.state.world.plates = this.state.world.plates.map(p => {
+                                    if (p.id === childId) {
+                                        // Bake in the parent's motion as the child's new base motion
+                                        const childKeyframes = p.motionKeyframes || [];
+                                        
+                                        // Add a new keyframe with parent's pole (the combined motion at unlink time)
+                                        const newKeyframes = [...childKeyframes];
+                                        
+                                        // Find if there's already a keyframe at this time
+                                        const existingIndex = newKeyframes.findIndex(kf => Math.abs(kf.time - currentTime) < 0.001);
+                                        
+                                        if (existingIndex >= 0) {
+                                            // Update existing keyframe to use parent's pole
+                                            newKeyframes[existingIndex] = {
+                                                ...newKeyframes[existingIndex],
+                                                eulerPole: parentPole
+                                            };
+                                        } else {
+                                            // Create new keyframe with parent's pole
+                                            newKeyframes.push({
+                                                time: currentTime,
+                                                eulerPole: parentPole,
+                                                snapshotPolygons: p.polygons, // Current position becomes the snapshot
+                                                snapshotFeatures: p.features,
+                                                snapshotPaintStrokes: p.paintStrokes,
+                                                snapshotLandmasses: p.landmasses
+                                            });
+                                        }
+                                        
+                                        return { 
+                                            ...p, 
+                                            linkedToPlateId: undefined,
+                                            motionKeyframes: newKeyframes
+                                        };
+                                    }
+                                    return p;
+                                });
 
-                            this.updateHint(`Linked ${plate.name} to ${parentPlate.name} (edit relative motion in properties if needed)`);
-                            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+                                this.updateHint(`Unlinked ${plate.name} from ${parentPlate.name} - motion baked in`);
+                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
 
-                            this.activeLinkSourceId = null;
-                            this.state.world.selectedPlateId = childId;
-                            this.updateUI();
-                            this.canvasManager?.render();
+                                this.activeLinkSourceId = null;
+                                this.state.world.selectedPlateId = childId;
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
+                         },
+                         {
+                            text: 'Cancel',
+                            isSecondary: true,
+                            onClick: () => {
+                                this.activeLinkSourceId = null;
+                                this.updateHint("Select parent (anchor) plate");
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
+                         }
+                    ]
+                });
+            } else {
+                // Link child to parent
+                this.showModal({
+                    title: `Link Plates`,
+                    content: `Link <strong>${plate.name}</strong> (child) to <strong>${parentPlate.name}</strong> (parent/anchor).<br><br>
+                        <small>Child inherits parent motion. Add relative rotation in properties panel later if needed (e.g., Somalia relative to Africa).</small>`,
+                    buttons: [
+                         {
+                            text: "Link",
+                            onClick: () => {
+                                this.pushState();
+                                const currentTime = this.state.world.currentTime;
+                                this.state.world.plates = this.state.world.plates.map(p => {
+                                    if (p.id === childId) {
+                                        return { 
+                                            ...p, 
+                                            linkedToPlateId: parentId,
+                                            linkTime: currentTime,
+                                            unlinkTime: undefined // Clear any previous unlink time
+                                        };
+                                    }
+                                    return p;
+                                });
+
+                                this.updateHint(`Linked ${plate.name} to ${parentPlate.name} starting at ${currentTime.toFixed(1)} Ma`);
+                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+
+                                this.activeLinkSourceId = null;
+                                this.state.world.selectedPlateId = childId;
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
+                         },
+                         {
+                            text: 'Cancel',
+                            isSecondary: true,
+                            onClick: () => {
+                                this.activeLinkSourceId = null;
+                                this.updateHint("Select parent (anchor) plate");
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
                         }
-                     },
-                     {
-                        text: 'Cancel',
-                        isSecondary: true,
-                        onClick: () => {
-                            this.activeLinkSourceId = null;
-                            this.updateHint("Select parent (anchor) plate");
-                            this.updateUI();
-                            this.canvasManager?.render();
-                        }
-                     }
-                ]
-            });
+                    ]
+                });
+            }
         }
     }
 

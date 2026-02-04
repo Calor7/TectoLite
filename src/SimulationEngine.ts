@@ -233,8 +233,6 @@ export class SimulationEngine {
     }
 
     private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {
-        // console.log('[CALC_PLATE] Calculating plate:', plate.id, 'at time:', time);
-        
         // Check if this plate is linked to a parent plate - if so, inherit parent motion
         let parentLinkedPlate: TectonicPlate | undefined;
         
@@ -315,33 +313,34 @@ export class SimulationEngine {
         const elapsed = time - activeKeyframe.time;
 
         // Prepare parent motion if this plate is linked to another
+        // The parent's TOTAL rotation from its reference time affects the child
+        // BUT ONLY if we're within the link time window
         let parentAxis: Vector3 | null = null;
         let parentAngle: number = 0;
-        let relativeAxis: Vector3 | null = null;
-        let relativeAngle: number = 0;
 
         if (parentLinkedPlate) {
-            // Get parent plate's motion at this time
-            const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
-            const parentActiveKeyframe = parentKeyframes
-                .filter(kf => kf.time <= time)
-                .sort((a, b) => b.time - a.time)[0];
+            // Check if we're within the link time window
+            const isWithinLinkWindow = 
+                (!plate.linkTime || time >= plate.linkTime) && 
+                (!plate.unlinkTime || time < plate.unlinkTime);
+            
+            if (isWithinLinkWindow) {
+                // Get parent plate's CURRENT active motion
+                const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
+                const parentActiveKeyframe = parentKeyframes
+                    .filter(kf => kf.time <= time)
+                    .sort((a, b) => b.time - a.time)[0];
 
-            if (parentActiveKeyframe && parentActiveKeyframe.eulerPole) {
-                const parentPole = parentActiveKeyframe.eulerPole;
-                parentAxis = latLonToVector(parentPole.position);
-                parentAngle = toRad(parentPole.rate * (time - parentActiveKeyframe.time));
-            }
-
-            // Get relative motion (if any)
-            const relativeEuler = plate.relativeEulerPole;
-            if (relativeEuler) {
-                relativeAxis = latLonToVector(relativeEuler.position);
-                relativeAngle = toRad(relativeEuler.rate * (time - plate.birthTime)); // Start from when plate was born/linked
+                if (parentActiveKeyframe && parentActiveKeyframe.eulerPole && parentActiveKeyframe.eulerPole.rate !== 0) {
+                    const parentPole = parentActiveKeyframe.eulerPole;
+                    parentAxis = latLonToVector(parentPole.position);
+                    // Parent's rotation from its keyframe time to now
+                    parentAngle = toRad(parentPole.rate * (time - parentActiveKeyframe.time));
+                }
             }
         }
 
-        // Prepare own motion (only if not fully inherited)
+        // Child's own motion uses its own keyframe Euler pole
         let ownAxis: Vector3 | null = null;
         let ownAngle: number = 0;
         if (pole && pole.rate !== 0 && elapsed !== 0) {
@@ -357,15 +356,15 @@ export class SimulationEngine {
             return vectorToLatLon(vRot);
         };
 
-        // Helper to apply all active rotations in sequence: parent -> relative -> own
+        // Helper to apply all active rotations in sequence: parent -> own
+        // Parent rotation is applied first (base motion), then child's own motion on top
         const applyAllRotations = (coord: Coordinate): Coordinate => {
             let result = coord;
+            // 1. Apply parent's motion first (inherited motion)
             if (parentAxis && parentAngle !== 0) {
                 result = applyRotation(result, parentAxis, parentAngle);
             }
-            if (relativeAxis && relativeAngle !== 0) {
-                result = applyRotation(result, relativeAxis, relativeAngle);
-            }
+            // 2. Apply child's own motion on top (additional/differential motion)
             if (ownAxis && ownAngle !== 0) {
                 result = applyRotation(result, ownAxis, ownAngle);
             }
@@ -374,9 +373,8 @@ export class SimulationEngine {
 
         // Check if we have any motion at all
         const hasParentMotion = parentAxis && parentAngle !== 0;
-        const hasRelativeMotion = relativeAxis && relativeAngle !== 0;
         const hasOwnMotion = ownAxis && ownAngle !== 0;
-        const hasAnyMotion = hasParentMotion || hasRelativeMotion || hasOwnMotion;
+        const hasAnyMotion = hasParentMotion || hasOwnMotion;
 
         // No motion case
         if (!hasAnyMotion) {
@@ -407,33 +405,29 @@ export class SimulationEngine {
             // Calculate rotation for this specific feature based on its lifetime
             let result = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
             
-            // Apply parent motion if linked (for the feature's lifetime)
+            // Apply parent motion if linked (for the feature's lifetime) AND within link time window
             if (parentAxis && parentLinkedPlate) {
-                const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
-                const parentActiveKeyframe = parentKeyframes
-                    .filter(kf => kf.time <= startTime)
-                    .sort((a, b) => b.time - a.time)[0];
-                    
-                if (parentActiveKeyframe && parentActiveKeyframe.eulerPole) {
-                    const parentPole = parentActiveKeyframe.eulerPole;
-                    const parentFeatureAngle = toRad(parentPole.rate * featureElapsed);
-                    if (parentFeatureAngle !== 0) {
-                        result = applyRotation(result, parentAxis, parentFeatureAngle);
+                const isWithinLinkWindow = 
+                    (!plate.linkTime || time >= plate.linkTime) && 
+                    (!plate.unlinkTime || time < plate.unlinkTime);
+                
+                if (isWithinLinkWindow) {
+                    const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
+                    const parentActiveKeyframe = parentKeyframes
+                        .filter(kf => kf.time <= startTime)
+                        .sort((a, b) => b.time - a.time)[0];
+                        
+                    if (parentActiveKeyframe && parentActiveKeyframe.eulerPole && parentActiveKeyframe.eulerPole.rate !== 0) {
+                        const parentPole = parentActiveKeyframe.eulerPole;
+                        const parentFeatureAngle = toRad(parentPole.rate * featureElapsed);
+                        if (parentFeatureAngle !== 0) {
+                            result = applyRotation(result, parentAxis, parentFeatureAngle);
+                        }
                     }
                 }
             }
             
-            // Apply relative motion if any
-            if (relativeAxis && plate.relativeEulerPole) {
-                const relativeEuler = plate.relativeEulerPole;
-                const relativeFeatureElapsed = Math.max(0, time - Math.max(startTime, plate.birthTime));
-                const relativeFeatureAngle = toRad(relativeEuler.rate * relativeFeatureElapsed);
-                if (relativeFeatureAngle !== 0) {
-                    result = applyRotation(result, relativeAxis, relativeFeatureAngle);
-                }
-            }
-            
-            // Apply own motion
+            // Apply child's own motion
             if (ownAxis && pole) {
                 const ownFeatureAngle = toRad(pole.rate * featureElapsed);
                 if (ownFeatureAngle !== 0) {
