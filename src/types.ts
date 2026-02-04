@@ -143,6 +143,206 @@ export interface PlateEvent {
   data: unknown;
 }
 
+// ============================================================================
+// EVENT-DRIVEN GUIDED CREATION SYSTEM
+// ============================================================================
+
+export type TectonicEventType = 'collision' | 'rift';
+
+export type ConsequenceCategory = 'plausible' | 'uncommon' | 'rare';
+
+export type ConsequenceEffectKind = 'feature' | 'mesh';
+
+export interface ConsequenceEffect {
+  kind: ConsequenceEffectKind;
+  featureType?: FeatureType;
+  meshEffect?: string;
+}
+
+export interface EventConsequence {
+  id: string;
+  type: string;                      // e.g., 'orogeny', 'volcanic_arc', 'trench', 'rift_valley'
+  label: string;                     // Display name
+  description: string;               // Tooltip/info text
+  category: ConsequenceCategory;     // Visual grouping
+  selected: boolean;                 // User's choice
+  parameters: Record<string, number>; // Editable params (e.g., { upliftRate: 1000, width: 200 })
+  defaultParameters: Record<string, number>; // Original defaults for reset
+  effects?: ConsequenceEffect[];     // Optional effect metadata for feature/mesh handling
+}
+
+export interface PlateSnapshot {
+  id: string;
+  name: string;
+  crustType: CrustType | undefined;
+  velocity: number;                  // Relative velocity (cm/yr)
+  age: number;                       // Plate age at event time (Ma since birth)
+  area: number;                      // Approximate area (deg²)
+  description?: string;
+}
+
+export interface TectonicEvent {
+  id: string;
+  time: number;                      // When the event occurred
+  eventType: TectonicEventType;      // 'collision' | 'rift'
+  plateIds: [string, string];        // The two plates involved
+  plateSnapshots: [PlateSnapshot, PlateSnapshot]; // Frozen plate data at event time
+  boundarySegment: Coordinate[][];   // The boundary geometry
+  interactionInfo: {
+    collisionType?: 'continent-continent' | 'continent-ocean' | 'ocean-ocean';
+    relativeVelocity: number;        // cm/yr
+    overlapArea?: number;            // deg²
+  };
+  consequences: EventConsequence[];  // Available + selected consequences
+  committed: boolean;                // Has user confirmed this event?
+  commitTime?: number;               // When was it committed
+  effectStartTime?: number;          // When effects begin applying
+  effectEndTime?: number;            // When effects stop applying
+}
+
+// Default consequence definitions for event types
+export const COLLISION_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
+  // Plausible (most likely outcomes)
+  {
+    type: 'orogeny',
+    label: 'Mountain Range (Orogeny)',
+    description: 'Continental collision creates fold mountains through crustal thickening',
+    category: 'plausible',
+    selected: false,
+    parameters: { upliftRate: 1000, width: 200, peakElevation: 5000 },
+    defaultParameters: { upliftRate: 1000, width: 200, peakElevation: 5000 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'orogeny' },
+      { kind: 'feature', featureType: 'mountain' }
+    ]
+  },
+  {
+    type: 'volcanic_arc',
+    label: 'Volcanic Arc',
+    description: 'Subduction melts oceanic crust, creating a chain of volcanoes',
+    category: 'plausible',
+    selected: false,
+    parameters: { spacing: 50, volcanoCount: 5 },
+    defaultParameters: { spacing: 50, volcanoCount: 5 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'volcanic_arc' },
+      { kind: 'feature', featureType: 'volcano' }
+    ]
+  },
+  {
+    type: 'trench',
+    label: 'Ocean Trench',
+    description: 'Deep trench forms where oceanic plate subducts',
+    category: 'plausible',
+    selected: false,
+    parameters: { depth: -8000, width: 100 },
+    defaultParameters: { depth: -8000, width: 100 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'trench' },
+      { kind: 'feature', featureType: 'trench' }
+    ]
+  },
+  // Uncommon
+  {
+    type: 'accretionary_wedge',
+    label: 'Accretionary Wedge',
+    description: 'Sediments scraped off subducting plate pile up',
+    category: 'uncommon',
+    selected: false,
+    parameters: { width: 150, thickness: 10 },
+    defaultParameters: { width: 150, thickness: 10 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'accretionary_wedge' },
+      { kind: 'feature', featureType: 'mountain' }
+    ]
+  },
+  {
+    type: 'back_arc_basin',
+    label: 'Back-Arc Basin',
+    description: 'Extension behind volcanic arc creates a small ocean basin',
+    category: 'uncommon',
+    selected: false,
+    parameters: { width: 300, spreadingRate: 2 },
+    defaultParameters: { width: 300, spreadingRate: 2 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'back_arc_basin' },
+      { kind: 'feature', featureType: 'rift' }
+    ]
+  },
+  // Rare
+  {
+    type: 'ophiolite_obduction',
+    label: 'Ophiolite Obduction',
+    description: 'Oceanic crust thrust onto continent (rare preservation)',
+    category: 'rare',
+    selected: false,
+    parameters: { extent: 100 },
+    defaultParameters: { extent: 100 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'ophiolite_obduction' },
+      { kind: 'feature', featureType: 'mountain' }
+    ]
+  }
+];
+
+export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
+  // Plausible
+  {
+    type: 'rift_valley',
+    label: 'Rift Valley',
+    description: 'Extensional faulting creates a graben (down-dropped valley)',
+    category: 'plausible',
+    selected: false,
+    parameters: { width: 50, depth: 2000 },
+    defaultParameters: { width: 50, depth: 2000 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'rift_valley' },
+      { kind: 'feature', featureType: 'rift' }
+    ]
+  },
+  {
+    type: 'volcanic_chain',
+    label: 'Volcanic Chain',
+    description: 'Decompression melting produces basaltic volcanism along rift',
+    category: 'plausible',
+    selected: false,
+    parameters: { spacing: 30, volcanoCount: 8 },
+    defaultParameters: { spacing: 30, volcanoCount: 8 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'volcanic_chain' },
+      { kind: 'feature', featureType: 'volcano' }
+    ]
+  },
+  // Uncommon
+  {
+    type: 'new_ocean_basin',
+    label: 'New Ocean Basin',
+    description: 'Rift evolves into a spreading center, creating new oceanic crust',
+    category: 'uncommon',
+    selected: false,
+    parameters: { spreadingRate: 2, initialWidth: 100 },
+    defaultParameters: { spreadingRate: 2, initialWidth: 100 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'new_ocean_basin' },
+      { kind: 'feature', featureType: 'seafloor' }
+    ]
+  },
+  // Rare
+  {
+    type: 'flood_basalt',
+    label: 'Flood Basalt Province',
+    description: 'Massive volcanic eruption covers large area in basalt',
+    category: 'rare',
+    selected: false,
+    parameters: { area: 500000, thickness: 1000 },
+    defaultParameters: { area: 500000, thickness: 1000 },
+    effects: [
+      { kind: 'mesh', meshEffect: 'flood_basalt' },
+      { kind: 'feature', featureType: 'volcano' }
+    ]
+  }
+];
+
 export interface TectonicPlate {
   id: string;
   name: string;
@@ -265,12 +465,21 @@ export interface WorldState {
     sedimentConsolidationRate?: number;     // Sediment → crust conversion rate (km/Ma)
     sedimentConsolidationRatio?: number;    // Compaction ratio (sediment to crust, 0-1)
     oceanLevel?: number;                    // Sea level elevation in meters (default 0)
+    
+    // Event-Driven Guided Creation System
+    enableGuidedCreation?: boolean;         // Show event popup when interactions detected
+    repopupCommittedEvents?: boolean;       // Allow re-opening already committed events
+    eventDetectionThreshold?: number;       // Area change % to trigger new event (default 20)
+    showEventIcons?: boolean;               // Toggle event markers on map
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
   mantlePlumes?: MantlePlume[]; // Active mantle plumes
   // Image Overlay for tracing existing maps
   imageOverlay?: ImageOverlay;
+  // Event-Driven Guided Creation
+  tectonicEvents?: TectonicEvent[];        // All detected/committed tectonic events
+  pendingEventId?: string | null;          // Event awaiting user decision (popup open)
 }
 
 export interface Boundary {
@@ -387,8 +596,17 @@ export function createDefaultWorldState(): WorldState {
       enableElevationSimulation: false,
       upliftRate: 1000,        // 1000 m/Ma = 1 km per million years
       erosionRate: 0.001,      // 0.1% transport per Ma
-      meshResolution: 150      // 150 km spacing between vertices
-    }
+      meshResolution: 150,     // 150 km spacing between vertices
+      
+      // Event-Driven Guided Creation defaults
+      enableGuidedCreation: false,
+      repopupCommittedEvents: false,
+      eventDetectionThreshold: 20,  // 20% area change triggers new event
+      showEventIcons: false
+    },
+    // Event system defaults
+    tectonicEvents: [],
+    pendingEventId: null
   };
 }
 

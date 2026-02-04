@@ -158,11 +158,12 @@ export class ElevationSystem {
         }
         // Step 3: Apply physics if moving forward
         if (deltaT > 0) {
-            // Apply collision physics (asymmetric uplift, subduction)
-            newState = this.applyCollisionPhysics(newState, deltaT);
-            
-            // Apply rifting physics (crustal thinning at divergent boundaries)
-            newState = this.applyRiftingPhysics(newState, deltaT);
+            // === REMOVED: Automatic mesh deformation on plate contact ===
+            // The following methods have been disabled as part of the Event-Driven Guided Creation system:
+            // - applyCollisionPhysics() - mesh now only reacts to COMMITTED EVENTS, not continuous plate contact
+            // - applyRiftingPhysics() - same as above
+            // This simplifies mesh mechanics and makes them less resource-intensive.
+            // Event consequences will handle mountain building, trenches, rifts, etc.
             
             // Apply thermal subsidence (oceanic crust deepens with age)
             newState = this.applyThermalSubsidence(newState, deltaT);
@@ -172,6 +173,9 @@ export class ElevationSystem {
             
             // Consolidate sediment in basins (convert to crustal thickness)
             newState = this.consolidateSediment(newState, deltaT);
+            
+            // Apply committed event consequences (Event-Driven System)
+            newState = this.applyEventConsequences(newState, deltaT);
             
             // Recalculate elevations from thickness (isostasy)
             newState.world.plates = newState.world.plates.map(plate => ({
@@ -185,6 +189,411 @@ export class ElevationSystem {
         }
         
         return newState;
+    }
+    
+    /**
+     * Apply consequences from committed tectonic events to elevation mesh
+     * This replaces automatic mesh deformation with user-guided event-based creation
+     */
+    private applyEventConsequences(state: AppState, deltaT: number): AppState {
+        const events = state.world.tectonicEvents || [];
+        const committedEvents = events.filter(e => e.committed);
+        
+        if (committedEvents.length === 0) return state;
+        
+        let newPlates = [...state.world.plates];
+        
+        const currentTime = state.world.currentTime;
+        const previousTime = currentTime - deltaT;
+
+        // Process each committed event
+        for (const event of committedEvents) {
+            const startTime = event.effectStartTime ?? event.time;
+            const endTime = event.effectEndTime ?? event.time;
+
+            // Only apply when crossing into the event window
+            if (currentTime < startTime || previousTime > endTime) continue;
+
+            // Get selected consequences
+            const selectedConsequences = event.consequences.filter(c => c.selected);
+            if (selectedConsequences.length === 0) continue;
+            
+            // Apply each consequence type
+            for (const consequence of selectedConsequences) {
+                const params = consequence.parameters;
+                
+                switch (consequence.type) {
+                    case 'orogeny':
+                        // Thicken crust near boundary to create mountains
+                        newPlates = this.applyOrogenyEffect(newPlates, event, params, deltaT);
+                        break;
+                        
+                    case 'volcanic_arc':
+                        // Create volcanic features along arc
+                        // For now, just slightly thicken crust
+                        newPlates = this.applyVolcanicEffect(newPlates, event, params, deltaT);
+                        break;
+                        
+                    case 'trench':
+                        // Deepen subducting plate edge
+                        newPlates = this.applyTrenchEffect(newPlates, event, params, deltaT);
+                        break;
+                        
+                    case 'rift_valley':
+                        // Thin crust and create depression
+                        newPlates = this.applyRiftEffect(newPlates, event, params, deltaT);
+                        break;
+
+                    case 'volcanic_chain':
+                        // Volcanism along rift
+                        newPlates = this.applyVolcanicChainEffect(newPlates, event, params, deltaT);
+                        break;
+
+                    case 'accretionary_wedge':
+                        newPlates = this.applyAccretionaryWedgeEffect(newPlates, event, params, deltaT);
+                        break;
+
+                    case 'back_arc_basin':
+                        newPlates = this.applyBackArcBasinEffect(newPlates, event, params, deltaT);
+                        break;
+
+                    case 'ophiolite_obduction':
+                        newPlates = this.applyOphioliteObductionEffect(newPlates, event, params, deltaT);
+                        break;
+
+                    case 'new_ocean_basin':
+                        newPlates = this.applyNewOceanBasinEffect(newPlates, event, params, deltaT);
+                        break;
+
+                    case 'flood_basalt':
+                        newPlates = this.applyFloodBasaltEffect(newPlates, event, params, deltaT);
+                        break;
+                        
+                    // Other consequence types can be added here
+                    default:
+                        // Unimplemented consequence types are silently skipped for now
+                        break;
+                }
+            }
+        }
+        
+        return { ...state, world: { ...state.world, plates: newPlates } };
+    }
+    
+    /**
+     * Apply orogeny effect: thicken crust near collision boundary
+     */
+    private applyOrogenyEffect(plates: TectonicPlate[], event: any, params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const upliftRate = params.upliftRate || 1000; // m/Ma
+        const width = params.width || 200; // km
+        
+        const [id1, id2] = event.plateIds;
+        
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh || plate.crustMesh.length === 0) return plate;
+            
+            // Find vertices near boundary and thicken them
+            const updatedMesh = plate.crustMesh.map(v => {
+                const distToBoundary = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                
+                if (distToBoundary < width) {
+                    // Gaussian falloff from center
+                    const factor = Math.exp(-(distToBoundary * distToBoundary) / (2 * (width / 3) * (width / 3)));
+                    const thickening = (upliftRate / 1000) * deltaT * factor; // Convert m to km
+                    
+                    return {
+                        ...v,
+                        crustalThickness: v.crustalThickness + thickening
+                    };
+                }
+                
+                return v;
+            });
+            
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+    
+    /**
+     * Apply volcanic arc effect: slight crustal thickening
+     */
+    private applyVolcanicEffect(plates: TectonicPlate[], event: any, _params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const width = 100; // km - narrower than orogeny
+        const thickeningRate = 200; // m/Ma - less than orogeny
+        
+        const [id1, id2] = event.plateIds;
+        
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh) return plate;
+            
+            const updatedMesh = plate.crustMesh.map(v => {
+                const dist = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                
+                if (dist < width) {
+                    const factor = Math.exp(-(dist * dist) / (2 * (width / 3) * (width / 3)));
+                    const thickening = (thickeningRate / 1000) * deltaT * factor;
+                    
+                    return {
+                        ...v,
+                        crustalThickness: v.crustalThickness + thickening
+                    };
+                }
+                
+                return v;
+            });
+            
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+    
+    /**
+     * Apply trench effect: deepen subducting plate
+     */
+    private applyTrenchEffect(plates: TectonicPlate[], event: any, params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const depth = params.depth || -8000; // m
+        const width = params.width || 100; // km
+        
+        // Apply to subducting plate (oceanic one in ocean-continent collision)
+        const [id1, id2] = event.plateIds;
+        
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh) return plate;
+            
+            // Only apply to oceanic plate
+            if (plate.crustType !== 'oceanic') return plate;
+            
+            const updatedMesh = plate.crustMesh.map(v => {
+                const dist = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                
+                if (dist < width) {
+                    const factor = Math.exp(-(dist * dist) / (2 * (width / 4) * (width / 4)));
+                    const thinning = (Math.abs(depth) / 1000) * factor * 0.01 * deltaT; // Thin crust to create trench
+                    
+                    return {
+                        ...v,
+                        crustalThickness: Math.max(3, v.crustalThickness - thinning) // Don't go below 3km
+                    };
+                }
+                
+                return v;
+            });
+            
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+    
+    /**
+     * Apply rift valley effect: thin crust
+     */
+    private applyRiftEffect(plates: TectonicPlate[], event: any, params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const width = params.width || 50; // km
+        const depthRate = params.depth ? Math.max(200, params.depth) : 500; // m/Ma thinning rate
+        
+        const [id1, id2] = event.plateIds;
+        
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh) return plate;
+            
+            const updatedMesh = plate.crustMesh.map(v => {
+                const dist = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                
+                if (dist < width) {
+                    const factor = Math.exp(-(dist * dist) / (2 * (width / 3) * (width / 3)));
+                    const thinning = (depthRate / 1000) * deltaT * factor; // Convert m to km
+                    
+                    return {
+                        ...v,
+                        crustalThickness: Math.max(15, v.crustalThickness - thinning) // Don't thin below 15km
+                    };
+                }
+                
+                return v;
+            });
+            
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+
+    /**
+     * Apply volcanic chain effect: mild crustal thickening along rift
+     */
+    private applyVolcanicChainEffect(plates: TectonicPlate[], event: any, _params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const width = 80; // km
+        const thickeningRate = 150; // m/Ma
+        const [id1, id2] = event.plateIds;
+
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh) return plate;
+
+            const updatedMesh = plate.crustMesh.map(v => {
+                const dist = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                if (dist < width) {
+                    const factor = Math.exp(-(dist * dist) / (2 * (width / 3) * (width / 3)));
+                    const thickening = (thickeningRate / 1000) * deltaT * factor;
+                    return { ...v, crustalThickness: v.crustalThickness + thickening };
+                }
+                return v;
+            });
+
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+
+    /**
+     * Apply accretionary wedge effect: thicken crust near subduction zone
+     */
+    private applyAccretionaryWedgeEffect(plates: TectonicPlate[], event: any, params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const width = params.width || 150; // km
+        const thickness = params.thickness || 10; // km
+        const thickeningRate = Math.max(0.2, thickness / 10); // km/Ma
+        const [id1, id2] = event.plateIds;
+
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh) return plate;
+            if (plate.crustType === 'oceanic') return plate;
+
+            const updatedMesh = plate.crustMesh.map(v => {
+                const dist = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                if (dist < width) {
+                    const factor = Math.exp(-(dist * dist) / (2 * (width / 3) * (width / 3)));
+                    return { ...v, crustalThickness: v.crustalThickness + thickeningRate * deltaT * factor };
+                }
+                return v;
+            });
+
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+
+    /**
+     * Apply back-arc basin effect: thin crust behind volcanic arc
+     */
+    private applyBackArcBasinEffect(plates: TectonicPlate[], event: any, params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const width = params.width || 300; // km
+        const spreadingRate = params.spreadingRate || 2; // cm/yr
+        const thinningRate = Math.max(0.1, spreadingRate * 0.05); // km/Ma
+        const [id1, id2] = event.plateIds;
+
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh) return plate;
+            if (plate.crustType === 'oceanic') return plate;
+
+            const updatedMesh = plate.crustMesh.map(v => {
+                const dist = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                if (dist < width) {
+                    const factor = Math.exp(-(dist * dist) / (2 * (width / 2) * (width / 2)));
+                    return { ...v, crustalThickness: Math.max(10, v.crustalThickness - thinningRate * deltaT * factor) };
+                }
+                return v;
+            });
+
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+
+    /**
+     * Apply ophiolite obduction effect: localized thickening near boundary
+     */
+    private applyOphioliteObductionEffect(plates: TectonicPlate[], event: any, params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const extent = params.extent || 100; // km
+        const thickeningRate = 0.2; // km/Ma
+        const [id1, id2] = event.plateIds;
+
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh) return plate;
+            if (plate.crustType === 'oceanic') return plate;
+
+            const updatedMesh = plate.crustMesh.map(v => {
+                const dist = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                if (dist < extent) {
+                    const factor = Math.exp(-(dist * dist) / (2 * (extent / 3) * (extent / 3)));
+                    return { ...v, crustalThickness: v.crustalThickness + thickeningRate * deltaT * factor };
+                }
+                return v;
+            });
+
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+
+    /**
+     * Apply new ocean basin effect: thin crust and convert to oceanic near rift
+     */
+    private applyNewOceanBasinEffect(plates: TectonicPlate[], event: any, params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const width = params.initialWidth || 100; // km
+        const spreadingRate = params.spreadingRate || 2; // cm/yr
+        const thinningRate = Math.max(0.2, spreadingRate * 0.08); // km/Ma
+        const [id1, id2] = event.plateIds;
+
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh) return plate;
+
+            const updatedMesh = plate.crustMesh.map(v => {
+                const dist = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                if (dist < width) {
+                    const factor = Math.exp(-(dist * dist) / (2 * (width / 3) * (width / 3)));
+                    const newThickness = Math.max(7, v.crustalThickness - thinningRate * deltaT * factor);
+                    return {
+                        ...v,
+                        crustalThickness: newThickness,
+                        isOceanic: newThickness <= 10 ? true : v.isOceanic
+                    };
+                }
+                return v;
+            });
+
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+
+    /**
+     * Apply flood basalt effect: regional thickening from massive volcanism
+     */
+    private applyFloodBasaltEffect(plates: TectonicPlate[], event: any, params: Record<string, number>, deltaT: number): TectonicPlate[] {
+        const area = params.area || 500000; // km^2
+        const thicknessMeters = params.thickness || 1000; // m
+        const radius = Math.sqrt(area / Math.PI); // km
+        const thickeningRate = Math.max(0.1, thicknessMeters / 1000 / 5); // km/Ma
+        const [id1, id2] = event.plateIds;
+
+        return plates.map(plate => {
+            if (plate.id !== id1 && plate.id !== id2) return plate;
+            if (!plate.crustMesh) return plate;
+
+            const updatedMesh = plate.crustMesh.map(v => {
+                const dist = this.distanceToEventBoundary(v.pos, event.boundarySegment);
+                if (dist < radius) {
+                    const factor = Math.exp(-(dist * dist) / (2 * (radius / 2) * (radius / 2)));
+                    return { ...v, crustalThickness: v.crustalThickness + thickeningRate * deltaT * factor };
+                }
+                return v;
+            });
+
+            return { ...plate, crustMesh: updatedMesh };
+        });
+    }
+    
+    /**
+     * Calculate minimum distance from point to event boundary
+     */
+    private distanceToEventBoundary(point: Coordinate, boundarySegments: Coordinate[][]): number {
+        let minDist = Infinity;
+        
+        for (const segment of boundarySegments) {
+            const dist = distanceToPolygonEdges(point, [segment]);
+            if (dist < minDist) minDist = dist;
+        }
+        
+        return minDist * 111; // Convert degrees to approximate km
     }
     
     /**
@@ -288,269 +697,14 @@ export class ElevationSystem {
         
         return { ...plate, crustMesh: vertices };
     }
-    
-    /**
-     * Apply collision physics with realistic asymmetric behavior
-     */
-    private applyCollisionPhysics(state: AppState, deltaT: number): AppState {
-        if (!state.world.boundaries || state.world.boundaries.length === 0) {
-            return state;
-        }
-        
-        const thickeningRate = (state.world.globalOptions.upliftRate || 1000) / 1000; // Convert m/Ma to km/Ma
-        const convergentBoundaries = state.world.boundaries.filter(b => b.type === 'convergent');
-        
-        if (convergentBoundaries.length === 0) return state;
-        
-        const plates = [...state.world.plates];
-        
-        for (const boundary of convergentBoundaries) {
-            const [id1, id2] = boundary.plateIds;
-            const p1Index = plates.findIndex(p => p.id === id1);
-            const p2Index = plates.findIndex(p => p.id === id2);
-            
-            if (p1Index === -1 || p2Index === -1) continue;
-            
-            const plate1 = plates[p1Index];
-            const plate2 = plates[p2Index];
-            
-            if (!plate1.crustMesh && !plate2.crustMesh) continue;
-            
-            // Use boundary rings (polygon edges) for proper distance calculation
-            const boundaryRings = boundary.points;
-            if (!boundaryRings || boundaryRings.length === 0) continue;
-            if (boundaryRings.every(ring => ring.length < 3)) continue;
-            
-            // Determine collision type and which plate subducts
-            const collision = this.classifyCollision(plate1, plate2);
-            
-            // Apply appropriate physics based on collision type
-            const velocity = boundary.velocity || 0.001;
-            const intensityFactor = Math.min(velocity / 0.005, 1.0); // Normalize: 5 cm/yr = full intensity
-            const thickeningAmount = thickeningRate * deltaT * intensityFactor;
-            
-            if (collision.type === 'continent-continent') {
-                // Both plates thicken (bilateral orogeny - Himalayas)
-                this.applyBilateralThickening(plates, p1Index, p2Index, boundaryRings, thickeningAmount);
-            } else if (collision.type === 'ocean-continent' || collision.type === 'ocean-ocean') {
-                // Subduction: overriding plate gets volcanic arc, subducting gets trench
-                this.applySubductionPhysics(plates, p1Index, p2Index, boundaryRings, thickeningAmount, collision);
-            }
-        }
-        
-        return {
-            ...state,
-            world: { ...state.world, plates }
-        };
-    }
-    
-    /**
-     * Classify collision type based on crust types
-     */
-    private classifyCollision(p1: TectonicPlate, p2: TectonicPlate): {
-        type: 'continent-continent' | 'ocean-continent' | 'ocean-ocean';
-        subductingPlateId: string;
-        overridingPlateId: string;
-    } {
-        const p1Oceanic = p1.crustType === 'oceanic';
-        const p2Oceanic = p2.crustType === 'oceanic';
-        
-        if (!p1Oceanic && !p2Oceanic) {
-            // Continent-Continent: slower/smaller plate "loses" (arbitrary)
-            const p1Rate = Math.abs(p1.motion.eulerPole.rate);
-            const p2Rate = Math.abs(p2.motion.eulerPole.rate);
-            return {
-                type: 'continent-continent',
-                subductingPlateId: p1Rate > p2Rate ? p1.id : p2.id,
-                overridingPlateId: p1Rate > p2Rate ? p2.id : p1.id
-            };
-        } else if (p1Oceanic && p2Oceanic) {
-            // Ocean-Ocean: older/denser plate subducts
-            return {
-                type: 'ocean-ocean',
-                subductingPlateId: p1.birthTime < p2.birthTime ? p1.id : p2.id,
-                overridingPlateId: p1.birthTime < p2.birthTime ? p2.id : p1.id
-            };
-        } else {
-            // Ocean-Continent: ocean always subducts
-            return {
-                type: 'ocean-continent',
-                subductingPlateId: p1Oceanic ? p1.id : p2.id,
-                overridingPlateId: p1Oceanic ? p2.id : p1.id
-            };
-        }
-    }
-    
-    /**
-     * Apply bilateral thickening for continent-continent collisions (Himalaya model)
-     */
-    private applyBilateralThickening(
-        plates: TectonicPlate[],
-        p1Index: number,
-        p2Index: number,
-        boundaryRings: Coordinate[][],
-        thickeningAmount: number
-    ): void {
-        const proximityThreshold = 5.0 / 111.0; // ~5 degrees
-        
-        for (const pIndex of [p1Index, p2Index]) {
-            if (!plates[pIndex].crustMesh) continue;
-            
-            plates[pIndex] = {
-                ...plates[pIndex],
-                crustMesh: plates[pIndex].crustMesh!.map(vertex => {
-                    // Calculate distance to boundary polygon edges (not just vertices)
-                    const minDist = distanceToPolygonEdges(vertex.pos, boundaryRings);
-                    
-                    if (minDist < proximityThreshold) {
-                        // Gaussian falloff for natural mountain profile
-                        const falloff = Math.exp(-(minDist / proximityThreshold) * 2);
-                        const newThickness = vertex.crustalThickness + thickeningAmount * falloff;
-                        
-                        // Cap at realistic maximum (~70km for Himalayas/Tibet)
-                        return {
-                            ...vertex,
-                            crustalThickness: Math.min(newThickness, 70)
-                        };
-                    }
-                    return vertex;
-                })
-            };
-        }
-    }
-    
-    /**
-     * Apply subduction physics (volcanic arc on overriding, trench on subducting)
-     */
-    private applySubductionPhysics(
-        plates: TectonicPlate[],
-        p1Index: number,
-        p2Index: number,
-        boundaryRings: Coordinate[][],
-        thickeningAmount: number,
-        collision: { subductingPlateId: string; overridingPlateId: string }
-    ): void {
-        const trenchProximity = 1.5 / 111.0;  // ~1.5 degrees - immediate boundary
-        const arcProximity = 3.0 / 111.0;     // ~3 degrees - volcanic arc zone
-        const arcInnerLimit = 1.0 / 111.0;    // Inner edge of arc
-        
-        for (const pIndex of [p1Index, p2Index]) {
-            const plate = plates[pIndex];
-            if (!plate.crustMesh) continue;
-            
-            const isSubducting = plate.id === collision.subductingPlateId;
-            
-            plates[pIndex] = {
-                ...plate,
-                crustMesh: plate.crustMesh.map(vertex => {
-                    // Calculate distance to boundary polygon edges
-                    const minDist = distanceToPolygonEdges(vertex.pos, boundaryRings);
-                    
-                    if (isSubducting) {
-                        // Subducting plate: create trench (thin the crust near boundary)
-                        if (minDist < trenchProximity) {
-                            const falloff = 1 - (minDist / trenchProximity);
-                            const thinning = thickeningAmount * 0.5 * falloff;
-                            return {
-                                ...vertex,
-                                crustalThickness: Math.max(vertex.crustalThickness - thinning, 5)
-                            };
-                        }
-                    } else {
-                        // Overriding plate: volcanic arc inland from boundary
-                        if (minDist > arcInnerLimit && minDist < arcProximity) {
-                            const normalizedDist = (minDist - arcInnerLimit) / (arcProximity - arcInnerLimit);
-                            const arcProfile = Math.sin(normalizedDist * Math.PI);
-                            const newThickness = vertex.crustalThickness + thickeningAmount * arcProfile * 0.7;
-                            
-                            return {
-                                ...vertex,
-                                crustalThickness: Math.min(newThickness, 55)
-                            };
-                        }
-                    }
-                    return vertex;
-                })
-            };
-        }
-    }
-    
-    /**
-     * Apply rifting physics at divergent boundaries
-     * Thins continental crust, creates new thin oceanic crust
-     */
-    private applyRiftingPhysics(state: AppState, deltaT: number): AppState {
-        if (!state.world.boundaries || state.world.boundaries.length === 0) {
-            return state;
-        }
-        
-        const thinningRate = (state.world.globalOptions.upliftRate || 1000) / 2000; // Half of convergent rate
-        const divergentBoundaries = state.world.boundaries.filter(b => b.type === 'divergent');
-        
-        if (divergentBoundaries.length === 0) return state;
-        
-        const plates = [...state.world.plates];
-        
-        for (const boundary of divergentBoundaries) {
-            const boundaryRings = boundary.points;
-            if (!boundaryRings || boundaryRings.length === 0) continue;
-            
-            const velocity = boundary.velocity || 0.001;
-            const intensityFactor = Math.min(velocity / 0.005, 1.0);
-            const thinningAmount = thinningRate * deltaT * intensityFactor;
-            
-            // Affect both plates at the boundary
-            for (const plateId of boundary.plateIds) {
-                const pIndex = plates.findIndex(p => p.id === plateId);
-                if (pIndex === -1 || !plates[pIndex].crustMesh) continue;
-                
-                const plate = plates[pIndex];
-                const riftProximity = 2.0 / 111.0; // ~2 degrees from boundary
-                
-                plates[pIndex] = {
-                    ...plate,
-                    crustMesh: plate.crustMesh!.map(vertex => {
-                        // Calculate distance to boundary polygon edges
-                        const minDist = distanceToPolygonEdges(vertex.pos, boundaryRings);
-                        
-                        if (minDist < riftProximity) {
-                            const falloff = 1 - (minDist / riftProximity);
-                            
-                            if (!vertex.isOceanic) {
-                                // Continental rift: thin the crust (East African Rift model)
-                                const newThickness = vertex.crustalThickness - thinningAmount * falloff;
-                                
-                                // If thinned below ~20km, transition to oceanic crust
-                                if (newThickness < 20) {
-                                    return {
-                                        ...vertex,
-                                        crustalThickness: REFERENCE_THICKNESS_OCEAN,
-                                        isOceanic: true // Continental breakup -> new ocean basin
-                                    };
-                                }
-                                
-                                return {
-                                    ...vertex,
-                                    crustalThickness: Math.max(newThickness, 20)
-                                };
-                            } else {
-                                // Oceanic spreading center: maintain thin new crust
-                                // New oceanic crust is created at ~7km thickness
-                                // Very close to ridge = hotter = slightly elevated
-                                return vertex; // Already at oceanic baseline
-                            }
-                        }
-                        return vertex;
-                    })
-                };
-            }
-        }
-        
-        return {
-            ...state,
-            world: { ...state.world, plates }
-        };
-    }
+
+    // ============================================================================
+    // [REMOVED - Event-Driven System]
+    // The applyCollisionPhysics and applyRiftingPhysics methods have been removed
+    // as part of the Event-Driven Guided Creation system. Mesh now only reacts to
+    // COMMITTED EVENTS (user-selected consequences) and EROSION/SEDIMENTS.
+    // These methods can be found in git history if needed for reference.
+    // ============================================================================
     
     /**
      * Apply thermal subsidence - oceanic crust deepens as it ages and cools

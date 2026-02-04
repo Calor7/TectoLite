@@ -1,4 +1,4 @@
-import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, PaintStroke, Landmass, generateId, PaintMode, ElevationViewMode } from '../types';
+import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, PaintStroke, Landmass, generateId, PaintMode, ElevationViewMode, TectonicEvent } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { Delaunay } from 'd3-delaunay';
@@ -1645,6 +1645,9 @@ export class CanvasManager {
         // Render selected vertex highlight
         this.renderSelectedVertex(state);
 
+        // Draw Event Icons (Guided Creation)
+        this.drawEventIcons(state);
+
         // Draw Mantle Plumes (Global Features)
         if (state.world.mantlePlumes) {
             for (const plume of state.world.mantlePlumes) {
@@ -1852,6 +1855,70 @@ export class CanvasManager {
             }
         }
         this.ctx.restore();
+    }
+
+    private drawEventIcons(state: AppState): void {
+        if (!state.world.globalOptions.showEventIcons) return;
+
+        const events = state.world.tectonicEvents || [];
+        if (events.length === 0) return;
+
+        const currentTime = state.world.currentTime;
+        const showFuture = state.world.showFutureFeatures;
+
+        for (const event of events) {
+            const isInTimeline = event.time <= currentTime;
+            if (!isInTimeline && !showFuture) continue;
+
+            const anchor = this.getEventAnchor(event);
+            if (!anchor) continue;
+
+            const proj = this.projectionManager.project(anchor);
+            if (!proj) continue;
+
+            const isPending = state.world.pendingEventId === event.id;
+            const isCommitted = event.committed;
+            const color = event.eventType === 'collision' ? '#ef4444' : '#3b82f6';
+            const fill = isCommitted ? color : '#f59e0b';
+
+            this.ctx.save();
+            this.ctx.translate(proj[0], proj[1]);
+
+            const radius = isPending ? 9 : 7;
+            this.ctx.beginPath();
+            this.ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            this.ctx.fillStyle = fill;
+            this.ctx.fill();
+
+            this.ctx.strokeStyle = isPending ? '#ffffff' : 'rgba(0,0,0,0.6)';
+            this.ctx.lineWidth = isPending ? 2 : 1;
+            this.ctx.stroke();
+
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = '10px sans-serif';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText(event.eventType === 'collision' ? '💥' : '🔀', 0, 1);
+
+            this.ctx.restore();
+        }
+    }
+
+    private getEventAnchor(event: TectonicEvent): Coordinate | null {
+        const points = event.boundarySegment.flat();
+        if (points.length === 0) return null;
+
+        let sum: Vector3 = { x: 0, y: 0, z: 0 };
+        for (const p of points) {
+            const v = latLonToVector(p);
+            sum = { x: sum.x + v.x, y: sum.y + v.y, z: sum.z + v.z };
+        }
+
+        const len = Math.sqrt(sum.x * sum.x + sum.y * sum.y + sum.z * sum.z);
+        if (len === 0) return points[0];
+
+        const normalized: Vector3 = { x: sum.x / len, y: sum.y / len, z: sum.z / len };
+        return vectorToLatLon(normalized);
     }
 
     private drawFeature(feature: Feature, isSelected: boolean, isGhosted: boolean = false): void {

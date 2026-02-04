@@ -9,6 +9,8 @@ import {
 import { BoundarySystem } from './BoundarySystem';
 import { GeologicalAutomationSystem } from './systems/GeologicalAutomation';
 import { ElevationSystem } from './systems/ElevationSystem';
+import { EventEffectsProcessor } from './systems/EventEffectsProcessor';
+import { eventSystem } from './systems/EventSystem';
 
 
 export class SimulationEngine {
@@ -17,6 +19,7 @@ export class SimulationEngine {
     private animationId: number | null = null;
     private geologicalAutomation: GeologicalAutomationSystem;
     private elevationSystem: ElevationSystem;
+    private eventEffectsProcessor: EventEffectsProcessor;
 
     constructor(
         private getState: () => AppState,
@@ -24,6 +27,7 @@ export class SimulationEngine {
     ) { 
         this.geologicalAutomation = new GeologicalAutomationSystem();
         this.elevationSystem = new ElevationSystem();
+        this.eventEffectsProcessor = new EventEffectsProcessor();
     }
 
     // Helper: Check if a point is inside a spherical polygon using ray casting
@@ -105,11 +109,12 @@ export class SimulationEngine {
             });
 
             // Calculate Boundaries if enabled
-            // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization is enabled.
+            // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization OR Guided Creation is enabled.
             // If none are on, clear boundaries to prevent stale artifacts.
             const boundaries = (globalOptions.enableBoundaryVisualization || 
                 globalOptions.enableOrogeny || 
                 globalOptions.enableElevationSimulation ||
+                globalOptions.enableGuidedCreation ||
                 globalOptions.pauseOnFusionSuggestion)
                 ? BoundarySystem.detectBoundaries(newPlates, time)
                 : [];
@@ -126,9 +131,13 @@ export class SimulationEngine {
             };
             const postAutomationState = this.geologicalAutomation.update(tempState);
             
-            // Phase 5: Elevation System (use signed deltaT to detect direction)
+            // Phase 5: Event System (detect tectonic events for guided creation)
+            const postEventState = eventSystem.update(postAutomationState);
+            const postEffectState = this.eventEffectsProcessor.update(postEventState);
+            
+            // Phase 6: Elevation System (use signed deltaT to detect direction)
             const deltaT = time - state.world.currentTime;
-            const finalState = this.elevationSystem.update(postAutomationState, deltaT);
+            const finalState = this.elevationSystem.update(postEffectState, deltaT);
 
             return finalState;
         });
@@ -188,11 +197,12 @@ export class SimulationEngine {
             });
 
             // Calculate Boundaries if enabled
-            // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization is enabled.
+            // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization OR Guided Creation is enabled.
             // If none are on, clear boundaries to prevent stale artifacts.
             const boundaries = (globalOptions.enableBoundaryVisualization || 
                 globalOptions.enableOrogeny || 
                 globalOptions.enableElevationSimulation ||
+                globalOptions.enableGuidedCreation ||
                 globalOptions.pauseOnFusionSuggestion)
                 ? BoundarySystem.detectBoundaries(newPlates, newTime)
                 : [];
@@ -209,8 +219,12 @@ export class SimulationEngine {
             };
             const postAutomationState = this.geologicalAutomation.update(tempState);
             
-            // Phase 4: Elevation System
-            const finalState = this.elevationSystem.update(postAutomationState, deltaMa);
+            // Phase 4: Event System (detect tectonic events for guided creation)
+            const postEventState = eventSystem.update(postAutomationState);
+            const postEffectState = this.eventEffectsProcessor.update(postEventState);
+            
+            // Phase 5: Elevation System
+            const finalState = this.elevationSystem.update(postEffectState, deltaMa);
 
             return finalState;
         });
