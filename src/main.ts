@@ -4011,13 +4011,35 @@ class TectoLiteApp {
                             onClick: () => {
                                 this.pushState();
                                 const currentTime = this.state.world.currentTime;
+                                
                                 this.state.world.plates = this.state.world.plates.map(p => {
                                     if (p.id === childId) {
+                                        // Create a keyframe at link time with zero motion (default pole)
+                                        // This prevents the child from "teleporting" when linked
+                                        const childKeyframes = p.motionKeyframes || [];
+                                        const newKeyframes = [...childKeyframes];
+                                        
+                                        // Check if there's already a keyframe at this time
+                                        const existingIndex = newKeyframes.findIndex(kf => Math.abs(kf.time - currentTime) < 0.001);
+                                        
+                                        if (existingIndex < 0) {
+                                            // Add new keyframe with zero rate (child stops moving on its own while linked)
+                                            newKeyframes.push({
+                                                time: currentTime,
+                                                eulerPole: { position: [0, 90], rate: 0 },
+                                                snapshotPolygons: p.polygons,
+                                                snapshotFeatures: p.features,
+                                                snapshotPaintStrokes: p.paintStrokes,
+                                                snapshotLandmasses: p.landmasses
+                                            });
+                                        }
+                                        
                                         return { 
                                             ...p, 
                                             linkedToPlateId: parentId,
                                             linkTime: currentTime,
-                                            unlinkTime: undefined // Clear any previous unlink time
+                                            unlinkTime: undefined, // Clear any previous unlink time
+                                            motionKeyframes: newKeyframes
                                         };
                                     }
                                     return p;
@@ -6197,12 +6219,16 @@ class TectoLiteApp {
                 };
 
                 // Add/Update Keyframe
+                // Creating a keyframe at modification time ensures that if a linked child's
+                // motion parameters change, the snapshot captures the current position,
+                // preventing teleportation when the new parameters take effect
                 const newKeyframe: MotionKeyframe = {
                     time: currentTime,
                     eulerPole: updated.motion.eulerPole,
                     snapshotPolygons: p.polygons,
                     snapshotFeatures: p.features,
-                    snapshotPaintStrokes: p.paintStrokes || []
+                    snapshotPaintStrokes: p.paintStrokes || [],
+                    snapshotLandmasses: p.landmasses
                 };
 
                 const otherKeyframes = (p.motionKeyframes || []).filter(k => Math.abs(k.time - currentTime) > 0.001);

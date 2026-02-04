@@ -313,10 +313,9 @@ export class SimulationEngine {
         const elapsed = time - activeKeyframe.time;
 
         // Prepare parent motion if this plate is linked to another
-        // The parent's TOTAL rotation from its reference time affects the child
+        // The parent's rotation affects the child ONLY from linkTime onwards
         // BUT ONLY if we're within the link time window
-        let parentAxis: Vector3 | null = null;
-        let parentAngle: number = 0;
+        let parentTransform: { axis: Vector3; angle: number }[] = [];
 
         if (parentLinkedPlate) {
             // Check if we're within the link time window
@@ -325,17 +324,39 @@ export class SimulationEngine {
                 (!plate.unlinkTime || time < plate.unlinkTime);
             
             if (isWithinLinkWindow) {
-                // Get parent plate's CURRENT active motion
                 const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
-                const parentActiveKeyframe = parentKeyframes
-                    .filter(kf => kf.time <= time)
-                    .sort((a, b) => b.time - a.time)[0];
+                const linkStartTime = plate.linkTime || (parentKeyframes[0]?.time ?? 0);
+                const motionStartTime = Math.max(linkStartTime, activeKeyframe.time);
 
-                if (parentActiveKeyframe && parentActiveKeyframe.eulerPole && parentActiveKeyframe.eulerPole.rate !== 0) {
-                    const parentPole = parentActiveKeyframe.eulerPole;
-                    parentAxis = latLonToVector(parentPole.position);
-                    // Parent's rotation from its keyframe time to now
-                    parentAngle = toRad(parentPole.rate * (time - parentActiveKeyframe.time));
+                // Build segment-by-segment rotations, accounting for axis changes
+                const relevantKeyframes = parentKeyframes.filter(kf => kf.time <= time && kf.time >= motionStartTime);
+                
+                if (relevantKeyframes.length > 0) {
+                    relevantKeyframes.sort((a, b) => a.time - b.time);
+                    let prevTime = motionStartTime;
+                    
+                    for (let i = 0; i < relevantKeyframes.length; i++) {
+                        const kf = relevantKeyframes[i];
+                        if (kf.eulerPole && kf.eulerPole.rate !== 0) {
+                            const pole = kf.eulerPole;
+                            const axis = latLonToVector(pole.position);
+                            
+                            // Determine duration for this segment
+                            let segmentEnd = time;
+                            // If there's a next keyframe before our current time, stop at that keyframe
+                            if (i + 1 < relevantKeyframes.length) {
+                                segmentEnd = Math.min(relevantKeyframes[i + 1].time, time);
+                            }
+                            
+                            const duration = segmentEnd - Math.max(kf.time, prevTime);
+                            if (duration > 0) {
+                                const angle = toRad(pole.rate * duration);
+                                parentTransform.push({ axis, angle });
+                            }
+                            
+                            prevTime = segmentEnd;
+                        }
+                    }
                 }
             }
         }
@@ -357,12 +378,14 @@ export class SimulationEngine {
         };
 
         // Helper to apply all active rotations in sequence: parent -> own
-        // Parent rotation is applied first (base motion), then child's own motion on top
+        // Parent rotation is applied segment-by-segment if axis changed, then child's own motion on top
         const applyAllRotations = (coord: Coordinate): Coordinate => {
             let result = coord;
-            // 1. Apply parent's motion first (inherited motion)
-            if (parentAxis && parentAngle !== 0) {
-                result = applyRotation(result, parentAxis, parentAngle);
+            // 1. Apply parent's motion first (inherited motion), segment by segment
+            for (const segment of parentTransform) {
+                if (segment.angle !== 0) {
+                    result = applyRotation(result, segment.axis, segment.angle);
+                }
             }
             // 2. Apply child's own motion on top (additional/differential motion)
             if (ownAxis && ownAngle !== 0) {
@@ -372,7 +395,7 @@ export class SimulationEngine {
         };
 
         // Check if we have any motion at all
-        const hasParentMotion = parentAxis && parentAngle !== 0;
+        const hasParentMotion = parentTransform.length > 0;
         const hasOwnMotion = ownAxis && ownAngle !== 0;
         const hasAnyMotion = hasParentMotion || hasOwnMotion;
 
@@ -406,22 +429,16 @@ export class SimulationEngine {
             let result = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
             
             // Apply parent motion if linked (for the feature's lifetime) AND within link time window
-            if (parentAxis && parentLinkedPlate) {
+            if (parentTransform.length > 0 && parentLinkedPlate) {
                 const isWithinLinkWindow = 
                     (!plate.linkTime || time >= plate.linkTime) && 
                     (!plate.unlinkTime || time < plate.unlinkTime);
                 
                 if (isWithinLinkWindow) {
-                    const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
-                    const parentActiveKeyframe = parentKeyframes
-                        .filter(kf => kf.time <= startTime)
-                        .sort((a, b) => b.time - a.time)[0];
-                        
-                    if (parentActiveKeyframe && parentActiveKeyframe.eulerPole && parentActiveKeyframe.eulerPole.rate !== 0) {
-                        const parentPole = parentActiveKeyframe.eulerPole;
-                        const parentFeatureAngle = toRad(parentPole.rate * featureElapsed);
-                        if (parentFeatureAngle !== 0) {
-                            result = applyRotation(result, parentAxis, parentFeatureAngle);
+                    // Apply parent motion segment by segment
+                    for (const segment of parentTransform) {
+                        if (segment.angle !== 0) {
+                            result = applyRotation(result, segment.axis, segment.angle);
                         }
                     }
                 }
