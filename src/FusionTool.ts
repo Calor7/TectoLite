@@ -268,70 +268,43 @@ export function fusePlates(
     
     for (const plate of sortedPlates) {
         if (plate.paintStrokes) {
-            const [centerLon, centerLat] = plate.center;
             for (const stroke of plate.paintStrokes) {
                 const { id, points, ...strokeMeta } = stroke;
-                // Convert from plate's local coordinates to world coordinates
-                const worldPoints = points.map(pt => [
-                    centerLon + pt[0],
-                    centerLat + pt[1]
-                ] as Coordinate);
+                // Paint points are stored as World Coordinates (handled by SimulationEngine)
+                const worldPoints = [...points];
                 
-                // DESTRUCTIVE FILTER: Only keep points that are actually inside the source plate's polygons
-                // This "cuts off" the invisible part of the paint stroke so it doesn't reappear after fusion
-                // We create new strokes for every continuous segment inside the boundary
+                // Keep all points from both plates - visual clipping in CanvasManager handles interior display.
+                // We reset birthTime to prevent legacy rotation compounding from 0 Ma.
                 
-                const insideSegments: Coordinate[][] = [];
-                let currentSegment: Coordinate[] = [];
-
-                for (const pt of worldPoints) {
-                    const isInside = plate.polygons.some(poly => isPointInPolygon(pt, poly.points));
-                    
-                    if (isInside) {
-                        currentSegment.push(pt);
-                    } else if (currentSegment.length > 0) {
-                         // End of a valid segment
-                         if (currentSegment.length >= 2 || stroke.width > 0) { // allow single points if not a line? usually width > 0 for brush
-                             insideSegments.push([...currentSegment]);
-                         }
-                         currentSegment = [];
-                    }
-                }
-                
-                // Catch the last segment
-                if (currentSegment.length > 0) {
-                     insideSegments.push([...currentSegment]);
-                }
-
-                // Add all valid clamped segments to the new merged plate
-                for (const segment of insideSegments) {
-                    if (segment.length < 1) continue;
-
-                    // Convert from world coordinates to fused plate's local coordinates
-                    const fusedLocalPoints = segment.map(pt => [
-                        pt[0] - newCenter[0],
-                        pt[1] - newCenter[1]
-                    ] as Coordinate);
-                    
-                    mergedPaintStrokes.push({
-                        ...strokeMeta,
-                        points: fusedLocalPoints,
-                        id: generateId()
-                    });
-                }
+                mergedPaintStrokes.push({
+                    ...strokeMeta,
+                    points: worldPoints,
+                    originalPoints: worldPoints,
+                    birthTime: currentTime,
+                    id: generateId()
+                });
             }
         }
     }
+
+    // Generate ID for the new fused plate early to allow linking
+    const fusedPlateId = generateId();
 
     // Transfer Landmasses from both plates (keep separate, don't merge)
     const mergedLandmasses: Landmass[] = [];
     for (const plate of sortedPlates) {
         if (plate.landmasses) {
             for (const landmass of plate.landmasses) {
-                // Keep landmass as-is, just transfer to the new fused plate
+                // Transfer landmass to the new fused plate with updated context
                 mergedLandmasses.push({
                     ...landmass,
-                    id: generateId() // New ID for the fused plate
+                    id: generateId(),
+                    originalPolygon: landmass.polygon, // Reset original for the new plate
+                    birthTime: currentTime,            // Reset birth time to prevent double-rotation
+                    // Update link if it was linked to either of the parent plates
+                    linkedToPlateId: (landmass.linkedToPlateId === plate1.id || landmass.linkedToPlateId === plate2.id) 
+                        ? fusedPlateId 
+                        : landmass.linkedToPlateId
                 });
             }
         }
@@ -348,7 +321,7 @@ export function fusePlates(
 
     // Create the new fused plate
     const fusedPlate: TectonicPlate = {
-        id: generateId(),
+        id: fusedPlateId,
         name: `${plate1.name}-${plate2.name} (Fused)`,
         color: plate1.color,
         polygons: mergedPolygons,

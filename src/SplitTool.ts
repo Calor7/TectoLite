@@ -390,33 +390,30 @@ export function splitPlate(
     const rightCenter = calculateSphericalCentroid(rightPolygons.flatMap(p => p.points));
 
     if (plateToSplit.paintStrokes) {
-        const [centerLon, centerLat] = plateToSplit.center;
         for (const stroke of plateToSplit.paintStrokes) {
-            // Convert paint points from plate-local back to world coordinates
-            const worldPoints = stroke.points.map(pt => [
-                centerLon + pt[0],
-                centerLat + pt[1]
-            ] as Coordinate);
+            // Keep points as World Coordinates (SimulationEngine handles rotation)
+            // Visual clipping in CanvasManager handles hiding parts outside boundaries.
             
-            // Duplicate strokes to BOTH plates completely
-            // Visual clipping will handle hiding the parts that are outside boundary
-            // This prevents "cutting" strokes incorrectly near the boundary
-            
-            if (worldPoints.length >= 2) {
+            if (stroke.points.length >= 2) {
                 const { id, points, ...strokeMeta } = stroke;
+                
                 // Add to Left Plate
-                const leftLocalPoints = worldPoints.map(pt => [
-                    pt[0] - leftCenter[0],
-                    pt[1] - leftCenter[1]
-                ] as Coordinate);
-                leftPaintStrokes.push({ ...strokeMeta, points: leftLocalPoints, id: generateId() });
+                leftPaintStrokes.push({ 
+                    ...strokeMeta, 
+                    points: [...stroke.points], 
+                    originalPoints: [...stroke.points], 
+                    birthTime: currentTime, // Reset birth time to split time
+                    id: generateId() 
+                });
 
                 // Add to Right Plate
-                const rightLocalPoints = worldPoints.map(pt => [
-                    pt[0] - rightCenter[0],
-                    pt[1] - rightCenter[1]
-                ] as Coordinate);
-                rightPaintStrokes.push({ ...strokeMeta, points: rightLocalPoints, id: generateId() });
+                rightPaintStrokes.push({ 
+                    ...strokeMeta, 
+                    points: [...stroke.points], 
+                    originalPoints: [...stroke.points], 
+                    birthTime: currentTime, // Reset birth time to split time
+                    id: generateId() 
+                });
             }
         }
     }
@@ -440,6 +437,7 @@ export function splitPlate(
                     id: generateId(),
                     polygon: leftPoly,
                     originalPolygon: leftPoly, // Reset original for new plate
+                    birthTime: currentTime, // Reset birth time to split time to prevent double-rotation in simulation
                     // Update link to point to the new left plate (if was linked to parent)
                     linkedToPlateId: landmass.linkedToPlateId === plateToSplit.id ? leftPlateId : landmass.linkedToPlateId
                 });
@@ -450,9 +448,47 @@ export function splitPlate(
                     id: generateId(),
                     polygon: rightPoly,
                     originalPolygon: rightPoly, // Reset original for new plate
+                    birthTime: currentTime, // Reset birth time to split time to prevent double-rotation in simulation
                     // Update link to point to the new right plate (if was linked to parent)
                     linkedToPlateId: landmass.linkedToPlateId === plateToSplit.id ? rightPlateId : landmass.linkedToPlateId
                 });
+            }
+
+            // Fallback: If landmass wasn't intersected by split line (not added to either side)
+            // assign it to the appropriate plate based on which side contains it
+            if (leftPoly.length < 3 && rightPoly.length < 3) {
+                // Calculate centroid of the landmass to determine which plate contains it
+                const centroid = calculateSphericalCentroid(landmass.polygon);
+
+                // Check which child plate contains the landmass centroid
+                const inLeft = leftPolygons.some(poly => isPointInPolygon(centroid, poly.points));
+                const inRight = rightPolygons.some(poly => isPointInPolygon(centroid, poly.points));
+
+                const newLandmass = {
+                    ...landmass,
+                    id: generateId(),
+                    polygon: landmass.polygon,
+                    originalPolygon: landmass.polygon,
+                    birthTime: currentTime // Reset birth time to split time to prevent double-rotation
+                };
+
+                if (inLeft) {
+                    newLandmass.linkedToPlateId = landmass.linkedToPlateId === plateToSplit.id ? leftPlateId : landmass.linkedToPlateId;
+                    leftLandmasses.push(newLandmass);
+                } else if (inRight) {
+                    newLandmass.linkedToPlateId = landmass.linkedToPlateId === plateToSplit.id ? rightPlateId : landmass.linkedToPlateId;
+                    rightLandmasses.push(newLandmass);
+                } else {
+                    // Edge case: landmass on boundary - use dot product with normal to assign
+                    const v = latLonToVector(centroid);
+                    if (dot(v, overallNormal) > 0) {
+                        newLandmass.linkedToPlateId = landmass.linkedToPlateId === plateToSplit.id ? leftPlateId : landmass.linkedToPlateId;
+                        leftLandmasses.push(newLandmass);
+                    } else {
+                        newLandmass.linkedToPlateId = landmass.linkedToPlateId === plateToSplit.id ? rightPlateId : landmass.linkedToPlateId;
+                        rightLandmasses.push(newLandmass);
+                    }
+                }
             }
         }
     }

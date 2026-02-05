@@ -200,17 +200,20 @@ class TectoLiteApp {
     }
 
     private getHTML(): string {
-        return `
-      <div class="app-container">
-        <header class="app-header">
-          <h1 class="app-title">
-            TECTOLITE <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a></span>
-            <span style="margin-left: 20px; font-size: 0.7em; display: inline-flex; gap: 15px; align-items: center;">
-                <a href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" style="color: var(--text-secondary); text-decoration: none;"><span class="coffee-icon">☕</span> Feed my coffee addiction</a>
-                <a href="https://refracturedgames.eo.page/zcyvj" target="_blank" rel="noopener noreferrer" id="link-subscribe" style="color: var(--accent-primary); text-decoration: none; font-weight: 600;">Subscribe to Updates</a>
-            </span>
-          </h1>
-          <div class="header-actions">
+                return `
+            <div class="app-container">
+                <header class="app-header">
+                    <h1 class="app-title">
+                        <a href="https://github.com/Calor7/TectoLite" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none;">
+                            TECTOLITE
+                        </a>
+                        <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a></span>
+                        <span style="margin-left: 20px; font-size: 0.7em; display: inline-flex; gap: 15px; align-items: center;">
+                                <a href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" style="color: var(--text-secondary); text-decoration: none;"><span class="coffee-icon">☕</span> Feed my coffee addiction</a>
+                                <a href="https://refracturedgames.eo.page/zcyvj" target="_blank" rel="noopener noreferrer" id="link-subscribe" style="color: var(--accent-primary); text-decoration: none; font-weight: 600;">Subscribe to Updates</a>
+                        </span>
+                    </h1>
+                    <div class="header-actions">
             <!-- Projection Selector Moved to Sidebar -->
             
             <!-- Retro Status Info Box -->
