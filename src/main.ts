@@ -330,14 +330,6 @@ class TectoLiteApp {
                                  <span id="landmass-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 35px;">${Math.round((this.state.world.globalOptions.landmassOpacity ?? 0.9) * 100)}%</span>
                              </div>
                         </div>
-                        
-                        <div style="padding: 4px 8px; border-top: 1px dotted var(--border-default); margin-top: 4px;">
-                             <label style="font-size: 11px; white-space: nowrap; font-weight: 600;">Erosion Rate <span class="info-icon" data-tooltip="Global multiplier for paint fading/deletion (1.0 = Normal, 2.0 = 2x Fading Speed)">(i)</span></label>
-                             <div style="display: flex; align-items: center; gap: 4px;">
-                                 <input type="number" id="erosion-multiplier" class="property-input" value="1.0" min="0.1" step="0.1" style="flex: 1;">
-                                 <button id="btn-reset-erosion" class="btn btn-secondary" style="font-size: 10px; padding: 2px 4px;" title="Reset to 1.0">Reset</button>
-                             </div>
-                        </div>
                     </div>
                 </div>
 
@@ -407,6 +399,19 @@ class TectoLiteApp {
                                     <div style="margin-top: 8px; padding: 6px; background: rgba(37, 99, 235, 0.1); border-radius: 4px; font-size: 9px; color: var(--text-secondary);">
                                         💡 Use the Mesh Edit tool (M) to inspect and manually sculpt terrain
                                     </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Paint Ageing and Erosion -->
+                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);">
+                                <div style="font-weight: 600; color: var(--text-highlight); margin-bottom: 6px;">🌊 Paint Erosion & Ageing</div>
+                                
+                                <div style="padding: 4px 8px;">
+                                     <label style="font-size: 11px; white-space: nowrap; font-weight: 600;">Erosion Rate <span class="info-icon" data-tooltip="Global multiplier for paint fading/deletion (1.0 = Normal, 2.0 = 2x Fading Speed)">(i)</span></label>
+                                     <div style="display: flex; align-items: center; gap: 4px;">
+                                         <input type="number" id="erosion-multiplier" class="property-input" value="1.0" min="0.1" step="0.1" style="flex: 1;">
+                                         <button id="btn-reset-erosion" class="btn btn-secondary" style="font-size: 10px; padding: 2px 4px;" title="Reset to 1.0">Reset</button>
+                                     </div>
                                 </div>
                             </div>
                             
