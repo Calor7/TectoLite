@@ -324,27 +324,13 @@ class TectoLiteApp {
                     <div id="automation-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
                         <div class="dropdown-section">
                             <div class="dropdown-header">Automation Systems</div>
+                            <div style="margin: 8px 0; padding: 8px; background: rgba(255,165,0,0.15); border-left: 3px solid orange; font-size: 11px; color: var(--text-primary);">
+                                ⚠️ Preview unfinished features, do not expect them to work!
+                            </div>
                             
                             <label class="view-dropdown-item">
                                  <input type="checkbox" id="check-enable-hotspots" ${this.state.world.globalOptions.enableHotspots ? 'checked' : ''}> Hotspot Tracking <span class="info-icon" data-tooltip="Stationary plumes create volcanic trails on moving plates">(i)</span>
                             </label>
-                            
-                            <label class="view-dropdown-item" style="opacity: 0.5;" title="DEPRECATED: Use Elevation System instead">
-                                 <input type="checkbox" id="check-enable-orogeny" ${this.state.world.globalOptions.enableOrogeny ? 'checked' : ''} disabled> Orogeny Detection (DEPRECATED) <span class="info-icon" data-tooltip="This legacy feature is replaced by the Elevation System. Use 'Enable Elevation Simulation' instead.">(i)</span>
-                            </label>
-                            <div style="margin-left: 20px; padding: 8px; background: rgba(255,165,0,0.1); border-left: 2px solid orange; font-size: 10px;">
-                                ⚠️ <strong>Legacy Feature</strong><br>
-                                Use <strong>Elevation Simulation</strong> above for physical terrain generation.
-                            </div>
-
-                            <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dotted var(--border-default);">
-                                <label class="view-dropdown-item">
-                                    <input type="checkbox" id="check-boundary-vis"> Visualize Boundaries <span class="info-icon" data-tooltip="Show Convergent (Red) and Divergent (Blue) lines">(i)</span>
-                                </label>
-                                <label class="view-dropdown-item" style="margin-top: 4px;">
-                                    <input type="checkbox" id="check-fuse-recommend"> Pause on Fusion Suggestion <span class="info-icon" data-tooltip="Pause and suggest likely real-world fusion candidates based on convergent motion">(i)</span>
-                                </label>
-                            </div>
                             
                             <!-- Elevation System -->
                             <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);">
@@ -1761,14 +1747,7 @@ class TectoLiteApp {
              }
         });
 
-        document.getElementById('check-enable-orogeny')?.addEventListener('change', (e) => {
-             this.state.world.globalOptions.enableOrogeny = (e.target as HTMLInputElement).checked;
-             // Show/hide sub-options
-             const optionsDiv = document.getElementById('orogeny-options');
-             if (optionsDiv) optionsDiv.style.display = (e.target as HTMLInputElement).checked ? 'block' : 'none';
-             updateAutomationBtn();
-             this.updateTimeDisplay();
-        });
+
 
         // Elevation System controls
         document.getElementById('check-enable-elevation')?.addEventListener('change', (e) => {
@@ -2326,14 +2305,7 @@ class TectoLiteApp {
              }
         });
 
-        document.getElementById('check-boundary-vis')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
-        });
 
-        document.getElementById('check-fuse-recommend')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.pauseOnFusionSuggestion = (e.target as HTMLInputElement).checked;
-            updateAutomationBtn();
-        });
 
         // Image Overlay Controls
         document.getElementById('check-show-overlay')?.addEventListener('change', (e) => {
@@ -3193,8 +3165,7 @@ class TectoLiteApp {
             }
         }
 
-        (document.getElementById('check-boundary-vis') as HTMLInputElement).checked = !!g.enableBoundaryVisualization;
-        (document.getElementById('check-fuse-recommend') as HTMLInputElement).checked = !!g.pauseOnFusionSuggestion;
+
 
         // Rate Presets (Custom)
         if (g.ratePresets && g.ratePresets.length === 4) {
