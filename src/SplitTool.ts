@@ -424,6 +424,10 @@ export function splitPlate(
     // Split Landmasses using polygon clipping (geometric split)
     const leftLandmasses: Landmass[] = [];
     const rightLandmasses: Landmass[] = [];
+    
+    // Generate IDs for new plates early so we can link landmasses to them
+    const leftPlateId = generateId();
+    const rightPlateId = generateId();
 
     if (plateToSplit.landmasses) {
         for (const landmass of plateToSplit.landmasses) {
@@ -435,7 +439,9 @@ export function splitPlate(
                     ...landmass,
                     id: generateId(),
                     polygon: leftPoly,
-                    originalPolygon: leftPoly // Reset original for new plate
+                    originalPolygon: leftPoly, // Reset original for new plate
+                    // Update link to point to the new left plate (if was linked to parent)
+                    linkedToPlateId: landmass.linkedToPlateId === plateToSplit.id ? leftPlateId : landmass.linkedToPlateId
                 });
             }
             if (rightPoly.length >= 3) {
@@ -443,7 +449,9 @@ export function splitPlate(
                     ...landmass,
                     id: generateId(),
                     polygon: rightPoly,
-                    originalPolygon: rightPoly // Reset original for new plate
+                    originalPolygon: rightPoly, // Reset original for new plate
+                    // Update link to point to the new right plate (if was linked to parent)
+                    linkedToPlateId: landmass.linkedToPlateId === plateToSplit.id ? rightPlateId : landmass.linkedToPlateId
                 });
             }
         }
@@ -492,7 +500,7 @@ export function splitPlate(
 
     const leftPlate: TectonicPlate = {
         ...plateToSplit,
-        id: generateId(),
+        id: leftPlateId, // Use pre-generated ID for landmass linking
         description: inheritedDescription,
         name: `${plateToSplit.name} (A)`,
         polygons: leftPolygons,
@@ -518,7 +526,7 @@ export function splitPlate(
 
     const rightPlate: TectonicPlate = {
         ...plateToSplit,
-        id: generateId(),
+        id: rightPlateId, // Use pre-generated ID for landmass linking
         description: inheritedDescription,
         name: `${plateToSplit.name} (B)`,
         polygons: rightPolygons,

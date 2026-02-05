@@ -90,7 +90,8 @@ export interface Landmass {
   deathTime?: number;            // Geological time when destroyed (undefined = active)
   zIndex?: number;               // Visual layering within plate (higher = on top)
   lastEditedTime?: number;       // Geological time when last edited
-  linkedToLandmassId?: string;  // Parent landmass id this is linked to (inherits parent motion + optional relative)
+  linkedToPlateId?: string;      // Parent plate id this is linked to (inherits plate motion)
+  linkedToLandmassId?: string;   // DEPRECATED: Parent landmass id (now using linkedToPlateId instead)
   relativeEulerPole?: { position: Coordinate; rate: number }; // Optional relative rotation on top of parent motion
 }
 
@@ -483,6 +484,11 @@ export interface WorldState {
     gridOnTop?: boolean;                    // Render grid above plates instead of below
     plateOpacity?: number;                  // Plate transparency (0-1, default 1.0)
     landmassOpacity?: number;               // Landmass transparency (0-1, default 0.9)
+    
+    // Flowline Options
+    showFlowlines?: boolean;                // Show flowline trails
+    flowlineFadeDuration?: number;          // Duration (Ma) over which flowlines fade to 100% transparency
+    flowlineAutoDelete?: boolean;           // Automatically delete flowlines after fading
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
@@ -620,7 +626,12 @@ export function createDefaultWorldState(): WorldState {
       showLinks: true,          // Show links by default
       gridOnTop: false,         // Grid below plates by default
       plateOpacity: 1.0,        // Full opacity
-      landmassOpacity: 0.9      // Slight transparency
+      landmassOpacity: 0.9,     // Slight transparency
+      
+      // Flowline defaults
+      showFlowlines: true,      // Show flowlines by default
+      flowlineFadeDuration: 100, // Fade over 100 Ma
+      flowlineAutoDelete: true  // Auto-delete after fading
     },
     // Event system defaults
     tectonicEvents: [],

@@ -1816,7 +1816,7 @@ export class CanvasManager {
         this.ctx.setLineDash([8, 4]);
 
         for (const plate of state.world.plates) {
-            // Draw link from child to parent
+            // Draw plate-to-plate links
             if (plate.linkedToPlateId) {
                 const parent = state.world.plates.find(p => p.id === plate.linkedToPlateId);
                 if (parent) {
@@ -1836,6 +1836,44 @@ export class CanvasManager {
                     if (proj) {
                         this.ctx.arc(proj[0], proj[1], 4, 0, 2 * Math.PI);
                         this.ctx.fill();
+                    }
+                }
+            }
+
+            // Draw landmass-to-plate links
+            if (plate.landmasses) {
+                for (const landmass of plate.landmasses) {
+                    if (landmass.linkedToPlateId) {
+                        const parentPlate = state.world.plates.find(p => p.id === landmass.linkedToPlateId);
+                        if (parentPlate) {
+                            // Calculate landmass center from its polygon
+                            const landmassCenter: Coordinate = [
+                                landmass.polygon.reduce((sum, p) => sum + p[0], 0) / landmass.polygon.length,
+                                landmass.polygon.reduce((sum, p) => sum + p[1], 0) / landmass.polygon.length
+                            ];
+
+                            // Draw line from landmass to parent plate
+                            this.ctx.strokeStyle = '#00ffaa'; // Slightly different color for landmass links
+                            this.ctx.beginPath();
+                            path({
+                                type: 'LineString',
+                                coordinates: [landmassCenter, parentPlate.center]
+                            } as any);
+                            this.ctx.stroke();
+
+                            // Draw arrowhead
+                            const midpoint: Coordinate = [(landmassCenter[0] + parentPlate.center[0]) / 2, (landmassCenter[1] + parentPlate.center[1]) / 2];
+                            this.ctx.fillStyle = '#00ffaa';
+                            this.ctx.beginPath();
+                            const proj = this.projectionManager.project(midpoint);
+                            if (proj) {
+                                this.ctx.arc(proj[0], proj[1], 3, 0, 2 * Math.PI);
+                                this.ctx.fill();
+                            }
+                            
+                            // Reset to default link color
+                            this.ctx.strokeStyle = '#00ffcc';
+                        }
                     }
                 }
             }
@@ -1946,7 +1984,34 @@ export class CanvasManager {
 
         // Handle flowline feature
         if (feature.type === 'flowline' && feature.trail && feature.trail.length > 1) {
+            const state = this.getState();
+            
+            // Check if flowlines should be shown
+            if (state.world.globalOptions.showFlowlines === false) {
+                return;
+            }
+            
             const path = this.projectionManager.getPathGenerator();
+            
+            // Calculate opacity based on age and fade duration
+            const currentTime = state.world.currentTime;
+            const birthTime = feature.generatedAt || 0;
+            const age = currentTime - birthTime;
+            const fadeDuration = state.world.globalOptions.flowlineFadeDuration || 100;
+            
+            // Calculate opacity: starts at 1.0, fades to 0.0 over fadeDuration
+            let opacity = 1.0;
+            if (fadeDuration > 0) {
+                opacity = Math.max(0, 1 - (age / fadeDuration));
+            }
+            
+            // Skip rendering if completely transparent
+            if (opacity <= 0) {
+                return;
+            }
+            
+            this.ctx.globalAlpha = opacity;
+            
             this.ctx.beginPath();
             path({
                 type: 'LineString',
@@ -1966,6 +2031,8 @@ export class CanvasManager {
                 this.ctx.fillStyle = '#ffffff';
                 this.ctx.fill();
             }
+            
+            this.ctx.globalAlpha = 1.0;
 
             if (isGhosted) this.ctx.globalAlpha = 1.0;
             return;

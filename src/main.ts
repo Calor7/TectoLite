@@ -310,6 +310,9 @@ class TectoLiteApp {
                             <input type="checkbox" id="check-show-links" ${this.state.world.globalOptions.showLinks !== false ? 'checked' : ''}> Show Links <span class="info-icon" data-tooltip="Show plate-to-plate and landmass-to-plate links">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-show-flowlines" ${this.state.world.globalOptions.showFlowlines !== false ? 'checked' : ''}> Show Flowlines <span class="info-icon" data-tooltip="Show flowline motion trails">(i)</span>
+                        </label>
+                        <label class="view-dropdown-item">
                             <input type="checkbox" id="check-grid-on-top" ${this.state.world.globalOptions.gridOnTop ? 'checked' : ''}> Grid on Top <span class="info-icon" data-tooltip="Render grid above plates instead of below">(i)</span>
                         </label>
                         
@@ -1704,9 +1707,26 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
+        document.getElementById('check-show-flowlines')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.showFlowlines = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
         document.getElementById('check-grid-on-top')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.gridOnTop = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
+        });
+
+        // Flowline Duration
+        document.getElementById('flowline-fade-duration')?.addEventListener('change', (e) => {
+            const val = parseInt((e.target as HTMLInputElement).value);
+            if (!isNaN(val)) {
+                this.state.world.globalOptions.flowlineFadeDuration = val;
+            }
+        });
+
+        document.getElementById('check-flowline-auto-delete')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.flowlineAutoDelete = (e.target as HTMLInputElement).checked;
         });
 
         // Plate Opacity Slider
@@ -3500,14 +3520,11 @@ class TectoLiteApp {
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
         
-        // Ask user if they want to link the landmass (default is linked)
-        const linkToPlate = confirm(`Link this landmass to ${plate.name}?\n\nLinked landmasses move with the plate.\n(Default: YES - Click OK to link, Cancel to keep independent)`);
-        
         this.pushState();
         
         const currentTime = this.state.world.currentTime;
         
-        // Create new landmass
+        // Create new landmass - linked to plate by default
         const landmass: Landmass = {
             id: generateId(),
             polygon: points,
@@ -3516,7 +3533,7 @@ class TectoLiteApp {
             opacity: 0.9,
             name: `Landmass ${(plate.landmasses?.length || 0) + 1}`,
             birthTime: currentTime,
-            linkedToPlateId: linkToPlate ? plateId : undefined
+            linkedToPlateId: plateId // Link to parent plate by default
         };
         
         // Update plate with new landmass
@@ -3812,6 +3829,119 @@ class TectoLiteApp {
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
 
+        // If we have a landmass selected (from handleLandmassLinkTool), link it to this plate
+        if (this.activeLinkSourceLandmassId && this.activeLinkSourcePlateId) {
+            const sourcePlate = this.state.world.plates.find(p => p.id === this.activeLinkSourcePlateId);
+            const landmass = sourcePlate?.landmasses?.find(l => l.id === this.activeLinkSourceLandmassId);
+            
+            if (!landmass) {
+                this.activeLinkSourceLandmassId = null;
+                this.activeLinkSourcePlateId = null;
+                return;
+            }
+
+            const isLinked = landmass.linkedToPlateId === plateId;
+
+            if (isLinked) {
+                // Unlink landmass from plate
+                this.showModal({
+                    title: `Unlink Landmass from Plate`,
+                    content: `Do you want to <strong>unlink</strong> landmass <strong>${landmass.name || 'Unnamed'}</strong> from plate <strong>${plate.name}</strong>?<br><br>
+                        <small>The landmass will move independently.</small>`,
+                    buttons: [
+                        {
+                            text: "Unlink",
+                            onClick: () => {
+                                this.pushState();
+                                this.state.world.plates = this.state.world.plates.map(p => {
+                                    if (p.id === this.activeLinkSourcePlateId) {
+                                        return {
+                                            ...p,
+                                            landmasses: p.landmasses?.map(l => {
+                                                if (l.id === this.activeLinkSourceLandmassId) {
+                                                    return { ...l, linkedToPlateId: undefined };
+                                                }
+                                                return l;
+                                            }) || []
+                                        };
+                                    }
+                                    return p;
+                                });
+
+                                this.updateHint(`Unlinked ${landmass.name || 'Unnamed'} from ${plate.name}`);
+                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+
+                                this.activeLinkSourceLandmassId = null;
+                                this.activeLinkSourcePlateId = null;
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
+                        },
+                        {
+                            text: 'Cancel',
+                            isSecondary: true,
+                            onClick: () => {
+                                this.activeLinkSourceLandmassId = null;
+                                this.activeLinkSourcePlateId = null;
+                                this.updateHint("Select a landmass to link");
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
+                        }
+                    ]
+                });
+            } else {
+                // Link landmass to plate
+                this.showModal({
+                    title: `Link Landmass to Plate`,
+                    content: `Link landmass <strong>${landmass.name || 'Unnamed'}</strong> to plate <strong>${plate.name}</strong>?<br><br>
+                        <small>The landmass will move with the plate's motion.</small>`,
+                    buttons: [
+                        {
+                            text: "Link",
+                            onClick: () => {
+                                this.pushState();
+                                this.state.world.plates = this.state.world.plates.map(p => {
+                                    if (p.id === this.activeLinkSourcePlateId) {
+                                        return {
+                                            ...p,
+                                            landmasses: p.landmasses?.map(l => {
+                                                if (l.id === this.activeLinkSourceLandmassId) {
+                                                    return { ...l, linkedToPlateId: plateId };
+                                                }
+                                                return l;
+                                            }) || []
+                                        };
+                                    }
+                                    return p;
+                                });
+
+                                this.updateHint(`Linked ${landmass.name || 'Unnamed'} to ${plate.name}`);
+                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+
+                                this.activeLinkSourceLandmassId = null;
+                                this.activeLinkSourcePlateId = null;
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
+                        },
+                        {
+                            text: 'Cancel',
+                            isSecondary: true,
+                            onClick: () => {
+                                this.activeLinkSourceLandmassId = null;
+                                this.activeLinkSourcePlateId = null;
+                                this.updateHint("Select a landmass to link");
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
+                        }
+                    ]
+                });
+            }
+            return;
+        }
+
         // Step 1: Select parent/anchor plate
         if (!this.activeLinkSourceId) {
             this.activeLinkSourceId = plateId;
@@ -4103,156 +4233,37 @@ class TectoLiteApp {
         const landmass = plate.landmasses?.find(l => l.id === landmassId);
         if (!landmass) return;
 
-        // Step 1: Select parent landmass
+        // Step 1: Select landmass (child)
         if (!this.activeLinkSourceLandmassId) {
             this.activeLinkSourceLandmassId = landmassId;
             this.activeLinkSourcePlateId = plateId;
             this.state.world.selectedLandmassId = landmassId;
 
-            this.updateHint(`Selected PARENT ${landmass.name || 'Unnamed'} - select child landmass to link to it`);
+            this.updateHint(`Selected landmass ${landmass.name || 'Unnamed'} - now select a PLATE to link it to (or click the same landmass to cancel)`);
 
             this.updateUI();
             this.canvasManager?.render();
             return;
         }
 
-        // Step 2: Select child landmass
+        // If clicking the same landmass, cancel selection
         if (this.activeLinkSourceLandmassId === landmassId) {
-            // Deselect if clicking same landmass
             this.activeLinkSourceLandmassId = null;
             this.activeLinkSourcePlateId = null;
             this.state.world.selectedLandmassId = null;
-            this.updateHint("Select parent landmass");
+            this.updateHint("Select a landmass to link");
             this.updateUI();
             this.canvasManager?.render();
             return;
         }
 
-        // Check if both landmasses are on the same plate
-        if (this.activeLinkSourcePlateId !== plateId) {
-            this.showToast("Landmasses must be on the same plate to link them!");
-            this.activeLinkSourceLandmassId = null;
-            this.activeLinkSourcePlateId = null;
-            this.state.world.selectedLandmassId = null;
-            this.updateHint("Select parent landmass");
-            this.updateUI();
-            this.canvasManager?.render();
-            return;
-        }
-
-        // Apply Link: source is PARENT, target is CHILD
-        const parentId = this.activeLinkSourceLandmassId;
-        const childId = landmassId;
-        const sourcePlate = this.state.world.plates.find(p => p.id === this.activeLinkSourcePlateId!);
-        const parentLandmass = sourcePlate?.landmasses?.find(l => l.id === parentId);
-
-        if (!sourcePlate || !parentLandmass) {
-            this.activeLinkSourceLandmassId = null;
-            this.activeLinkSourcePlateId = null;
-            return;
-        }
-
-        const isLinked = landmass.linkedToLandmassId === parentId;
-
-        if (isLinked) {
-            // Unlink
-            this.showModal({
-                title: `Unlink Landmasses`,
-                content: `Unlink ${landmass.name || 'Unnamed'} from ${parentLandmass.name || 'Unnamed'}? They will move independently.`,
-                buttons: [
-                     {
-                        text: "Unlink",
-                        onClick: () => {
-                            this.pushState();
-                            this.state.world.plates = this.state.world.plates.map(p => {
-                                if (p.id === this.activeLinkSourcePlateId) {
-                                    return {
-                                        ...p,
-                                        landmasses: p.landmasses?.map(l => {
-                                            if (l.id === childId) {
-                                                return { ...l, linkedToLandmassId: undefined, relativeEulerPole: undefined };
-                                            }
-                                            return l;
-                                        }) || []
-                                    };
-                                }
-                                return p;
-                            });
-
-                            this.updateHint(`Unlinked ${landmass.name || 'Unnamed'} from ${parentLandmass.name || 'Unnamed'}`);
-                            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-
-                            this.activeLinkSourceLandmassId = null;
-                            this.activeLinkSourcePlateId = null;
-                            this.state.world.selectedLandmassId = childId;
-                            this.updateUI();
-                            this.canvasManager?.render();
-                        }
-                     },
-                     {
-                        text: 'Cancel',
-                        isSecondary: true,
-                        onClick: () => {
-                            this.activeLinkSourceLandmassId = null;
-                            this.activeLinkSourcePlateId = null;
-                            this.state.world.selectedLandmassId = null;
-                            this.updateHint("Select parent landmass");
-                            this.updateUI();
-                            this.canvasManager?.render();
-                        }
-                     }
-                ]
-            });
-        } else {
-            // Link child to parent
-            this.showModal({
-                title: `Link Landmasses`,
-                content: `Link ${landmass.name || 'Unnamed'} (child) to ${parentLandmass.name || 'Unnamed'} (parent) on the plate.`,
-                buttons: [
-                     {
-                        text: "Link",
-                        onClick: () => {
-                            this.pushState();
-                            this.state.world.plates = this.state.world.plates.map(p => {
-                                if (p.id === this.activeLinkSourcePlateId) {
-                                    return {
-                                        ...p,
-                                        landmasses: p.landmasses?.map(l => {
-                                            if (l.id === childId) {
-                                                return { ...l, linkedToLandmassId: parentId };
-                                            }
-                                            return l;
-                                        }) || []
-                                    };
-                                }
-                                return p;
-                            });
-
-                            this.updateHint(`Linked ${landmass.name || 'Unnamed'} to ${parentLandmass.name || 'Unnamed'}`);
-                            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-
-                            this.activeLinkSourceLandmassId = null;
-                            this.activeLinkSourcePlateId = null;
-                            this.state.world.selectedLandmassId = childId;
-                            this.updateUI();
-                            this.canvasManager?.render();
-                        }
-                     },
-                     {
-                        text: 'Cancel',
-                        isSecondary: true,
-                        onClick: () => {
-                            this.activeLinkSourceLandmassId = null;
-                            this.activeLinkSourcePlateId = null;
-                            this.state.world.selectedLandmassId = null;
-                            this.updateHint("Select parent landmass");
-                            this.updateUI();
-                            this.canvasManager?.render();
-                        }
-                     }
-                ]
-            });
-        }
+        // If we have a landmass selected and user clicks another landmass, switch selection
+        this.activeLinkSourceLandmassId = landmassId;
+        this.activeLinkSourcePlateId = plateId;
+        this.state.world.selectedLandmassId = landmassId;
+        this.updateHint(`Selected landmass ${landmass.name || 'Unnamed'} - now select a PLATE to link it to`);
+        this.updateUI();
+        this.canvasManager?.render();
     }
 
     private handleSplitApply(points: Coordinate[]): void {

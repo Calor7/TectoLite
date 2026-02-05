@@ -569,12 +569,73 @@ export class SimulationEngine {
         const allPoints = newPolygons.flatMap(poly => poly.points);
         const newCenter = calculateSphericalCentroid(allPoints);
 
+        // --- Landmass Transformation ---
+        // Transform landmass polygons to follow plate rotation (if linked to this plate)
+        let newLandmasses = plate.landmasses;
+        if (plate.landmasses && plate.landmasses.length > 0) {
+            newLandmasses = plate.landmasses.map(landmass => {
+                // Only transform if landmass is linked to this plate
+                if (!landmass.linkedToPlateId || landmass.linkedToPlateId !== plate.id) {
+                    // Check if linked to a different plate - then don't transform here
+                    // (it will be transformed when that plate is processed)
+                    // But actually landmasses are stored on their owner plate, so we should transform
+                    // based on the owner plate's motion unless unlinked
+                    if (landmass.linkedToPlateId && landmass.linkedToPlateId !== plate.id) {
+                        return landmass; // Don't transform - linked to a different plate
+                    }
+                    // Unlinked landmass - don't transform (stays at original position)
+                    if (!landmass.linkedToPlateId) {
+                        return landmass;
+                    }
+                }
+
+                const landmassStartTime = landmass.birthTime ?? plate.birthTime;
+                const landmassElapsed = Math.max(0, time - landmassStartTime);
+
+                // Get source polygon (originalPolygon if available, else polygon)
+                const sourcePolygon = landmass.originalPolygon ?? landmass.polygon;
+
+                // Calculate rotation for this landmass
+                let newPolygon = sourcePolygon;
+
+                // Apply parent motion if plate is linked to another (and landmass is linked to this plate)
+                if (parentTransform.length > 0) {
+                    newPolygon = newPolygon.map(pt => {
+                        let result = pt;
+                        for (const segment of parentTransform) {
+                            if (segment.angle !== 0) {
+                                result = applyRotation(result, segment.axis, segment.angle);
+                            }
+                        }
+                        return result;
+                    });
+                }
+
+                // Apply the plate's own rotation
+                if (ownAxis && pole) {
+                    const landmassAngle = toRad(pole.rate * landmassElapsed);
+                    if (landmassAngle !== 0) {
+                        newPolygon = newPolygon.map(pt => {
+                            return applyRotation(pt, ownAxis!, landmassAngle);
+                        });
+                    }
+                }
+
+                return {
+                    ...landmass,
+                    polygon: newPolygon,
+                    originalPolygon: landmass.originalPolygon ?? sourcePolygon // Preserve original
+                };
+            });
+        }
+
         const updatedPlate = {
             ...plate,
             polygons: newPolygons,
             features: newFeatures,
             paintStrokes: newPaintStrokes,
             crustMesh: newCrustMesh,
+            landmasses: newLandmasses,
             center: newCenter
         };
 
@@ -665,11 +726,45 @@ export class SimulationEngine {
         const allPoints = newPolygons.flatMap(poly => poly.points);
         const newCenter = calculateSphericalCentroid(allPoints);
 
+        // Transform landmasses (legacy motion)
+        let newLandmasses = plate.landmasses;
+        if (plate.landmasses && plate.landmasses.length > 0 && angle !== 0) {
+            newLandmasses = plate.landmasses.map(landmass => {
+                // Only transform if landmass is linked to this plate
+                if (!landmass.linkedToPlateId || landmass.linkedToPlateId !== plate.id) {
+                    if (!landmass.linkedToPlateId) {
+                        return landmass; // Unlinked - don't transform
+                    }
+                    return landmass; // Linked to a different plate
+                }
+
+                const landmassStartTime = landmass.birthTime ?? plate.birthTime;
+                const landmassElapsed = Math.max(0, time - landmassStartTime);
+                const landmassAngle = toRad(pole.rate * landmassElapsed);
+
+                if (landmassAngle === 0) return landmass;
+
+                const sourcePolygon = landmass.originalPolygon ?? landmass.polygon;
+                const newPolygon = sourcePolygon.map(pt => {
+                    const v = latLonToVector(pt);
+                    const vRot = rotateVector(v, axis, landmassAngle);
+                    return vectorToLatLon(vRot);
+                });
+
+                return {
+                    ...landmass,
+                    polygon: newPolygon,
+                    originalPolygon: landmass.originalPolygon ?? sourcePolygon
+                };
+            });
+        }
+
         const updatedPlate = {
             ...plate,
             polygons: newPolygons,
             features: newFeatures,
             crustMesh: newCrustMesh,
+            landmasses: newLandmasses,
             center: newCenter
         };
 
@@ -766,6 +861,9 @@ export class SimulationEngine {
         this.setState(state => {
             const plates = state.world.plates;
             const currentTime = state.world.currentTime;
+            const fadeDuration = state.world.globalOptions.flowlineFadeDuration || 100;
+            const autoDelete = state.world.globalOptions.flowlineAutoDelete !== false;
+            
             const newPlates = plates.map(plate => {
                 const flowlines = plate.features.filter(f => f.type === 'flowline');
                 if (flowlines.length === 0) return plate;
@@ -779,7 +877,17 @@ export class SimulationEngine {
                         points.push(this.getPointPositionAtTime(origin, plate.id, t, plates));
                     }
                     points.push(this.getPointPositionAtTime(origin, plate.id, currentTime, plates));
-                    return { ...f, trail: points };
+                    
+                    // Calculate age and set death time if auto-delete is enabled
+                    const age = currentTime - startTime;
+                    let updatedFeature = { ...f, trail: points };
+                    
+                    // If auto-delete is enabled and flowline has reached full transparency, set death time
+                    if (autoDelete && age >= fadeDuration && !updatedFeature.deathTime) {
+                        updatedFeature = { ...updatedFeature, deathTime: currentTime };
+                    }
+                    
+                    return updatedFeature;
                 });
                 return { ...plate, features: newFeatures };
             });
