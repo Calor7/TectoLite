@@ -477,6 +477,12 @@ export interface WorldState {
     repopupCommittedEvents?: boolean;       // Allow re-opening already committed events
     eventDetectionThreshold?: number;       // Area change % to trigger new event (default 20)
     showEventIcons?: boolean;               // Toggle event markers on map
+    
+    // Visual Options
+    showLinks?: boolean;                    // Show plate-to-plate and landmass-to-plate links
+    gridOnTop?: boolean;                    // Render grid above plates instead of below
+    plateOpacity?: number;                  // Plate transparency (0-1, default 1.0)
+    landmassOpacity?: number;               // Landmass transparency (0-1, default 0.9)
   };
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
@@ -608,7 +614,13 @@ export function createDefaultWorldState(): WorldState {
       enableGuidedCreation: false,
       repopupCommittedEvents: false,
       eventDetectionThreshold: 20,  // 20% area change triggers new event
-      showEventIcons: false
+      showEventIcons: false,
+      
+      // Visual defaults
+      showLinks: true,          // Show links by default
+      gridOnTop: false,         // Grid below plates by default
+      plateOpacity: 1.0,        // Full opacity
+      landmassOpacity: 0.9      // Slight transparency
     },
     // Event system defaults
     tectonicEvents: [],

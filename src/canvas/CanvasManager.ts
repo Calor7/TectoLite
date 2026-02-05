@@ -1492,8 +1492,9 @@ export class CanvasManager {
             this.ctx.fill();
         }
 
-        // Graticule
-        if (state.world.showGrid) {
+        // Graticule (draw below plates unless gridOnTop is enabled)
+        const gridOnTop = state.world.globalOptions.gridOnTop;
+        if (state.world.showGrid && !gridOnTop) {
             const gridColor = computedStyle.getPropertyValue('--grid-color').trim() || 'rgba(255, 255, 255, 0.1)';
             this.ctx.strokeStyle = gridColor;
             this.ctx.lineWidth = state.world.globalOptions.gridThickness || 1;
@@ -1572,8 +1573,13 @@ export class CanvasManager {
 
                 this.ctx.beginPath();
                 path(geojson);
+                
+                // Apply plate opacity from global options
+                const plateOpacity = state.world.globalOptions.plateOpacity ?? 1.0;
+                this.ctx.globalAlpha = plateOpacity;
                 this.ctx.fillStyle = plate.color;
                 this.ctx.fill();
+                this.ctx.globalAlpha = 1.0;
 
                 this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
                 this.ctx.lineWidth = isSelected ? 2 : 1;
@@ -1692,9 +1698,9 @@ export class CanvasManager {
             }
         }
 
-        // Draw Links (if tool active or always?)
-        // Let's draw if Link tool is active OR if a linked plate is selected
-        if (state.activeTool === 'link' || (state.world.selectedPlateId && state.world.plates.find(p => p.id === state.world.selectedPlateId)?.linkedToPlateId)) {
+        // Draw Links (if enabled via showLinks option OR if Link tool is active)
+        const showLinks = state.world.globalOptions.showLinks !== false; // Default true
+        if (showLinks || state.activeTool === 'link') {
             this.drawLinks(state, path);
         }
 
@@ -1789,6 +1795,17 @@ export class CanvasManager {
         // Draw mesh statistics overlay when mesh_edit tool is active
         if (state.activeTool === 'mesh_edit' && state.world.globalOptions.elevationViewMode && state.world.globalOptions.elevationViewMode !== 'off') {
             this.drawMeshInfoOverlay(state);
+        }
+        
+        // Draw grid on top if gridOnTop option is enabled
+        if (state.world.showGrid && state.world.globalOptions.gridOnTop) {
+            const computedStyle = getComputedStyle(document.body);
+            const gridColor = computedStyle.getPropertyValue('--grid-color').trim() || 'rgba(255, 255, 255, 0.1)';
+            this.ctx.strokeStyle = gridColor;
+            this.ctx.lineWidth = state.world.globalOptions.gridThickness || 1;
+            this.ctx.beginPath();
+            path(geoGraticule()());
+            this.ctx.stroke();
         }
     }
 
@@ -2519,8 +2536,9 @@ export class CanvasManager {
                 geojson.geometry.coordinates[0].reverse();
             }
 
-            // Set opacity (ghosted if from future)
-            this.ctx.globalAlpha = isFromFuture ? landmass.opacity * 0.3 : landmass.opacity;
+            // Set opacity (ghosted if from future, and apply global landmass opacity)
+            const globalLandmassOpacity = state.world.globalOptions.landmassOpacity ?? 0.9;
+            this.ctx.globalAlpha = isFromFuture ? landmass.opacity * globalLandmassOpacity * 0.3 : landmass.opacity * globalLandmassOpacity;
 
             // Fill landmass
             this.ctx.beginPath();

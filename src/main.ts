@@ -306,6 +306,27 @@ class TectoLiteApp {
                                 <label class="view-dropdown-item">
                                     <input type="checkbox" id="check-show-event-icons" ${this.state.world.globalOptions.showEventIcons ? 'checked' : ''}> Show Event Icons <span class="info-icon" data-tooltip="Show icons for guided creation events">(i)</span>
                                 </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-show-links" ${this.state.world.globalOptions.showLinks !== false ? 'checked' : ''}> Show Links <span class="info-icon" data-tooltip="Show plate-to-plate and landmass-to-plate links">(i)</span>
+                        </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-grid-on-top" ${this.state.world.globalOptions.gridOnTop ? 'checked' : ''}> Grid on Top <span class="info-icon" data-tooltip="Render grid above plates instead of below">(i)</span>
+                        </label>
+                        
+                        <div style="padding: 4px 8px; border-top: 1px dotted var(--border-default); margin-top: 4px;">
+                             <label style="font-size: 11px; white-space: nowrap; font-weight: 600;">Plate Opacity <span class="info-icon" data-tooltip="Adjust transparency of tectonic plates">(i)</span></label>
+                             <div style="display: flex; align-items: center; gap: 4px;">
+                                 <input type="range" id="plate-opacity-slider" min="0" max="100" value="${(this.state.world.globalOptions.plateOpacity ?? 1.0) * 100}" style="flex: 1; height: 4px;">
+                                 <span id="plate-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 35px;">${Math.round((this.state.world.globalOptions.plateOpacity ?? 1.0) * 100)}%</span>
+                             </div>
+                        </div>
+                        <div style="padding: 4px 8px; border-top: 1px dotted var(--border-default); margin-top: 4px;">
+                             <label style="font-size: 11px; white-space: nowrap; font-weight: 600;">Landmass Opacity <span class="info-icon" data-tooltip="Adjust transparency of landmasses">(i)</span></label>
+                             <div style="display: flex; align-items: center; gap: 4px;">
+                                 <input type="range" id="landmass-opacity-slider" min="0" max="100" value="${(this.state.world.globalOptions.landmassOpacity ?? 0.9) * 100}" style="flex: 1; height: 4px;">
+                                 <span id="landmass-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 35px;">${Math.round((this.state.world.globalOptions.landmassOpacity ?? 0.9) * 100)}%</span>
+                             </div>
+                        </div>
                         
                         <div style="padding: 4px 8px; border-top: 1px dotted var(--border-default); margin-top: 4px;">
                              <label style="font-size: 11px; white-space: nowrap; font-weight: 600;">Erosion Rate <span class="info-icon" data-tooltip="Global multiplier for paint fading/deletion (1.0 = Normal, 2.0 = 2x Fading Speed)">(i)</span></label>
@@ -1675,6 +1696,36 @@ class TectoLiteApp {
 
         document.getElementById('check-show-paint')?.addEventListener('change', (e) => {
             this.state.world.showPaint = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('check-show-links')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.showLinks = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('check-grid-on-top')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.gridOnTop = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        // Plate Opacity Slider
+        const plateOpacitySlider = document.getElementById('plate-opacity-slider');
+        const plateOpacityValue = document.getElementById('plate-opacity-value');
+        plateOpacitySlider?.addEventListener('input', (e) => {
+            const value = parseInt((e.target as HTMLInputElement).value);
+            this.state.world.globalOptions.plateOpacity = value / 100;
+            if (plateOpacityValue) plateOpacityValue.textContent = `${value}%`;
+            this.canvasManager?.render();
+        });
+
+        // Landmass Opacity Slider
+        const landmassOpacitySlider = document.getElementById('landmass-opacity-slider');
+        const landmassOpacityValue = document.getElementById('landmass-opacity-value');
+        landmassOpacitySlider?.addEventListener('input', (e) => {
+            const value = parseInt((e.target as HTMLInputElement).value);
+            this.state.world.globalOptions.landmassOpacity = value / 100;
+            if (landmassOpacityValue) landmassOpacityValue.textContent = `${value}%`;
             this.canvasManager?.render();
         });
 
@@ -3449,6 +3500,9 @@ class TectoLiteApp {
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
         
+        // Ask user if they want to link the landmass (default is linked)
+        const linkToPlate = confirm(`Link this landmass to ${plate.name}?\n\nLinked landmasses move with the plate.\n(Default: YES - Click OK to link, Cancel to keep independent)`);
+        
         this.pushState();
         
         const currentTime = this.state.world.currentTime;
@@ -3461,7 +3515,8 @@ class TectoLiteApp {
             fillColor: '#8B4513', // Default brown (earth/land color)
             opacity: 0.9,
             name: `Landmass ${(plate.landmasses?.length || 0) + 1}`,
-            birthTime: currentTime
+            birthTime: currentTime,
+            linkedToPlateId: linkToPlate ? plateId : undefined
         };
         
         // Update plate with new landmass
