@@ -1,4 +1,4 @@
-import { AppState, TectonicPlate, Coordinate, Feature, PaintStroke, Landmass, generateId } from './types';
+import { AppState, TectonicPlate, Coordinate, Feature, PaintStroke, Landmass } from './types';
 import polygonClipping from 'polygon-clipping';
 import {
     toRad,
@@ -686,7 +686,7 @@ export class SimulationEngine {
 
              // Apply parent motion
              if (parentTransform.length > 0) {
-                 newPolygon = newPolygon.map(pt => {
+                 newPolygon = newPolygon.map((pt: any) => {
                      let res = pt;
                      for (const seg of parentTransform) {
                          if (seg.angle !== 0) res = applyRotation(res, seg.axis, seg.angle);
@@ -699,7 +699,7 @@ export class SimulationEngine {
              if (ownAxis && pole) {
                  const angle = toRad(pole.rate * elapsed);
                  if (angle !== 0) {
-                     newPolygon = newPolygon.map(pt => applyRotation(pt, ownAxis!, angle));
+                     newPolygon = newPolygon.map((pt: any) => applyRotation(pt, ownAxis!, angle));
                  }
              }
 
@@ -775,7 +775,7 @@ export class SimulationEngine {
     }
 
     // Legacy fallback for plates without keyframes
-    private calculateWithLegacyMotion(
+    calculateWithLegacyMotion(
         plate: TectonicPlate, 
         time: number, 
         inheritedFeatures: Feature[] = [],

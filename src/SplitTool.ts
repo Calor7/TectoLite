@@ -398,6 +398,7 @@ export function splitPlate(
                 const { id, points, ...strokeMeta } = stroke;
                 
                 // Add to Left Plate
+                const currentTime = state.world.currentTime;
                 leftPaintStrokes.push({ 
                     ...strokeMeta, 
                     points: [...stroke.points], 
@@ -426,6 +427,7 @@ export function splitPlate(
     const leftPlateId = generateId();
     const rightPlateId = generateId();
 
+    const currentTime = state.world.currentTime;
     if (plateToSplit.landmasses) {
         for (const landmass of plateToSplit.landmasses) {
             // Split landmass polygon using the same polyline
@@ -513,7 +515,7 @@ export function splitPlate(
 
 
     // Create two new plates with default motion (0) OR inherited
-    const currentTime = state.world.currentTime;
+    // currentTime already declared above
     const newMotion = inheritMomentum ? { ...plateToSplit.motion } : createDefaultMotion();
 
     const leftKeyframe = {

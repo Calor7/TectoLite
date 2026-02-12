@@ -2,7 +2,8 @@
 import { AppState, TectonicPlate, Feature, Polygon, Coordinate, Landmass, generateId, MotionKeyframe, CrustVertex } from './types';
 import { calculateSphericalCentroid, latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, distance } from './utils/sphericalMath';
 import polygonClipping from 'polygon-clipping';
-import { isPointInPolygon } from './SplitTool';
+// ...existing code...
+// ...existing code...
 import { ElevationSystem } from './systems/ElevationSystem';
 
 interface FuseResult {
