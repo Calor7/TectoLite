@@ -224,20 +224,64 @@ export class SimulationEngine {
     }
 
     private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {
-        // Check if this plate is linked to a parent plate - if so, inherit parent motion
-        let parentLinkedPlate: TectonicPlate | undefined;
+        // Collect all parent rotations recursively (A -> B -> C)
+        const getAccumulatedParentTransform = (p: TectonicPlate, t: number, visited: Set<string>): { axis: Vector3; angle: number }[] => {
+            if (!p.linkedToPlateId || visited.has(p.id)) return [];
+            visited.add(p.id);
 
-        if (plate.linkedToPlateId) {
-            parentLinkedPlate = allPlates.find(p => p.id === plate.linkedToPlateId);
+            const parent = allPlates.find(pl => pl.id === p.linkedToPlateId);
+            if (!parent) return [];
 
-            // Prevent infinite recursion: if parent is also linked back to this plate, break the cycle
-            if (parentLinkedPlate && parentLinkedPlate.linkedToPlateId === plate.id) {
-                console.warn(`Circular link detected between ${plate.id} and ${parentLinkedPlate.id}, breaking link`);
-                parentLinkedPlate = undefined;
+            let transforms: { axis: Vector3; angle: number }[] = [];
+
+            // 1. Get grandparent transforms first (recursive)
+            transforms.push(...getAccumulatedParentTransform(parent, t, visited));
+
+            // 2. Add this parent's motion if within link window
+            const isWithinLinkWindow =
+                (!p.linkTime || t >= p.linkTime) &&
+                (!p.unlinkTime || t < p.unlinkTime);
+
+            if (isWithinLinkWindow) {
+                const parentKeyframes = parent.motionKeyframes || [];
+                // Find child current active keyframe to know from when we inherit parent motion
+                const activeKF = (p.motionKeyframes || []).filter(k => k.time <= t).sort((a, b) => b.time - a.time)[0];
+                const linkStartTime = p.linkTime || (parentKeyframes[0]?.time ?? 0);
+                const motionStartTime = activeKF ? Math.max(linkStartTime, activeKF.time) : linkStartTime;
+
+                const relevantKeyframes = parentKeyframes.filter(kf => kf.time <= t && kf.time >= motionStartTime);
+
+                if (relevantKeyframes.length > 0) {
+                    relevantKeyframes.sort((a, b) => a.time - b.time);
+                    let prevTime = motionStartTime;
+
+                    for (let i = 0; i < relevantKeyframes.length; i++) {
+                        const kf = relevantKeyframes[i];
+                        if (kf.eulerPole && kf.eulerPole.rate !== 0) {
+                            const pole = kf.eulerPole;
+                            const axis = latLonToVector(pole.position);
+
+                            let segmentEnd = t;
+                            if (i + 1 < relevantKeyframes.length) {
+                                segmentEnd = Math.min(relevantKeyframes[i + 1].time, t);
+                            }
+
+                            const duration = segmentEnd - Math.max(kf.time, prevTime);
+                            if (duration > 0) {
+                                const angle = toRad(pole.rate * duration);
+                                transforms.push({ axis, angle });
+                            }
+                            prevTime = segmentEnd;
+                        }
+                    }
+                }
             }
-        }
+            return transforms;
+        };
 
-        // First, check if we need to inherit features from parent plate(s)
+        const parentTransform = getAccumulatedParentTransform(plate, time, new Set());
+
+        // Inheritance of Features
         let inheritedFeatures: Feature[] = [];
         const parentIds = plate.parentPlateIds || (plate.parentPlateId ? [plate.parentPlateId] : []);
 
@@ -246,8 +290,6 @@ export class SimulationEngine {
             if (!parentPlate) continue;
 
             const transitionTime = plate.birthTime;
-
-            // 1. Inherit Features
             const candidateFeatures = parentPlate.features.filter(f =>
                 f.generatedAt !== undefined &&
                 f.generatedAt >= parentPlate.birthTime &&
@@ -265,23 +307,16 @@ export class SimulationEngine {
             inheritedFeatures.push(...featuresToInherit);
         }
 
-        // Find the active keyframe for this time (latest keyframe with time <= query time)
         const keyframes = plate.motionKeyframes || [];
-
-        // If no keyframes, fall back to legacy motion from birth
         if (keyframes.length === 0) {
-            // Note: calculateWithLegacyMotion also needs cleanup, but for now we pass fewer args
             return this.calculateWithLegacyMotion(plate, time, inheritedFeatures);
         }
 
-        // Find active keyframe (latest one that starts at or before query time)
         const activeKeyframe = keyframes
             .filter(kf => kf.time <= time)
             .sort((a, b) => b.time - a.time)[0];
 
         if (!activeKeyframe) {
-            // Before first keyframe - use initial geometry but preserve any features added later
-            // Merge initialFeatures with any dynamically added features from current plate
             const initialFeatureIds = new Set((plate.initialFeatures || []).map(f => f.id));
             const dynamicFeatures = plate.features.filter(f =>
                 !initialFeatureIds.has(f.id) && f.generatedAt !== undefined
@@ -299,64 +334,6 @@ export class SimulationEngine {
         const pole = activeKeyframe.eulerPole;
         const elapsed = time - activeKeyframe.time;
 
-        // Prepare parent motion if this plate is linked to another
-        // The parent's rotation affects the child ONLY from linkTime onwards
-        // BUT ONLY if we're within the link time window
-        let parentTransform: { axis: Vector3; angle: number }[] = [];
-
-        if (parentLinkedPlate) {
-            // Check if we're within the link time window
-            const isWithinLinkWindow =
-                (!plate.linkTime || time >= plate.linkTime) &&
-                (!plate.unlinkTime || time < plate.unlinkTime);
-
-            if (isWithinLinkWindow) {
-                const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
-                const linkStartTime = plate.linkTime || (parentKeyframes[0]?.time ?? 0);
-                const motionStartTime = Math.max(linkStartTime, activeKeyframe.time);
-
-                // Build segment-by-segment rotations, accounting for axis changes
-                const relevantKeyframes = parentKeyframes.filter(kf => kf.time <= time && kf.time >= motionStartTime);
-
-                if (relevantKeyframes.length > 0) {
-                    relevantKeyframes.sort((a, b) => a.time - b.time);
-                    let prevTime = motionStartTime;
-
-                    for (let i = 0; i < relevantKeyframes.length; i++) {
-                        const kf = relevantKeyframes[i];
-                        if (kf.eulerPole && kf.eulerPole.rate !== 0) {
-                            const pole = kf.eulerPole;
-                            const axis = latLonToVector(pole.position);
-
-                            // Determine duration for this segment
-                            let segmentEnd = time;
-                            // If there's a next keyframe before our current time, stop at that keyframe
-                            if (i + 1 < relevantKeyframes.length) {
-                                segmentEnd = Math.min(relevantKeyframes[i + 1].time, time);
-                            }
-
-                            const duration = segmentEnd - Math.max(kf.time, prevTime);
-                            if (duration > 0) {
-                                const angle = toRad(pole.rate * duration);
-                                parentTransform.push({ axis, angle });
-                            }
-
-                            prevTime = segmentEnd;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Child's own motion uses its own keyframe Euler pole
-        let ownAxis: Vector3 | null = null;
-        let ownAngle: number = 0;
-        if (pole && pole.rate !== 0 && elapsed !== 0) {
-            ownAxis = latLonToVector(pole.position);
-            ownAngle = toRad(pole.rate * elapsed);
-        }
-
-        // Helper to apply a single rotation
         const applyRotation = (coord: Coordinate, axis: Vector3, angle: number): Coordinate => {
             if (angle === 0) return coord;
             const v = latLonToVector(coord);
@@ -364,129 +341,71 @@ export class SimulationEngine {
             return vectorToLatLon(vRot);
         };
 
-        // Helper to apply all active rotations in sequence: parent -> own
-        // Parent rotation is applied segment-by-segment if axis changed, then child's own motion on top
-        const applyAllRotations = (coord: Coordinate): Coordinate => {
+        // Rotation Logic: Global parent motions first, then differential child motion
+        const transform = (coord: Coordinate, isPointSpecificLifetime: boolean = false, startTime: number = activeKeyframe.time): Coordinate => {
             let result = coord;
-            // 1. Apply parent's motion first (inherited motion), segment by segment
+            // 1. Apply parent accumulated transformation
             for (const segment of parentTransform) {
-                if (segment.angle !== 0) {
-                    result = applyRotation(result, segment.axis, segment.angle);
-                }
+                result = applyRotation(result, segment.axis, segment.angle);
             }
-            // 2. Apply child's own motion on top (additional/differential motion)
-            if (ownAxis && ownAngle !== 0) {
-                result = applyRotation(result, ownAxis, ownAngle);
+            // 2. Apply child differential transformation
+            if (pole && pole.rate !== 0) {
+                const duration = isPointSpecificLifetime ? Math.max(0, time - startTime) : elapsed;
+                if (duration > 0) {
+                    let currentAxis = latLonToVector(pole.position);
+                    // Rotate the axis itself by the parent motion (Lock Motion)
+                    for (const segment of parentTransform) {
+                        currentAxis = rotateVector(currentAxis, segment.axis, segment.angle);
+                    }
+                    const ownAngle = toRad(pole.rate * duration);
+                    result = applyRotation(result, currentAxis, ownAngle);
+                }
             }
             return result;
         };
 
-        // Check if we have any motion at all
-        const hasParentMotion = parentTransform.length > 0;
-        const hasOwnMotion = ownAxis && ownAngle !== 0;
-        const hasAnyMotion = hasParentMotion || hasOwnMotion;
-
-        // Get features from snapshot, then merge any dynamically added features
-        // (features with generatedAt > keyframe.time that exist in current plate.features)
-        const snapshotFeatureIds = new Set(activeKeyframe.snapshotFeatures.map(f => f.id));
-        const dynamicFeatures = plate.features.filter(f =>
-            !snapshotFeatureIds.has(f.id) &&
-            f.generatedAt !== undefined &&
-            f.generatedAt >= activeKeyframe.time
-        );
-
-        // No motion case
-        if (!hasAnyMotion) {
-            return {
-                ...plate,
-                polygons: activeKeyframe.snapshotPolygons,
-                features: [...activeKeyframe.snapshotFeatures, ...dynamicFeatures, ...inheritedFeatures],
-                center: calculateSphericalCentroid(activeKeyframe.snapshotPolygons.flatMap(p => p.points))
-            };
-        }
-
-        // Transform with all accumulated rotations
-        const transform = (coord: Coordinate): Coordinate => applyAllRotations(coord);
-
-        // Helper: Transform feature with time-aware rotation
-        // Features rotate from their creation time, not from keyframe time
         const transformFeature = (feat: Feature, startTime: number, useOriginal: boolean = false): Feature => {
-            const featureElapsed = Math.max(0, time - startTime);
-
-            // Calculate rotation for this specific feature based on its lifetime
-            let result = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
-
-            // Apply parent motion if linked (for the feature's lifetime) AND within link time window
-            if (parentTransform.length > 0 && parentLinkedPlate) {
-                const isWithinLinkWindow =
-                    (!plate.linkTime || time >= plate.linkTime) &&
-                    (!plate.unlinkTime || time < plate.unlinkTime);
-
-                if (isWithinLinkWindow) {
-                    // Apply parent motion segment by segment
-                    for (const segment of parentTransform) {
-                        if (segment.angle !== 0) {
-                            result = applyRotation(result, segment.axis, segment.angle);
-                        }
-                    }
-                }
-            }
-
-            // Apply child's own motion
-            if (ownAxis && pole) {
-                const ownFeatureAngle = toRad(pole.rate * featureElapsed);
-                if (ownFeatureAngle !== 0) {
-                    result = applyRotation(result, ownAxis, ownFeatureAngle);
-                }
-            }
-
+            const sourcePos = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
+            const finalPos = transform(sourcePos, true, startTime);
             return {
                 ...feat,
-                position: result,
+                position: finalPos,
                 originalPosition: feat.originalPosition
             };
         };
 
         const newPolygons = activeKeyframe.snapshotPolygons.map(poly => ({
             ...poly,
-            points: poly.points.map(transform)
+            points: poly.points.map(p => transform(p))
         }));
 
+        const dynamicFeatures = plate.features.filter(f =>
+            !activeKeyframe.snapshotFeatures.some(sf => sf.id === f.id) &&
+            f.generatedAt !== undefined &&
+            f.generatedAt >= activeKeyframe.time
+        );
 
-
-        // Transform snapshot features: Start from Keyframe Time (snapshot state)
-        // Use current position (matches snapshot) -> useOriginal = false
         const transformedSnapshotFeatures = activeKeyframe.snapshotFeatures.map(feat =>
             transformFeature(feat, activeKeyframe.time, false)
         );
 
-        // Transform dynamic features: Start from their Creation Time
-        // MUST use originalPosition to avoid compounding rotations -> useOriginal = true
         const transformedDynamicFeatures = dynamicFeatures.map(feat =>
             transformFeature(feat, feat.generatedAt!, true)
         );
 
-        // Transform inherited features: Start from Split Time (Plate Birth Time)
-        // their position is valid at split snapshot -> useOriginal = false
         const transformedInheritedFeatures = inheritedFeatures.map(feat =>
             transformFeature(feat, plate.birthTime, false)
         );
 
         const newFeatures = [...transformedSnapshotFeatures, ...transformedDynamicFeatures, ...transformedInheritedFeatures];
+        const newCenter = calculateSphericalCentroid(newPolygons.flatMap(poly => poly.points));
 
-
-
-        const allPoints = newPolygons.flatMap(poly => poly.points);
-        const newCenter = calculateSphericalCentroid(allPoints);
-
-        const updatedPlate = {
+        return {
             ...plate,
             polygons: newPolygons,
             features: newFeatures,
             center: newCenter
         };
-
-        return updatedPlate;
     }
 
     // Legacy fallback for plates without keyframes

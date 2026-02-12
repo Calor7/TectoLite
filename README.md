@@ -1,60 +1,31 @@
+# TectoLite - Development Overview & Workflow Norms
 
-# What is Tectolite
+## Core Principles
 
-Well Hello there :)
+- **Rich Aesthetics**: The user should be wowed at first glance. Use modern web design practices: vibrant colors, dark modes, glassmorphism, and dynamic animations.
+- **Visual Excellence**: Prioritize premium designs over generic MVPs. Use curated color palettes and modern typography (Inter, Roboto, etc.).
+- **Dynamic & Responsive**: The interface must feel alive with hover effects and micro-animations to enhance engagement.
+- **No Placeholders**: Use AI-generated or realistic assets for a professional look.
 
-Tectolite is a small map making tool for worldbuilding hobbiests
+## Workflow Norms
 
+- **Consolidation**: Group related settings into logical menus (e.g., Timeline settings inside the "Settings" menu).
+- **Cleanup**: Proactively remove unfinished, redundant, or low-priority features to keep the codebase focused (e.g., removal of "Automation" and "Mesh" legacy systems).
+- **Performance**: Optimize rendering and logic. Use efficient data structures for tectonic simulation.
+- **SEO & Semantics**: Use proper heading structures, meta tags, and semantic HTML5 elements. Use unique IDs for testing.
+- **TypeScript**: Use TypeScript for all logic to ensure type safety and better maintainability.
 
+## UI Standards
 
-www.refracturedgames.com
+- **Themes**: Support for both Dark and Light modes with seamless transitions.
+- **Dropdowns**: Consistent dropdown behavior across the header.
+- **Tooltips**: Global hint system with hotkey support.
+- **Simplicity**: Maintain a clean, professional sidebar for tools and properties.
 
-if you want to stay up to date with other
-awesome tools feel free to visit my website :)
+## Project Evolution
 
-
-## Features
-
-### 🌍 Spherical Earth Model
-- **Real 3D Geometry**: Plates now move on a sphere using vector mathematics.
-- **Projections**: Toggle between Orthographic (Globe), Mercator, Mollweide, Robinson, and Equirectangular views.
-- **Navigation**: 
-  - **Rotate Tool (H)**: Spin the globe in Orthographic view or pan in map views.
-  - **Zoom**: Scroll to zoom in/out.
-
-### ⚛️ Euler Pole Kinematics
-- **Physics-based Motion**: Plate movement is defined by Euler Poles (Rotation Axis + Rate).
-- **Interactive Control**:
-  - Select a plate and use the Properties Panel to set the Euler Pole position (Lon/Lat) and Rate (degrees/Ma).
-  - Toggle "Euler Poles" visibility to see the rotation axes on the globe.
-- **Timeline-based Simulation**:
-  - Motion is calculated functionally based on time.
-  - **Scrub timeline** or click **Reset** to see past/future configurations.
-  - **Non-destructive**: Resetting time perfectly restores original positions.
-
-### ✂️ Temporal tools
-- **Split Tool (S)**: 
-  - Splitting a plate creates two new child plates at the current simulation time.
-  - The parent plate "dies" at that time.
-  - Scrubbing back in time reveals the original parent plate.
-  - Scrubbing forward reveals the new child plates.
-
-## Usage Guide
-
-1.  **Select Projection**: Use the top-right dropdown to choose your preferred map view.
-2.  **Draw Plate**: Use the **Draw Tool (D)** to click points on the globe. Double-click to finish.
-3.  **Define Motion**:
-    *   Select the plate.
-    *   In the Properties Panel, set **Pole Rate** (e.g., 5.0).
-    *   Adjust Pole Lon/Lat to change direction.
-4.  **Simulate**: Click Play (Spacebar) or drag the timeline slider.
-5.  **Split**: 
-    *   Go to the time you want the split to happen.
-    *   Use **Split Tool (S)** to draw a line across the plate.
-    *   New plates are created from that moment forward.
-
-## Technical Details
-
-- **Engine**: Custom TypeScript SimulationEngine using functional kinematic state.
-- **Rendering**: HTML5 Canvas + `d3-geo` paths.
-- **Data Model**: `TectonicPlate` stores `initialPolygons` and `birthTime`. Current position is derived via quaternion/vector rotation at runtime.
+- **Automation Removed**: Tectonic event detection and guided creation systems have been removed in favor of manual tool-based creation to reduce complexity.
+- **Mesh System Removed**: The experimental mesh-based tectonic model has been retired to focus on the core polygon-based simulator.
+- **Timeline Centralization**: The timeline has been moved to the bottom bar, with its configuration residing in the main "Settings" menu.
+- **Recursive Motion Inheritance**: Plates can now be linked in hierarchical chains (e.g., A -> B -> C). A child plate correctly inherits the cumulative motion of all its ancestors.
+- **Motion Clustering (Lock Motion)**: When a plate is locked to a parent, its local Euler Pole is dynamically transformed by the parent's motion, ensuring true "locked" behavior where the internal rotation axis moves with the parent landmass.

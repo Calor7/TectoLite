@@ -22,7 +22,8 @@ export interface Polygon {
 export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'flowline' | 'seafloor';
 
 export type CrustType = 'continental' | 'oceanic';
-export type TimeMode = 'positive' | 'negative' | 'ma' | 'ago';
+export type TimeMode = 'positive' | 'negative' | 'ma' | 'ago'; // Legacy - kept for transition, but functionally removed
+
 export type LayerMode = 'plate' | 'landmass';
 
 export interface MantlePlume {
@@ -93,12 +94,12 @@ export type TectonicEventType = 'collision' | 'rift';
 
 export type ConsequenceCategory = 'plausible' | 'uncommon' | 'rare';
 
-export type ConsequenceEffectKind = 'feature' | 'mesh';
+export type ConsequenceEffectKind = 'feature';
 
 export interface ConsequenceEffect {
   kind: ConsequenceEffectKind;
   featureType?: FeatureType;
-  meshEffect?: string;
+
 }
 
 export interface EventConsequence {
@@ -154,7 +155,7 @@ export const COLLISION_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { upliftRate: 1000, width: 200, peakElevation: 5000 },
     defaultParameters: { upliftRate: 1000, width: 200, peakElevation: 5000 },
     effects: [
-      { kind: 'mesh', meshEffect: 'orogeny' },
+
       { kind: 'feature', featureType: 'mountain' }
     ]
   },
@@ -167,7 +168,7 @@ export const COLLISION_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { spacing: 50, volcanoCount: 5 },
     defaultParameters: { spacing: 50, volcanoCount: 5 },
     effects: [
-      { kind: 'mesh', meshEffect: 'volcanic_arc' },
+
       { kind: 'feature', featureType: 'volcano' }
     ]
   },
@@ -180,7 +181,7 @@ export const COLLISION_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { depth: -8000, width: 100 },
     defaultParameters: { depth: -8000, width: 100 },
     effects: [
-      { kind: 'mesh', meshEffect: 'trench' },
+
       { kind: 'feature', featureType: 'trench' }
     ]
   },
@@ -194,7 +195,7 @@ export const COLLISION_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { width: 150, thickness: 10 },
     defaultParameters: { width: 150, thickness: 10 },
     effects: [
-      { kind: 'mesh', meshEffect: 'accretionary_wedge' },
+
       { kind: 'feature', featureType: 'mountain' }
     ]
   },
@@ -207,7 +208,7 @@ export const COLLISION_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { width: 300, spreadingRate: 2 },
     defaultParameters: { width: 300, spreadingRate: 2 },
     effects: [
-      { kind: 'mesh', meshEffect: 'back_arc_basin' },
+
       { kind: 'feature', featureType: 'rift' }
     ]
   },
@@ -221,7 +222,7 @@ export const COLLISION_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { extent: 100 },
     defaultParameters: { extent: 100 },
     effects: [
-      { kind: 'mesh', meshEffect: 'ophiolite_obduction' },
+
       { kind: 'feature', featureType: 'mountain' }
     ]
   }
@@ -238,7 +239,7 @@ export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { width: 50, depth: 2000 },
     defaultParameters: { width: 50, depth: 2000 },
     effects: [
-      { kind: 'mesh', meshEffect: 'rift_valley' },
+
       { kind: 'feature', featureType: 'rift' }
     ]
   },
@@ -251,7 +252,7 @@ export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { spacing: 30, volcanoCount: 8 },
     defaultParameters: { spacing: 30, volcanoCount: 8 },
     effects: [
-      { kind: 'mesh', meshEffect: 'volcanic_chain' },
+
       { kind: 'feature', featureType: 'volcano' }
     ]
   },
@@ -265,7 +266,7 @@ export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { spreadingRate: 2, initialWidth: 100 },
     defaultParameters: { spreadingRate: 2, initialWidth: 100 },
     effects: [
-      { kind: 'mesh', meshEffect: 'new_ocean_basin' },
+
       { kind: 'feature', featureType: 'seafloor' }
     ]
   },
@@ -279,7 +280,7 @@ export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
     parameters: { area: 500000, thickness: 1000 },
     defaultParameters: { area: 500000, thickness: 1000 },
     effects: [
-      { kind: 'mesh', meshEffect: 'flood_basalt' },
+
       { kind: 'feature', featureType: 'volcano' }
     ]
   }
@@ -294,7 +295,7 @@ export interface TectonicPlate {
   linkTime?: number; // Geological time when this plate was linked to parent (child motion independent before this)
   unlinkTime?: number; // Geological time when this plate was unlinked from parent (child motion independent after this)
   relativeEulerPole?: { position: Coordinate; rate: number }; // Optional relative rotation on top of parent motion
-  motionClusterParentId?: string; // Parent plate id for motion clusters
+
   zIndex?: number; // Visual layering order (higher = on top)
   color: string;
 
@@ -333,14 +334,14 @@ export interface TectonicPlate {
 export interface WorldState {
   plates: TectonicPlate[];
   currentTime: number;
-  timeMode: TimeMode;
+  // timeMode removed - simplify to internal positive time
+
   timeScale: number;
   isPlaying: boolean;
   selectedPlateId: string | null;
   selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
   selectedFeatureIds: string[];     // Support multiple selection
-  selectedVertexPlateId?: string | null;  // Selected vertex for mesh editing
-  selectedVertexId?: string | null;       // Selected vertex ID
+
   projection: ProjectionType;
   showGrid: boolean;
   showEulerPoles: boolean;
@@ -405,7 +406,7 @@ export interface Boundary {
   crustTypes?: [CrustType | undefined, CrustType | undefined]; // Crust types of each plate
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit' | 'paint' | 'mesh_edit';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit' | 'paint';
 
 export type PaintMode = 'brush' | 'poly_fill';
 
@@ -458,7 +459,7 @@ export function createDefaultWorldState(): WorldState {
   return {
     plates: [],
     currentTime: 0,
-    timeMode: 'positive',
+
     projection: 'orthographic', // Default to globe as requested
     showGrid: true,
     showEulerPoles: false,

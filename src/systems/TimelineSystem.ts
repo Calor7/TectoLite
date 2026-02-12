@@ -2,7 +2,8 @@
 import { TectonicPlate, MotionKeyframe, Coordinate, PlateEvent } from '../types';
 import { SimulationEngine } from '../SimulationEngine';
 import { HistoryManager } from '../HistoryManager';
-import { toDisplayTime, toInternalTime } from '../utils/TimeTransformationUtils';
+// import toDisplayTime, toInternalTime removed
+
 
 // Unified Event Interface for UI
 export interface TimelineEventItem {
@@ -102,11 +103,11 @@ export class TimelineSystem {
 
                 let label = kf.label || `Keyframe #${index + 1}`;
                 let type: 'motion' | 'shape' = 'motion';
-                
+
                 if (kf.label === 'Edit') {
                     type = 'shape';
                 }
-                
+
                 list.push({
                     id: `motion-${index}`,
                     time: kf.time,
@@ -163,10 +164,10 @@ export class TimelineSystem {
 
         const timeBadge = document.createElement('span');
         timeBadge.className = 'timeline-time';
-        
+
         // Apply display transformation based on app's time mode
-        const displayTime = this.getDisplayTime(event.time);
-        timeBadge.textContent = displayTime.toFixed(1);
+        timeBadge.textContent = event.time.toFixed(1);
+
 
         const label = document.createElement('span');
         label.className = 'timeline-label';
@@ -190,7 +191,7 @@ export class TimelineSystem {
             const showCascade = event.type === 'birth' || event.type === 'split' || event.type === 'fuse';
             const timeRow = this.createInputRow('Time', event.time, (val, cascade) => {
                 this.updateEventTime(event, val, cascade);
-            }, 1, showCascade, true);  // true = isTimeField
+            }, 1, showCascade);
             content.appendChild(timeRow);
         }
 
@@ -262,7 +263,8 @@ export class TimelineSystem {
         return item;
     }
 
-    private createInputRow(label: string, value: number, onChange: (val: number, cascade: boolean) => void, step = 1, showCascade = false, isTimeField = false): HTMLElement {
+    private createInputRow(label: string, value: number, onChange: (val: number, cascade: boolean) => void, step = 1, showCascade = false): HTMLElement {
+
         const row = document.createElement('div');
         row.className = 'timeline-row';
 
@@ -273,10 +275,10 @@ export class TimelineSystem {
         const input = document.createElement('input');
         input.type = 'number';
         input.step = step.toString();
-        
-        // For time fields, display the transformed value
-        const displayValue = isTimeField ? this.getDisplayTime(value) : value;
-        input.value = displayValue.toFixed(1);
+
+        input.value = value.toFixed(1);
+
+
         input.className = 'timeline-input';
 
         // Cascade Checkbox
@@ -327,11 +329,8 @@ export class TimelineSystem {
     }
 
     private updateEventTime(event: TimelineEventItem, newTime: number, cascade: boolean) {
-        // Convert display time to internal time
-        const internalTime = toInternalTime(newTime, {
-            maxTime: this.getMaxTime(),
-            mode: this.app?.state?.world?.timeMode || 'positive'
-        });
+        const internalTime = newTime;
+
 
         this.pushHistory();
 
@@ -450,7 +449,7 @@ export class TimelineSystem {
                 {
                     text: 'Cancel',
                     isSecondary: true,
-                    onClick: () => {}
+                    onClick: () => { }
                 }
             ]
         });
@@ -524,19 +523,8 @@ export class TimelineSystem {
         }
     }
 
-    private getDisplayTime(internalTime: number): number {
-        // Get max time and time mode from app state
-        const maxTime = this.getMaxTime();
-        const timeMode = this.app?.state?.world?.timeMode || 'positive';
-        
-        return toDisplayTime(internalTime, {
-            maxTime: maxTime,
-            mode: timeMode
-        });
-    }
+    // getDisplayTime removed
 
-    private getMaxTime(): number {
-        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
-        return maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-    }
+
+
 }

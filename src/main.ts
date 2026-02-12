@@ -15,9 +15,7 @@ import {
     Coordinate,
     ProjectionType,
     MotionKeyframe,
-    MantlePlume,
-    TectonicEvent,
-    EventConsequence
+    MantlePlume
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -31,9 +29,9 @@ import { exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialo
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { GeoPackageExporter } from './GeoPackageExporter';
 import { TimelineSystem } from './systems/TimelineSystem';
-import { eventSystem } from './systems/EventSystem';
 import { geoArea } from 'd3-geo';
-import { toDisplayTime, toInternalTime, parseTimeInput } from './utils/TimeTransformationUtils';
+
+
 
 class TectoLiteApp {
     private state: AppState;
@@ -43,12 +41,10 @@ class TectoLiteApp {
     private activeToolText: string = "INFO LOADING...";
     private timelineSystem: TimelineSystem | null = null;
     private fusionFirstPlateId: string | null = null; // Track first plate for fusion
-    private fuseMotionClusterMode: boolean = false; // Fuse tool sub-option
     private activeLinkSourceId: string | null = null; // Track first plate for linking
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
-    private lastFusionSuggestionKey: string | null = null;
-    private fusionSuggestionCooldownUntil: number = 0; // Time until we stop blocking suggestions after reject
-    private timeMode: 'ma' | 'ago' = 'ma';
+    // timeMode removed
+
 
     // UI State for Explorer Sidebar
     private explorerState: {
@@ -297,9 +293,7 @@ class TectoLiteApp {
                              <input type="checkbox" id="check-future-features"> Show Future/Past <span class="info-icon" data-tooltip="Show features not yet born">(i)</span>
                         </label>
 
-                                <label class="view-dropdown-item">
-                                    <input type="checkbox" id="check-show-event-icons" ${this.state.world.globalOptions.showEventIcons ? 'checked' : ''}> Show Event Icons <span class="info-icon" data-tooltip="Show icons for guided creation events">(i)</span>
-                                </label>
+
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-show-links" ${this.state.world.globalOptions.showLinks !== false ? 'checked' : ''}> Show Links <span class="info-icon" data-tooltip="Show plate-to-plate and landmass-to-plate links">(i)</span>
                         </label>
@@ -320,75 +314,24 @@ class TectoLiteApp {
 
                     </div>
                 </div>
-
-                <div class="view-dropdown-container">
-                    <button id="btn-automation-menu" class="btn btn-secondary" title="Geological Automation" style="${(this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableGuidedCreation) ? 'background-color: var(--color-success); color: white;' : ''}">
-                        <span class="icon">⚙️</span> Automation
-                    </button>
-                    <div id="automation-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
-                        <div class="dropdown-section">
-                            <div class="dropdown-header">Automation Systems</div>
-                            <div style="margin: 8px 0; padding: 8px; background: rgba(255,165,0,0.15); border-left: 3px solid orange; font-size: 11px; color: var(--text-primary);">
-                                ⚠️ Preview unfinished features, do not expect them to work!
-                            </div>
-                            
-                            <label class="view-dropdown-item">
-                                 <input type="checkbox" id="check-enable-hotspots" ${this.state.world.globalOptions.enableHotspots ? 'checked' : ''}> Hotspot Tracking <span class="info-icon" data-tooltip="Stationary plumes create volcanic trails on moving plates">(i)</span>
-                            </label>
-                            
-                            <!-- Elevation System REMOVED -->
-                            
-                            <!-- Paint Erosion REMOVED -->
-                            
-                            <!-- Event-Driven Guided Creation -->
-                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);">
-                                <div style="font-weight: 600; color: var(--text-highlight); margin-bottom: 6px;">🎯 Guided Creation <span style="font-size: 9px; background: #22c55e; color: white; padding: 1px 4px; border-radius: 3px; margin-left: 4px;">NEW</span></div>
-                                
-                                <label class="view-dropdown-item">
-                                    <input type="checkbox" id="check-enable-guided" ${this.state.world.globalOptions.enableGuidedCreation ? 'checked' : ''}> Enable Guided Creation <span class="info-icon" data-tooltip="Show popup when plates collide or rift apart to select geological consequences">(i)</span>
-                                </label>
-                                
-                                <div id="guided-options" style="margin-left: 20px; display: ${this.state.world.globalOptions.enableGuidedCreation ? 'block' : 'none'};">
-                                    <label class="view-dropdown-item" style="margin-top: 4px;">
-                                        <input type="checkbox" id="check-repopup-events" ${this.state.world.globalOptions.repopupCommittedEvents ? 'checked' : ''}> Re-popup Committed Events <span class="info-icon" data-tooltip="Allow re-opening past events to modify their consequences">(i)</span>
-                                    </label>
-                                    
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 8px 0;">
-                                        <span style="font-size: 10px; color: var(--text-secondary);">Detection Threshold:</span>
-                                        <input type="number" id="event-threshold" class="property-input" value="${this.state.world.globalOptions.eventDetectionThreshold || 20}" min="5" max="50" step="5" style="width: 60px;"> %
-                                    </div>
-                                    
-                                    <div style="margin-top: 8px; padding: 6px; background: rgba(34, 197, 94, 0.1); border-radius: 4px; font-size: 9px; color: var(--text-secondary);">
-                                        📋 Events: ${(this.state.world.tectonicEvents || []).length} detected, ${(this.state.world.tectonicEvents || []).filter(e => e.committed).length} committed
-                                    </div>
-                                    
-                                    <button id="btn-clear-events" class="btn" style="width: 100%; margin-top: 8px; padding: 4px; font-size: 10px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--text-default); cursor: pointer; border-radius: 3px;">
-                                        🗑️ Clear All Events
-                                    </button>
-                                </div>
-                                
-                                <!-- Placeholder for Manual Event Tool -->
-                                <div style="margin-top: 8px; padding: 8px; background: rgba(100, 100, 100, 0.1); border: 1px dashed var(--border-default); border-radius: 4px; opacity: 0.6;">
-                                    <div style="font-size: 10px; color: var(--text-secondary);">
-                                        🔧 <strong>Event Tool</strong> <span style="font-size: 8px; background: #666; color: white; padding: 1px 3px; border-radius: 2px;">COMING SOON</span>
-                                    </div>
-                                    <div style="font-size: 9px; color: var(--text-secondary); margin-top: 4px;">
-                                        Place custom events (meteorites, supervolcanoes) directly on the map
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             </div>
 
-            <!-- Planet Dropdown -->
+            <!-- Settings Dropdown (formerly Planet) -->
             <div class="view-dropdown-container">
-                <button id="btn-planet" class="btn btn-secondary" title="Planet Options">
-                    <span class="icon">🪐</span> Planet
+                <button id="btn-planet" class="btn btn-secondary" title="Application Settings">
+                    <span class="icon">⚙️</span> Settings
                 </button>
                 <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
                     <div class="dropdown-section">
+                        <div class="dropdown-header">Timeline</div>
+                        <div style="padding: 8px; display: flex; flex-direction: column; gap: 8px;">
+                            <label style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                                <span>Max Duration (Ma)</span>
+                                <input type="number" id="timeline-max-time" class="property-input" value="${this.state.world.globalOptions.timelineMaxTime || 500}" step="100" min="100" style="width: 70px; padding: 2px 4px;">
+                            </label>
+                        </div>
+                    </div>
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
                         <div class="dropdown-header">Planet</div>
                         <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
                             <span>Custom Planet Radius</span>
@@ -505,11 +448,7 @@ class TectoLiteApp {
                     <span class="info-icon" data-tooltip="Drop a flowline seed to trace motion (Hotkey: T)">(i)</span>
                   </button>
 
-                  <button class="tool-btn" data-tool="mesh_edit" style="flex:1;">
-                    <span class="tool-icon">🔺</span>
-                    <span class="tool-label">Mesh</span>
-                    <span class="info-icon" data-tooltip="Edit elevation mesh vertices (Hotkey: M)">(i)</span>
-                  </button>
+
               </div>
             </div>
             
@@ -533,16 +472,7 @@ class TectoLiteApp {
                      <button class="btn btn-secondary" id="btn-split-cancel">✗ Cancel</button>
                  </div>
 
-                 <div id="fuse-controls" style="display: none; flex-direction:column; gap:6px; margin-top: 8px; padding: 8px; border: 1px solid var(--border-default); border-radius: 4px;">
-                     <div style="font-size: 12px; font-weight: bold; color: var(--text-primary);">🧬 Fuse Tool</div>
-                     <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer;">
-                         <input type="checkbox" id="check-fuse-motion-cluster"> Motion Cluster (Lock Motion)
-                         <span class="info-icon" data-tooltip="Locks the child plate's Euler pole to the parent plate's motion. Example: Africa–Somalia or Australia–Zealandia motion clusters.">(i)</span>
-                     </label>
-                     <div style="font-size: 10px; color: var(--text-secondary);">
-                         Parent plate motion is applied first, then the child’s own Euler motion.
-                     </div>
-                 </div>
+
 
                  <div id="motion-controls" style="display: none; flex-direction:column; gap:4px;">
                       <div style="font-size: 11px; color: var(--text-secondary);">Confirm Motion?</div>
@@ -600,7 +530,7 @@ class TectoLiteApp {
                     Speed Presets
                   </div>
                   <label style="display:flex; align-items:center; gap:4px; font-size:10px; cursor:pointer;" title="Switch between real-world examples and custom preset values">
-                      <input type="checkbox" id="check-use-custom-presets"> Costum 
+                      <input type="checkbox" id="check-use-custom-presets"> Custom 
                   </label>
                 </div>
                 
@@ -667,15 +597,7 @@ class TectoLiteApp {
               <div class="time-controls-row">
                 <span id="current-time" class="current-time-display" style="cursor: pointer; font-weight: 600;" title="Click to set current time">0</span>
                 <span id="time-mode-label">Ma</span>
-                <span style="margin: 0 8px; color: var(--text-secondary);">|</span>
-                <label style="display: flex; align-items: center; gap: 4px; margin: 0; font-size: 11px; cursor: pointer; color: var(--text-secondary);">
-                  <input type="checkbox" id="check-time-mode" style="cursor: pointer;"> Ago
-                </label>
-                <span style="margin: 0 8px; color: var(--text-secondary);">|</span>
-                <label style="display: flex; align-items: center; gap: 4px; margin: 0;">
-                  <span style="font-size: 10px; color: var(--text-secondary);">Max:</span>
-                  <input type="number" id="timeline-max-time" class="property-input" value="${this.state.world.globalOptions.timelineMaxTime || 500}" step="100" min="100" style="width: 50px; padding: 2px 4px;">
-                </label>
+
               </div>
             </div>
           </div>
@@ -881,270 +803,7 @@ class TectoLiteApp {
         }
     }
 
-    /**
-     * Show Event Popup for Guided Creation
-     * Two-column layout with plate data, interaction info, and consequence checkboxes
-     */
-    public showEventPopup(event: TectonicEvent): void {
-        const [snap1, snap2] = event.plateSnapshots;
-        const isCollision = event.eventType === 'collision';
 
-        // Clear pending event ID immediately so simulation can continue updating in background
-        this.state = {
-            ...this.state,
-            world: {
-                ...this.state.world,
-                pendingEventId: null
-            }
-        };
-
-        // Pause simulation while popup is open
-        const wasPlaying = this.state.world.isPlaying;
-        if (wasPlaying) {
-            this.simulation?.stop();
-            this.state.world.isPlaying = false;
-        }
-
-        // Create overlay
-        const overlay = document.createElement('div');
-        overlay.id = 'event-popup-overlay';
-        overlay.style.cssText = `
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.75); z-index: 10001;
-            display: flex; align-items: center; justify-content: center;
-            font-family: system-ui, sans-serif;
-        `;
-
-        // Create dialog
-        const dialog = document.createElement('div');
-        dialog.style.cssText = `
-            background: var(--bg-secondary, #1e1e2e); 
-            border: 2px solid var(--accent-primary, #3b82f6); 
-            border-radius: 12px; 
-            padding: 24px;
-            min-width: 600px; 
-            max-width: 800px;
-            max-height: 85vh;
-            overflow-y: auto;
-            color: var(--text-primary, #e0e0e0);
-            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-        `;
-
-        // Header with event type
-        const eventEmoji = isCollision ? '💥' : '🔀';
-        const eventLabel = isCollision ? 'COLLISION EVENT' : 'RIFT EVENT';
-        const collisionTypeLabel = event.interactionInfo.collisionType
-            ? ` (${event.interactionInfo.collisionType.replace('-', ' → ')})`
-            : '';
-
-        // Build plate info cards
-        const plateCard = (snap: typeof snap1, side: 'left' | 'right') => `
-            <div style="flex: 1; padding: 12px; background: var(--bg-tertiary, #2a2a3e); border-radius: 8px; ${side === 'left' ? 'margin-right: 8px;' : 'margin-left: 8px;'}">
-                <div style="font-weight: 700; font-size: 16px; margin-bottom: 8px; color: var(--text-highlight, #fff);">${snap.name}</div>
-                <div style="font-size: 12px; color: var(--text-secondary, #aaa); line-height: 1.6;">
-                    <div><strong>Crust:</strong> ${snap.crustType || 'Unknown'}</div>
-                    <div><strong>Velocity:</strong> ${snap.velocity.toFixed(1)} cm/yr</div>
-                    <div><strong>Age:</strong> ${snap.age.toFixed(1)} Ma</div>
-                    <div><strong>Area:</strong> ${snap.area.toFixed(0)} deg²</div>
-                    ${snap.description ? `<div style="margin-top: 4px; font-style: italic; opacity: 0.8;">${snap.description}</div>` : ''}
-                </div>
-            </div>
-        `;
-
-        // Group consequences by category
-        const grouped = {
-            plausible: event.consequences.filter(c => c.category === 'plausible'),
-            uncommon: event.consequences.filter(c => c.category === 'uncommon'),
-            rare: event.consequences.filter(c => c.category === 'rare')
-        };
-
-        // Build consequence section
-        const consequenceSection = (title: string, items: EventConsequence[], color: string, bgColor: string) => {
-            if (items.length === 0) return '';
-            return `
-                <div style="margin-bottom: 16px;">
-                    <div style="font-size: 11px; font-weight: 600; color: ${color}; background: ${bgColor}; padding: 4px 8px; border-radius: 4px; margin-bottom: 8px; display: inline-block;">
-                        ${title}
-                    </div>
-                    ${items.map(c => `
-                        <div class="consequence-item" data-id="${c.id}" style="padding: 10px; margin-bottom: 6px; background: var(--bg-tertiary, #2a2a3e); border-radius: 6px; border: 1px solid transparent; transition: all 0.15s; cursor: pointer;">
-                            <label style="display: flex; align-items: flex-start; cursor: pointer;">
-                                <input type="checkbox" class="consequence-checkbox" data-id="${c.id}" ${c.selected ? 'checked' : ''} style="margin-right: 10px; margin-top: 3px; transform: scale(1.2);">
-                                <div style="flex: 1;">
-                                    <div style="font-weight: 600; font-size: 13px; color: var(--text-highlight, #fff);">${c.label}</div>
-                                    <div style="font-size: 11px; color: var(--text-secondary, #aaa); margin-top: 2px;">${c.description}</div>
-                                </div>
-                            </label>
-                            <div class="params-container" style="margin-top: 8px; margin-left: 24px; display: ${c.selected ? 'block' : 'none'};">
-                                ${Object.entries(c.parameters).map(([key, val]) => `
-                                    <div style="display: inline-flex; align-items: center; margin-right: 12px; margin-bottom: 4px;">
-                                        <span style="font-size: 10px; color: var(--text-secondary, #888); margin-right: 4px;">${key}:</span>
-                                        <input type="number" class="param-input" data-consequence-id="${c.id}" data-param="${key}" value="${val}" style="width: 70px; padding: 2px 4px; font-size: 11px; background: var(--bg-primary, #1a1a2e); border: 1px solid var(--border-default, #444); border-radius: 3px; color: var(--text-primary, #ddd);">
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-        };
-
-        const effectStartTime = event.effectStartTime ?? event.time;
-        const effectEndTime = event.effectEndTime ?? event.time;
-        const effectDuration = Math.max(0, Math.round((effectEndTime - effectStartTime) * 10) / 10);
-
-        dialog.innerHTML = `
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border-default, #444);">
-                <div>
-                    <span style="font-size: 24px; margin-right: 8px;">${eventEmoji}</span>
-                    <span style="font-size: 20px; font-weight: 700; color: var(--text-highlight, #fff);">${eventLabel}</span>
-                    <span style="font-size: 14px; color: var(--text-secondary, #aaa);">${collisionTypeLabel}</span>
-                </div>
-                <div style="font-size: 12px; color: var(--text-secondary, #888);">
-                    @ ${event.time.toFixed(1)} Ma
-                </div>
-            </div>
-
-            <div style="display: flex; margin-bottom: 20px;">
-                ${plateCard(snap1, 'left')}
-                ${plateCard(snap2, 'right')}
-            </div>
-
-            <div style="background: var(--bg-tertiary, #2a2a3e); padding: 12px; border-radius: 8px; margin-bottom: 20px;">
-                <div style="font-size: 12px; color: var(--text-secondary, #aaa);">
-                    <strong>Interaction:</strong> ${isCollision ? 'Convergent boundary' : 'Divergent boundary'} · 
-                    <strong>Relative velocity:</strong> ${event.interactionInfo.relativeVelocity.toFixed(1)} cm/yr
-                    ${event.interactionInfo.overlapArea ? ` · <strong>Overlap:</strong> ${event.interactionInfo.overlapArea.toFixed(1)} deg²` : ''}
-                </div>
-            </div>
-
-            <div style="background: var(--bg-tertiary, #2a2a3e); padding: 12px; border-radius: 8px; margin-bottom: 20px;">
-                <div style="font-size: 12px; color: var(--text-secondary, #aaa); margin-bottom: 6px;">
-                    <strong>Effect Timing:</strong> Starts at ${effectStartTime.toFixed(1)} Ma
-                </div>
-                <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary, #aaa);">
-                    <label style="white-space: nowrap;">Duration (Ma):</label>
-                    <input type="number" id="event-effect-duration" class="property-input" value="${effectDuration}" min="0" step="0.1" style="width: 90px; padding: 4px 6px; font-size: 12px;">
-                    <span class="info-icon" data-tooltip="Typical ranges (Ma): Collision/Orogeny 10–30 (Himalayan uplift), Trench/Arc 5–20 (Andes arc), Rift 3–12 (East African Rift), New Ocean Basin 10–30 (Red Sea), Flood Basalt 0.5–3 (Deccan Traps). Default is mid‑range; adjust as needed.">(i)</span>
-                    <span style="font-size: 11px; color: var(--text-secondary, #888);">End: ${(effectStartTime + effectDuration).toFixed(1)} Ma</span>
-                </div>
-            </div>
-
-            <div style="margin-bottom: 8px; font-weight: 600; font-size: 14px; color: var(--text-highlight, #fff);">
-                Select Geological Consequences:
-            </div>
-
-            <div id="consequences-container">
-                ${consequenceSection('✓ PLAUSIBLE', grouped.plausible, '#22c55e', 'rgba(34, 197, 94, 0.15)')}
-                ${consequenceSection('◐ UNCOMMON', grouped.uncommon, '#f59e0b', 'rgba(245, 158, 11, 0.15)')}
-                ${consequenceSection('★ RARE', grouped.rare, '#ef4444', 'rgba(239, 68, 68, 0.15)')}
-            </div>
-
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-default, #444);">
-                <button id="event-skip-btn" style="padding: 10px 20px; background: transparent; border: 1px solid var(--border-default, #555); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer; font-size: 13px;">
-                    Skip Event
-                </button>
-                <button id="event-commit-btn" style="padding: 10px 24px; background: var(--accent-primary, #3b82f6); border: none; border-radius: 6px; color: white; cursor: pointer; font-weight: 600; font-size: 13px;">
-                    Commit Event
-                </button>
-            </div>
-        `;
-
-        overlay.appendChild(dialog);
-        document.body.appendChild(overlay);
-
-        // Wire up checkbox interactions
-        const checkboxes = dialog.querySelectorAll('.consequence-checkbox');
-        checkboxes.forEach(cb => {
-            cb.addEventListener('change', (e) => {
-                const checkbox = e.target as HTMLInputElement;
-                const item = checkbox.closest('.consequence-item') as HTMLElement;
-                const paramsContainer = item?.querySelector('.params-container') as HTMLElement;
-
-                if (paramsContainer) {
-                    paramsContainer.style.display = checkbox.checked ? 'block' : 'none';
-                }
-
-                // Visual feedback
-                if (item) {
-                    item.style.borderColor = checkbox.checked ? 'var(--accent-primary, #3b82f6)' : 'transparent';
-                    item.style.background = checkbox.checked ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-tertiary, #2a2a3e)';
-                }
-            });
-        });
-
-        // Commit button
-        dialog.querySelector('#event-commit-btn')?.addEventListener('click', () => {
-            // Collect selected consequences with updated parameters
-            const updatedConsequences = event.consequences.map(c => {
-                const checkbox = dialog.querySelector(`.consequence-checkbox[data-id="${c.id}"]`) as HTMLInputElement;
-                const selected = checkbox?.checked || false;
-
-                // Collect parameter values
-                const params = { ...c.parameters };
-                const paramInputs = dialog.querySelectorAll(`.param-input[data-consequence-id="${c.id}"]`);
-                paramInputs.forEach(input => {
-                    const inp = input as HTMLInputElement;
-                    const paramName = inp.dataset.param;
-                    if (paramName) {
-                        const val = parseFloat(inp.value);
-                        if (!isNaN(val)) params[paramName] = val;
-                    }
-                });
-
-                return { ...c, selected, parameters: params };
-            });
-
-            // Commit the event
-            const durationInput = dialog.querySelector('#event-effect-duration') as HTMLInputElement | null;
-            const durationVal = durationInput ? parseFloat(durationInput.value) : effectDuration;
-            const safeDuration = !isNaN(durationVal) && durationVal >= 0 ? durationVal : effectDuration;
-            const timing = {
-                effectStartTime: effectStartTime,
-                effectEndTime: effectStartTime + safeDuration
-            };
-
-            this.state = eventSystem.commitEvent(this.state, event.id, updatedConsequences, timing);
-
-            document.body.removeChild(overlay);
-            this.showToast(`Event committed with ${updatedConsequences.filter(c => c.selected).length} consequences`, 2000);
-
-            // Resume if was playing
-            if (wasPlaying) {
-                this.simulation?.start();
-                this.state.world.isPlaying = true;
-            }
-
-            this.updateTimeDisplay();
-        });
-
-        // Skip button
-        dialog.querySelector('#event-skip-btn')?.addEventListener('click', () => {
-            this.state = eventSystem.dismissEvent(this.state, event.id);
-            document.body.removeChild(overlay);
-
-            // Resume if was playing
-            if (wasPlaying) {
-                this.simulation?.start();
-                this.state.world.isPlaying = true;
-            }
-        });
-    }
-
-    /**
-     * Check for pending events and show popup if needed
-     */
-    private checkPendingEvents(): void {
-        const pendingId = this.state.world.pendingEventId;
-        if (!pendingId) return;
-
-        const events = this.state.world.tectonicEvents || [];
-        const pendingEvent = events.find(e => e.id === pendingId);
-
-        if (pendingEvent) {
-            this.showEventPopup(pendingEvent);
-        }
-    }
 
     private updateRetroStatusBox(text: string | null): void {
         const statusBox = document.getElementById('retro-status-text');
@@ -1198,31 +857,21 @@ class TectoLiteApp {
         const planetBtn = document.getElementById('btn-planet');
         const planetMenu = document.getElementById('planet-dropdown-menu');
 
-        // Automation Dropdown
-        const automationBtn = document.getElementById('btn-automation-menu');
-        const automationMenu = document.getElementById('automation-dropdown-menu');
 
-        // Toggle Dropdown
+
         viewBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
             viewMenu?.classList.toggle('show');
             planetMenu?.classList.remove('show');
-            automationMenu?.classList.remove('show');
         });
 
         planetBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
             planetMenu?.classList.toggle('show');
             viewMenu?.classList.remove('show');
-            automationMenu?.classList.remove('show');
         });
 
-        automationBtn?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            automationMenu?.classList.toggle('show');
-            viewMenu?.classList.remove('show');
-            planetMenu?.classList.remove('show');
-        });
+
 
         // Close on outside click
         document.addEventListener('click', (e) => {
@@ -1232,9 +881,7 @@ class TectoLiteApp {
             if (planetMenu?.classList.contains('show') && !planetMenu.contains(e.target as Node) && e.target !== planetBtn) {
                 planetMenu.classList.remove('show');
             }
-            if (automationMenu?.classList.contains('show') && !automationMenu.contains(e.target as Node) && e.target !== automationBtn) {
-                automationMenu.classList.remove('show');
-            }
+
         });
 
         // Reset Camera
@@ -1569,132 +1216,7 @@ class TectoLiteApp {
 
 
 
-        document.getElementById('check-fuse-motion-cluster')?.addEventListener('change', (e) => {
-            this.fuseMotionClusterMode = (e.target as HTMLInputElement).checked;
-            if (this.state.activeTool === 'fuse') {
-                this.updateHint(this.fuseMotionClusterMode
-                    ? "Select parent plate to create a motion cluster."
-                    : "Select first plate to fuse.");
-            }
-        });
 
-        document.getElementById('check-show-event-icons')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.showEventIcons = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
-
-
-
-        // Automation Settings
-        const updateAutomationBtn = () => {
-            const btn = document.getElementById('btn-automation-menu');
-            if (btn) {
-                const anyActive = this.state.world.globalOptions.enableHotspots ||
-                    this.state.world.globalOptions.enableGuidedCreation ||
-                    this.state.world.globalOptions.pauseOnFusionSuggestion;
-                if (anyActive) {
-                    btn.style.backgroundColor = 'var(--color-success)';
-                    btn.style.color = 'white';
-                } else {
-                    btn.style.backgroundColor = '';
-                    btn.style.color = '';
-                }
-            }
-        };
-
-        document.getElementById('check-enable-hotspots')?.addEventListener('change', (e) => {
-            const checked = (e.target as HTMLInputElement).checked;
-            this.state.world.globalOptions.enableHotspots = checked;
-
-            const subItem = (e.target as HTMLElement).closest('.view-dropdown-item')?.nextElementSibling as HTMLElement;
-            if (subItem && subItem.classList.contains('view-dropdown-subitem')) {
-                subItem.style.display = checked ? 'flex' : 'none';
-            }
-
-            updateAutomationBtn();
-            this.updateTimeDisplay();
-        });
-
-        document.getElementById('input-hotspot-rate')?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val) && val > 0) {
-                this.state.world.globalOptions.hotspotSpawnRate = val;
-            }
-        });
-
-
-
-
-
-        // Guided Creation System controls
-        document.getElementById('check-enable-guided')?.addEventListener('change', (e) => {
-            const enabled = (e.target as HTMLInputElement).checked;
-            this.state.world.globalOptions.enableGuidedCreation = enabled;
-            const optionsDiv = document.getElementById('guided-options');
-            if (optionsDiv) optionsDiv.style.display = enabled ? 'block' : 'none';
-            updateAutomationBtn();
-
-            if (enabled) {
-                this.showToast('Guided Creation enabled - events will trigger popups', 2000);
-            }
-
-            this.updateTimeDisplay();
-        });
-
-        document.getElementById('check-repopup-events')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.repopupCommittedEvents = (e.target as HTMLInputElement).checked;
-        });
-
-        document.getElementById('event-threshold')?.addEventListener('change', (e) => {
-            const val = parseInt((e.target as HTMLInputElement).value);
-            if (!isNaN(val) && val >= 5 && val <= 50) {
-                this.state.world.globalOptions.eventDetectionThreshold = val;
-            }
-        });
-
-        document.getElementById('btn-clear-events')?.addEventListener('click', () => {
-            const count = (this.state.world.tectonicEvents || []).length;
-            if (count === 0) {
-                this.showToast('No events to clear', 1500);
-                return;
-            }
-
-            if (confirm(`Clear all ${count} tectonic events? This cannot be undone.`)) {
-                this.state.world.tectonicEvents = [];
-                this.state.world.pendingEventId = null;
-                eventSystem.clearCache();
-                this.showToast(`Cleared ${count} events`, 1500);
-                this.updateTimeDisplay();
-            }
-        });
-
-        // Debug: Add Test Plume
-        document.getElementById('btn-debug-spawn-plume')?.addEventListener('click', () => {
-            // Add a plume at current viewport center? Or just (0,0)?
-            // Let's use current center of projection
-            const centerLat = this.state.viewport.rotate[1] * -1; // approx
-            const centerLon = this.state.viewport.rotate[0] * -1;
-
-            // For proper "Screen Center" we need inverse projection, but let's just stick to (0,0) or some random spot for now if complex.
-            // Actually, let's just use (0,0) or the inverse of rotation.
-
-            const newPlume = {
-                id: generateId(),
-                position: [centerLon, centerLat] as any, // Simple approx
-                radius: 100,
-                strength: 1,
-                active: true
-            };
-
-            if (!this.state.world.mantlePlumes) {
-                this.state.world.mantlePlumes = [];
-            }
-            this.state.world.mantlePlumes.push(newPlume);
-
-            // alert(`Created Mantle Plume at [${centerLon.toFixed(1)}, ${centerLat.toFixed(1)}]. If you move a plate over this location, 'Hotspot Track' volcanoes will appear.`);
-            this.canvasManager?.render();
-        });
 
 
 
@@ -2163,22 +1685,11 @@ class TectoLiteApp {
 
         document.getElementById('btn-reset-time')?.addEventListener('click', () => {
             this.simulation?.setTime(0);
-            // Reset fusion suggestion tracking on time reset
-            this.lastFusionSuggestionKey = null;
-            this.fusionSuggestionCooldownUntil = 0;
             this.updateTimeDisplay();
         });
 
-        // NEW: Time mode toggle (Positive/Negative/Ago)
-        document.getElementById('check-time-mode')?.addEventListener('change', (e) => {
-            const isChecked = (e.target as HTMLInputElement).checked;
-            this.state.world.timeMode = isChecked ? 'negative' : 'positive';
-            this.updateTimeDisplay();
-            // Refresh property panels to show transformed time values
-            this.updatePropertiesPanel();
-            this.bindFeatureEvents();
-            this.canvasManager?.render();
-        });
+        // Time mode toggle removed
+
 
         // NEW: Clickable current time to set value
         document.getElementById('current-time')?.addEventListener('click', () => {
@@ -2187,14 +1698,9 @@ class TectoLiteApp {
             if (modal && input) {
                 modal.style.display = 'flex';
 
-                // Pre-populate with current display time
-                const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
-                const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-                const displayTime = toDisplayTime(this.state.world.currentTime, {
-                    maxTime: maxTime,
-                    mode: this.state.world.timeMode
-                });
-                input.value = displayTime.toString();
+                // Pre-populate with current internal time
+                const displayTime = this.state.world.currentTime;
+                input.value = displayTime.toFixed(1);
                 input.focus();
                 input.select();
             }
@@ -2496,35 +2002,10 @@ class TectoLiteApp {
         dialog.innerHTML = `
           <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">🗺️ Map Legend</h3>
           
-          <div style="margin-bottom: 10px;">
-              <h4 style="margin: 0 0 8px 0; color: #fab387; font-size: 14px;">Boundaries</h4>
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px;">
-                  <span style="width: 20px; height: 3px; background: #ff3333; display: inline-block; border-radius: 2px;"></span>
-                  <span><strong>Convergent</strong> (Collision)</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px;">
-                  <span style="width: 20px; height: 3px; background: #3333ff; display: inline-block; border-radius: 2px;"></span>
-                  <span><strong>Divergent</strong> (Rifting)</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
-                  <span style="width: 20px; height: 3px; background: #33ff33; display: inline-block; border-radius: 2px;"></span>
-                  <span><strong>Transform</strong> (Sliding)</span>
-              </div>
-              <div style="font-size: 11px; color: var(--text-secondary); margin-top: 8px; font-style: italic;">
-                  *Boundaries only appear when plates overlap/touch AND have velocity.
-              </div>
+          <div style="margin-bottom: 10px; color: var(--text-secondary); font-style: italic;">
+              Handbook content coming soon...
           </div>
-
-          <div style="margin-bottom: 10px;">
-              <h4 style="margin: 0 0 8px 0; color: #a6e3a1; font-size: 14px;">Features</h4>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px;">
-                  <div style="display:flex; align-items:center; gap:6px;"><span>🏔️</span> Mountain</div>
-                  <div style="display:flex; align-items:center; gap:6px;"><span>🌋</span> Volcano</div>
-                  <div style="display:flex; align-items:center; gap:6px;"><span>⚡</span> Rift</div>
-                  <div style="display:flex; align-items:center; gap:6px;"><span>🏝️</span> Island</div>
-              </div>
-          </div>
-
+          
           <div style="display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 16px;">
               <button id="legend-close" class="btn btn-secondary" style="padding: 8px 16px;">Close</button>
           </div>
@@ -2790,10 +2271,7 @@ class TectoLiteApp {
             paintControls.style.display = tool === 'paint' ? 'flex' : 'none';
         }
 
-        const fuseControls = document.getElementById('fuse-controls');
-        if (fuseControls) {
-            fuseControls.style.display = tool === 'fuse' ? 'flex' : 'none';
-        }
+
 
         const editControls = document.getElementById('edit-controls');
         if (editControls && tool !== 'edit') {
@@ -2828,9 +2306,7 @@ class TectoLiteApp {
                 hintText = "Click a plate to start splitting.";
                 break;
             case 'fuse':
-                hintText = this.fuseMotionClusterMode
-                    ? "Select parent plate to create a motion cluster."
-                    : "Select first plate to fuse.";
+                hintText = "Select first plate to fuse.";
                 break;
             case 'link':
                 hintText = "Select a plate or landmass to link it with another.";
@@ -3069,63 +2545,12 @@ class TectoLiteApp {
 
         if (!this.fusionFirstPlateId) {
             this.fusionFirstPlateId = plateId;
-            this.updateHint(this.fuseMotionClusterMode
-                ? `Selected parent ${plate.name}. Select child plate to lock.`
-                : `Selected Plate ${plate.name} select another plate to fuse it with`);
+            this.updateHint(`Selected Plate ${plate.name} select another plate to fuse it with`);
         } else if (this.fusionFirstPlateId !== plateId) {
             // Stage 3 - Confirmation
             const firstPlate = this.state.world.plates.find(p => p.id === this.fusionFirstPlateId);
             if (!firstPlate) {
                 this.fusionFirstPlateId = null;
-                return;
-            }
-
-            if (this.fuseMotionClusterMode) {
-                const isClustered = plate.motionClusterParentId === firstPlate.id;
-                const actionText = isClustered ? 'Unlock Motion Cluster' : 'Create Motion Cluster';
-                const subText = isClustered
-                    ? 'Child plate will move independently.'
-                    : 'Child plate inherits parent motion and keeps its own Euler motion.';
-
-                this.showModal({
-                    title: actionText,
-                    content: `Do you want to ${isClustered ? 'unlock' : 'lock'} plate <strong>${plate.name}</strong> to parent <strong>${firstPlate.name}</strong>?`,
-                    buttons: [
-                        {
-                            text: actionText,
-                            subtext: subText,
-                            onClick: () => {
-                                this.pushState();
-                                this.state.world.plates = this.state.world.plates.map(p => {
-                                    if (p.id === plate.id) {
-                                        return {
-                                            ...p,
-                                            motionClusterParentId: isClustered ? undefined : firstPlate.id
-                                        };
-                                    }
-                                    return p;
-                                });
-
-                                this.fusionFirstPlateId = null;
-                                this.updatePropertiesPanel();
-                                this.updateUI();
-                                this.canvasManager?.render();
-                                this.updateHint(isClustered
-                                    ? `Unlocked ${plate.name} from ${firstPlate.name}.`
-                                    : `Locked ${plate.name} to ${firstPlate.name}.`);
-                            }
-                        },
-                        {
-                            text: 'Cancel',
-                            isSecondary: true,
-                            onClick: () => {
-                                this.fusionFirstPlateId = null;
-                                this.updateHint("Select parent plate to create a motion cluster.");
-                            }
-                        }
-                    ]
-                });
-                // We exit here because modal is async
                 return;
             }
 
@@ -3163,7 +2588,6 @@ class TectoLiteApp {
                     }
                 ]
             });
-            // We exit here because modal is async
             return;
         }
     }
@@ -3171,8 +2595,6 @@ class TectoLiteApp {
     private handleLinkTool(plateId: string): void {
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
-
-
 
         // Step 1: Select parent/anchor plate
         if (!this.activeLinkSourceId) {
@@ -4462,149 +3884,21 @@ class TectoLiteApp {
     private updateTimeDisplay(): void {
         const display = document.getElementById('current-time');
         const slider = document.getElementById('time-slider') as HTMLInputElement;
-        const modeLabel = document.getElementById('time-mode-label');
-
-        // Get current max time from timeline input
-        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
-        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-
-        // Transform internal time to display time
-        const displayTime = toDisplayTime(this.state.world.currentTime, {
-            maxTime: maxTime,
-            mode: this.state.world.timeMode
-        });
 
         // Update display
-        if (display) display.textContent = Math.abs(displayTime).toFixed(1);
+        if (display) display.textContent = this.state.world.currentTime.toFixed(1);
         if (slider) slider.value = String(this.state.world.currentTime);
 
-        // Update label
-        const label = this.state.world.timeMode === 'negative' ? 'years ago' : 'Ma';
-        if (modeLabel) modeLabel.textContent = label;
 
-        this.maybePauseOnFusionSuggestion();
-        this.checkPendingEvents();
     }
 
-    private maybePauseOnFusionSuggestion(): void {
-        if (!this.state.world.globalOptions.pauseOnFusionSuggestion) return;
-        if (!this.state.world.isPlaying) return;
 
-        const currentTime = this.state.world.currentTime;
 
-        // Skip if in cooldown period (user rejected suggestions recently)
-        if (currentTime < this.fusionSuggestionCooldownUntil) return;
-
-        const boundaries = this.state.world.boundaries || [];
-        if (boundaries.length === 0) return;
-
-        const velocityThreshold = 0.0008; // rad/Ma (~0.5 cm/yr) heuristic
-        const planetRadius = this.state.world.globalOptions.planetRadius || 6371;
-
-        // Collect candidate pairs with extended info
-        interface FusionCandidate {
-            ids: [string, string];
-            velocity: number;
-            overlapArea: number;
-            crustTypes: [string, string];
-        }
-        const candidatePairs = new Map<string, FusionCandidate>();
-
-        for (const boundary of boundaries) {
-            if (boundary.type !== 'convergent') continue;
-            if (boundary.velocity === undefined || boundary.velocity < velocityThreshold) continue;
-
-            const [a, b] = boundary.plateIds;
-            const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-            const current = candidatePairs.get(key);
-            if (!current || boundary.velocity > current.velocity) {
-                candidatePairs.set(key, {
-                    ids: a < b ? [a, b] : [b, a],
-                    velocity: boundary.velocity,
-                    overlapArea: boundary.overlapArea ?? 0,
-                    crustTypes: [
-                        boundary.crustTypes?.[0] ?? 'unknown',
-                        boundary.crustTypes?.[1] ?? 'unknown'
-                    ]
-                });
-            }
-        }
-
-        if (candidatePairs.size === 0) return;
-
-        const timeKey = `${Math.round(currentTime * 10)}|${Array.from(candidatePairs.keys()).sort().join(',')}`;
-        if (this.lastFusionSuggestionKey === timeKey) return;
-        this.lastFusionSuggestionKey = timeKey;
-
-        this.simulation?.stop();
-        this.state.world.isPlaying = false;
-        this.updatePlayButton();
-
-        const plates = this.state.world.plates;
-        const items = Array.from(candidatePairs.values()).map(pair => {
-            const p1 = plates.find(p => p.id === pair.ids[0]);
-            const p2 = plates.find(p => p.id === pair.ids[1]);
-            const name1 = p1?.name || pair.ids[0];
-            const name2 = p2?.name || pair.ids[1];
-            const cmYr = (pair.velocity * planetRadius * 100000) / 1e6; // rad/Ma -> cm/yr
-
-            // Determine collision type label
-            const ct0 = pair.crustTypes[0];
-            const ct1 = pair.crustTypes[1];
-            let collisionType = 'Mixed';
-            if (ct0 === 'oceanic' && ct1 === 'oceanic') collisionType = 'Oceanic-Oceanic';
-            else if (ct0 === 'continental' && ct1 === 'continental') collisionType = 'Continental-Continental';
-            else if ((ct0 === 'oceanic' && ct1 === 'continental') || (ct0 === 'continental' && ct1 === 'oceanic')) collisionType = 'Ocean-Continent';
-
-            // Convert overlap area (deg²) to km² (rough approximation: 1 deg² ≈ 12300 km² at equator)
-            const overlapKm2 = pair.overlapArea * 12300;
-
-            return `<div style="margin-bottom: 10px; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px;">
-                <b>${name1}</b> ↔ <b>${name2}</b><br>
-                <span style="font-size: 11px; color: #aaa;">
-                    Type: ${collisionType} | Speed: ~${cmYr.toFixed(2)} cm/yr | Overlap: ~${overlapKm2.toFixed(0)} km²
-                </span>
-            </div>`;
-        });
-
-        // Build factors explanation
-        const factorsHtml = `
-            <div style="margin-top: 12px; padding: 10px; background: rgba(100,150,255,0.1); border-radius: 4px; font-size: 11px;">
-                <b>Factors that INCREASE fusion likelihood:</b><br>
-                • Higher closing speed (> 2 cm/yr typical for collision)<br>
-                • Larger overlap area (more sustained contact)<br>
-                • Continental-Continental (orogenic welding)<br>
-                • Matching plate densities<br><br>
-                <b>Factors that DECREASE likelihood:</b><br>
-                • Low closing speed (may just slide)<br>
-                • Small overlap (transient contact)<br>
-                • Ocean-Ocean (one may subduct instead)<br>
-                • Ocean-Continent (subduction more likely)
-            </div>
-        `;
-
-        const content = `Heuristic fusion candidates detected at <b>${currentTime.toFixed(1)} Ma</b>:<br><br>${items.join('')}${factorsHtml}<br><span style="font-size: 10px; opacity: 0.6;">This is a heuristic approximation. You can fuse manually using the Fuse tool or reject to continue.</span>`;
-
-        if (this.showModal) {
-            this.showModal({
-                title: 'Fusion Suggestion (Heuristic)',
-                content,
-                width: '480px',
-                buttons: [
-                    {
-                        text: 'Skip (5 Ma cooldown)',
-                        isSecondary: true,
-                        onClick: () => {
-                            // Set cooldown to block suggestions for next 5 Ma
-                            this.fusionSuggestionCooldownUntil = currentTime + 5;
-                        }
-                    },
-                    { text: 'OK', onClick: () => { } }
-                ]
-            });
-        } else {
-            alert(content.replace(/<br>/g, '\n').replace(/<[^>]*>/g, ''));
-        }
+    private parseTimeInput(input: string): number | null {
+        const trimmed = input.trim();
+        if (!trimmed) return null;
+        const parsed = parseFloat(trimmed);
+        return Number.isNaN(parsed) ? null : parsed;
     }
 
     private confirmTimeInput(): void {
@@ -4614,22 +3908,16 @@ class TectoLiteApp {
         if (!input || !modal) return;
 
         const displayTimeStr = input.value.trim();
-        const parsedDisplayTime = parseTimeInput(displayTimeStr);
+        const parsedDisplayTime = this.parseTimeInput(displayTimeStr);
+
 
         if (parsedDisplayTime === null) {
             alert('Please enter a valid time value');
             return;
         }
 
-        // Get max time for transformation
-        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
-        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-
-        // Transform display time to internal time
-        const internalTime = toInternalTime(parsedDisplayTime, {
-            maxTime: maxTime,
-            mode: this.state.world.timeMode
-        });
+        // Internal time is used directly
+        const internalTime = parsedDisplayTime;
 
         // Set the time
         this.simulation?.setTime(internalTime);
@@ -4647,30 +3935,14 @@ class TectoLiteApp {
      */
     private getDisplayTimeValue(internalTime: number | null | undefined): number | null {
         if (internalTime === null || internalTime === undefined) return null;
-
-        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
-        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-
-        return toDisplayTime(internalTime, {
-            maxTime: maxTime,
-            mode: this.state.world.timeMode
-        });
+        return internalTime;
     }
 
     private transformInputTime(userInputTime: number): number {
-        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
-        const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-
-        return toInternalTime(userInputTime, {
-            maxTime: maxTime,
-            mode: this.state.world.timeMode
-        });
+        return userInputTime;
     }
 
-    private getMaxTime(): number {
-        const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
-        return maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-    }
+
 
     private addMotionKeyframe(plateId: string, newEulerPole: { position: Coordinate; rate: number; visible?: boolean }): void {
         const currentTime = this.state.world.currentTime;
@@ -4768,12 +4040,9 @@ class TectoLiteApp {
         }
 
         const current = this.state.world.currentTime;
-        const displayCurrent = toDisplayTime(current, {
-            maxTime: this.getMaxTime(),
-            mode: this.timeMode
-        });
+        const displayCurrent = current;
 
-        lblCurrent.textContent = String(displayCurrent);
+        lblCurrent.textContent = displayCurrent.toFixed(1);
         input.value = '';
         lblSpeedDeg.textContent = '--';
         lblSpeedCm.textContent = '--';
