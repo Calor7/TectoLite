@@ -11,8 +11,6 @@ export interface Point {
 
 export type ProjectionType = 'equirectangular' | 'mollweide' | 'mercator' | 'robinson' | 'orthographic';
 
-export type TimeMode = 'positive' | 'negative';
-
 export type InteractionMode = 'classic' | 'dynamic_pole' | 'drag_target';
 
 export interface Polygon {
@@ -24,76 +22,19 @@ export interface Polygon {
 export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'flowline' | 'seafloor';
 
 export type CrustType = 'continental' | 'oceanic';
-
-export interface CrustSegment {
-    id: string;
-    polygon: Polygon; // The shape of this specific strip of crust
-    birthTime: number; // When was this segment created?
-}
-
-export interface CrustVertex {
-    id: string;
-    pos: Coordinate;          // Current position [lon, lat] in degrees
-    originalPos?: Coordinate; // Source of truth: position at mesh creation
-    elevation: number;        // meters above sea level (calculated from thickness via isostasy)
-    crustalThickness: number; // km - continental ~35km, oceanic ~7km, orogens up to 70km
-    sediment: number;         // sediment thickness in meters (deposited material)
-    isOceanic: boolean;       // true = oceanic crust, false = continental
-}
-
-export type ElevationViewMode = 'off' | 'overlay' | 'absolute' | 'landmass';
-
-// Layer editing mode - determines whether tools operate on plates or landmasses
+export type TimeMode = 'positive' | 'negative' | 'ma' | 'ago';
 export type LayerMode = 'plate' | 'landmass';
 
 export interface MantlePlume {
-    id: string;
-    position: Coordinate; // Fixed geographic location (lat/lon)
-    radius: number;       // Size of the hotspot magmatism
-    strength: number;     // How frequently it spawns features
-    active: boolean;
-    spawnRate?: number;   // Override global spawn rate (Ma per feature)
+  id: string;
+  position: Coordinate; // Fixed geographic location (lat/lon)
+  radius: number;       // Size of the hotspot magmatism
+  strength: number;     // How frequently it spawns features
+  active: boolean;
+  spawnRate?: number;   // Override global spawn rate (Ma per feature)
 }
 
-export interface PaintStroke {
-  id: string;
-  color: string;        // Hex color (e.g., "#ff0000")
-  width: number;        // Brush width in pixels (0 for filled polygons)
-  opacity: number;      // 0.0 to 1.0
-  points: Coordinate[]; // Current projected position (World Coordinates)
-  originalPoints?: Coordinate[]; // Source of truth: Positions at birthTime (World coords)
-  timestamp: number;    // For undo/redo ordering
-  isFilled?: boolean;   // True for polygon fill, false/undefined for brush strokes
-  source?: 'user' | 'orogeny';  // Origin: user-drawn or auto-generated
-  birthTime?: number;   // Geological time (Ma) when created - for time-based visibility
-  deathTime?: number;   // Geological time (Ma) when destroyed/eroded - undefined means active indefinitely
-  ageingDuration?: number; // Override: Time to fade (if set)
-  maxAgeingOpacity?: number; // Override: Max transparency opacity target (0.0-1.0)
-  autoDelete?: boolean;      // Override: Whether to delete after fading
-  deleteDelay?: number;      // Override: How long (Ma) to wait after fading before deletion
-  boundaryId?: string;  // ID of the boundary that generated this stroke (for grouping)
-  boundaryType?: 'convergent' | 'divergent' | 'transform'; // Type of boundary (for grouping)
-  parentLandmassId?: string; // If set, stroke is associated with a landmass (for clipping/grouping)
-}
 
-// Landmass - artistic polygon layer that moves with plates but doesn't affect elevation
-export interface Landmass {
-  id: string;
-  polygon: Coordinate[];         // The landmass boundary shape
-  originalPolygon?: Coordinate[]; // Source of truth for rotation (at birthTime)
-  fillColor: string;             // Visual fill color
-  strokeColor?: string;          // Optional outline color
-  opacity: number;               // 0.0 to 1.0
-  name?: string;                 // User-defined name
-  description?: string;          // User-defined description
-  birthTime: number;             // Geological time when created
-  deathTime?: number;            // Geological time when destroyed (undefined = active)
-  zIndex?: number;               // Visual layering within plate (higher = on top)
-  lastEditedTime?: number;       // Geological time when last edited
-  linkedToPlateId?: string;      // Parent plate id this is linked to (inherits plate motion)
-  linkedToLandmassId?: string;   // DEPRECATED: Parent landmass id (now using linkedToPlateId instead)
-  relativeEulerPole?: { position: Coordinate; rate: number }; // Optional relative rotation on top of parent motion
-}
 
 export interface Feature {
   id: string;
@@ -130,8 +71,6 @@ export interface MotionKeyframe {
   eulerPole: EulerPole;            // Motion parameters for this segment
   snapshotPolygons: Polygon[];     // Plate geometry at keyframe time
   snapshotFeatures: Feature[];     // Features at keyframe time
-  snapshotPaintStrokes?: PaintStroke[]; // Paint strokes at keyframe time
-  snapshotLandmasses?: Landmass[]; // Landmasses at keyframe time
 }
 
 export interface PlateMotion {
@@ -361,7 +300,6 @@ export interface TectonicPlate {
 
   density?: number; // Optional custom density
   crustType?: CrustType; // Type of crust
-  crustSegments?: CrustSegment[]; // Segments for age tracking
   elevation?: number; // Base elevation
 
   // Current Visual State (Calculated from keyframes)
@@ -386,17 +324,7 @@ export interface TectonicPlate {
   motion: PlateMotion;
   events: PlateEvent[];
 
-  // Paint system
-  paintStrokes?: PaintStroke[];
 
-  // Landmass system - artistic layer for detailed geography
-  landmasses?: Landmass[];
-
-  // Elevation system
-  crustMesh?: CrustVertex[];
-  elevationSimulatedTime?: number; // Last time elevation was simulated (for timeline scrubbing)
-  meshStartingHeight?: number; // Initial elevation (m) when mesh is generated (overrides isostatic calculation)
-  crustalThickness?: number; // Optional override crustal thickness (km) - uses reference thickness if undefined
 
   visible: boolean;
   locked: boolean;
@@ -405,25 +333,19 @@ export interface TectonicPlate {
 export interface WorldState {
   plates: TectonicPlate[];
   currentTime: number;
+  timeMode: TimeMode;
   timeScale: number;
   isPlaying: boolean;
   selectedPlateId: string | null;
   selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
   selectedFeatureIds: string[];     // Support multiple selection
-  selectedPaintStrokeId: string | null;  // Selected paint stroke for properties panel (Deprecated: Use Ids array)
-  selectedPaintStrokeIds: string[];      // Multiple selection support for paint strokes
   selectedVertexPlateId?: string | null;  // Selected vertex for mesh editing
   selectedVertexId?: string | null;       // Selected vertex ID
-  selectedLandmassId?: string | null;     // Selected landmass for properties panel
-  selectedLandmassIds?: string[];         // Multiple selection support for landmasses
-  layerMode: LayerMode;                   // Current editing layer mode (plate or landmass)
   projection: ProjectionType;
-  timeMode: TimeMode;               // NEW: Display mode for time (positive or negative/ago)
   showGrid: boolean;
   showEulerPoles: boolean;
   showFeatures: boolean;
   showFutureFeatures: boolean;  // Show features outside current timeline (future/past)
-  showPaint: boolean;  // Show paint strokes
   globalOptions: {
     // Simulation
 
@@ -431,8 +353,6 @@ export interface WorldState {
     planetRadius: number; // km, default 6371 (Earth)
     customPlanetRadius?: number; // User-defined radius
     customRadiusEnabled?: boolean; // Whether custom radius is active
-    
-    erosionMultiplier?: number; // Global erosion rate multiplier (default 1.0)
 
     // Timeline
     timelineMaxTime?: number; // Max timeline duration (Ma)
@@ -446,50 +366,25 @@ export interface WorldState {
     // Granular Automation Options
     enableHotspots?: boolean;
     hotspotSpawnRate?: number; // Ma per feature (default 1.0)
-    enableOrogeny?: boolean; // DEPRECATED: Use elevation system instead
-    
-    // Orogeny Transparency Settings (DEPRECATED)
-    orogenyVelocityTransparency?: boolean; // Enable velocity-based transparency
-    orogenySpeedThresholdHigh?: number;    // Velocity (rad/Ma) for max opacity (Default ~15cm/yr)
-    orogenySpeedThresholdLow?: number;     // Velocity (rad/Ma) for min opacity
-    orogenyOpacityHigh?: number;           // Max opacity (0-1)
-    orogenyOpacityLow?: number;            // Min opacity (0-1)
 
     showHints?: boolean;
-    // Paint Ageing
-    paintAgeingEnabled?: boolean;        // Whether paint strokes fade over time
-    paintAgeingDuration?: number;        // Time (Ma) to reach max transparency
-    paintMaxWaitOpacity?: number;        // Minimum opacity (max transparency target) [0.0 - 1.0]
-    paintAutoDelete?: boolean;           // Whether to delete strokes after ageing
-    paintDeleteDelay?: number;           // Extra time (Ma) after fade before deletion
-    
-    // Elevation System
-    elevationViewMode?: ElevationViewMode;  // Visualization mode: off/overlay/absolute
-    enableElevationSimulation?: boolean;    // Enable physical elevation simulation
-    upliftRate?: number;                    // Uplift rate at collision zones (m/Ma)
-    erosionRate?: number;                   // Erosion transport rate (0-1 fraction)
-    meshResolution?: number;                // Mesh vertex spacing (km)
-    sedimentConsolidationRate?: number;     // Sediment → crust conversion rate (km/Ma)
-    sedimentConsolidationRatio?: number;    // Compaction ratio (sediment to crust, 0-1)
-    oceanLevel?: number;                    // Sea level elevation in meters (default 0)
-    
     // Event-Driven Guided Creation System
     enableGuidedCreation?: boolean;         // Show event popup when interactions detected
     repopupCommittedEvents?: boolean;       // Allow re-opening already committed events
     eventDetectionThreshold?: number;       // Area change % to trigger new event (default 20)
     showEventIcons?: boolean;               // Toggle event markers on map
-    
+
     // Visual Options
     showLinks?: boolean;                    // Show plate-to-plate and landmass-to-plate links
     gridOnTop?: boolean;                    // Render grid above plates instead of below
     plateOpacity?: number;                  // Plate transparency (0-1, default 1.0)
-    landmassOpacity?: number;               // Landmass transparency (0-1, default 0.9)
-    
+
     // Flowline Options
     showFlowlines?: boolean;                // Show flowline trails
-    flowlineFadeDuration?: number;          // Duration (Ma) over which flowlines fade to 100% transparency
-    flowlineAutoDelete?: boolean;           // Automatically delete flowlines after fading
+    flowlineFadeDuration?: number;           // Duration in Ma for flowlines to fade
+    flowlineAutoDelete?: boolean;            // Whether to delete flowlines after fading
   };
+
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
   mantlePlumes?: MantlePlume[]; // Active mantle plumes
@@ -563,28 +458,21 @@ export function createDefaultWorldState(): WorldState {
   return {
     plates: [],
     currentTime: 0,
+    timeMode: 'positive',
+    projection: 'orthographic', // Default to globe as requested
+    showGrid: true,
+    showEulerPoles: false,
+    showFeatures: true,
+    showFutureFeatures: false,  // Hide future/past features by default
     timeScale: 1,
     isPlaying: false,
     selectedPlateId: null,
     selectedFeatureId: null,
     selectedFeatureIds: [],
-    selectedPaintStrokeId: null,
-    selectedPaintStrokeIds: [],
-    selectedLandmassId: null,
-    selectedLandmassIds: [],
-    layerMode: 'plate',          // Default to plate mode
-    projection: 'orthographic', // Default to globe as requested
-    timeMode: 'positive',       // NEW: Default to positive time mode
-    showGrid: true,
-    showEulerPoles: false,
-    showFeatures: true,
-    showFutureFeatures: false,  // Hide future/past features by default
-    showPaint: true,             // Show paint by default
     globalOptions: {
       planetRadius: 6371, // Earth radius in km
       customPlanetRadius: 6371,
       customRadiusEnabled: false,
-      erosionMultiplier: 1.0, // Global multiplier for fading/death times (1.0 = normal, >1 = faster erosion)
       timelineMaxTime: 500,
       gridThickness: 1.0,
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
@@ -593,45 +481,22 @@ export function createDefaultWorldState(): WorldState {
       pauseOnFusionSuggestion: false,
       enableHotspots: false,
       hotspotSpawnRate: 1.0,
-      enableOrogeny: false, // DEPRECATED: Use elevation system
-      
-      // Default Orogeny Transparency
-      orogenyVelocityTransparency: false,
-      orogenySpeedThresholdHigh: 0.025, // ~15 cm/yr (0.00166 * 15)
-      orogenySpeedThresholdLow: 0.002,  // ~1.2 cm/yr
-      orogenyOpacityHigh: 1.0,
-      orogenyOpacityLow: 0.2,
 
       showHints: true,
-      paintAgeingEnabled: true,
-      paintAgeingDuration: 100, // Ma
-      paintMaxWaitOpacity: 0.05, // 95% transparency
-      paintAutoDelete: false, // Default: keep strokes, just fade
-      paintDeleteDelay: 50, // Ma after fade, if auto-delete enabled
-      
-      // Elevation System defaults
-      elevationViewMode: 'off',
-      enableElevationSimulation: false,
-      upliftRate: 1000,        // 1000 m/Ma = 1 km per million years
-      erosionRate: 0.001,      // 0.1% transport per Ma
-      meshResolution: 150,     // 150 km spacing between vertices
-      
-      // Event-Driven Guided Creation defaults
+
+      // Event-Driven Guided Creation System
       enableGuidedCreation: false,
       repopupCommittedEvents: false,
       eventDetectionThreshold: 20,  // 20% area change triggers new event
       showEventIcons: false,
-      
+
       // Visual defaults
       showLinks: true,          // Show links by default
       gridOnTop: false,         // Grid below plates by default
       plateOpacity: 1.0,        // Full opacity
-      landmassOpacity: 0.9,     // Slight transparency
-      
+
       // Flowline defaults
       showFlowlines: true,      // Show flowlines by default
-      flowlineFadeDuration: 100, // Fade over 100 Ma
-      flowlineAutoDelete: true  // Auto-delete after fading
     },
     // Event system defaults
     tectonicEvents: [],

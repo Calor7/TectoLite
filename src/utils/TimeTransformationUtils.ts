@@ -1,3 +1,5 @@
+import { TimeMode } from '../types';
+
 /**
  * TimeTransformationUtils
  * 
@@ -8,7 +10,7 @@
  * UI Display: Can show as positive (0 to maxTime) or negative (-maxTime to 0)
  */
 
-type TimeMode = 'positive' | 'negative';
+
 
 interface TimeTransformationContext {
     maxTime: number;
@@ -49,7 +51,7 @@ export function toInternalTime(displayTime: number, context: TimeTransformationC
 export function parseTimeInput(input: string): number | null {
     const trimmed = input.trim();
     if (!trimmed) return null;
-    
+
     const parsed = parseFloat(trimmed);
     return Number.isNaN(parsed) ? null : parsed;
 }

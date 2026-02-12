@@ -16,8 +16,6 @@ import {
     ProjectionType,
     MotionKeyframe,
     MantlePlume,
-    Landmass,
-    LayerMode,
     TectonicEvent,
     EventConsequence
 } from './types';
@@ -43,35 +41,30 @@ class TectoLiteApp {
     private simulation: SimulationEngine | null = null;
     private historyManager: HistoryManager = new HistoryManager();
     private activeToolText: string = "INFO LOADING...";
+    private timelineSystem: TimelineSystem | null = null;
     private fusionFirstPlateId: string | null = null; // Track first plate for fusion
     private fuseMotionClusterMode: boolean = false; // Fuse tool sub-option
     private activeLinkSourceId: string | null = null; // Track first plate for linking
-    private activeLinkSourceLandmassId: string | null = null; // Track first landmass for linking (landmass-to-landmass)
-    private activeLinkSourcePlateId: string | null = null; // Track parent plate of first landmass when linking
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
-    private timelineSystem: TimelineSystem | null = null;
     private lastFusionSuggestionKey: string | null = null;
     private fusionSuggestionCooldownUntil: number = 0; // Time until we stop blocking suggestions after reject
+    private timeMode: 'ma' | 'ago' = 'ma';
 
     // UI State for Explorer Sidebar
-    private explorerState: { 
-        sections: { [key: string]: boolean }, 
-        paintGroups: { [key: string]: boolean },
+    private explorerState: {
+        sections: { [key: string]: boolean },
         actionFilters: { [key: string]: boolean }
-    } = { 
-        sections: { plates: true, events: false, paint: false }, 
-        paintGroups: {},
-        actionFilters: {
-            created: true,
-            motion_change: true,
-            split: true,
-            fusion: true,
-            feature: true,
-            landmass_create: true,
-            landmass_edit: true,
-            plate_edit: true
-        }
-    };
+    } = {
+            sections: { plates: true, events: false },
+            actionFilters: {
+                created: true,
+                motion_change: true,
+                split: true,
+                fusion: true,
+                feature: true,
+                plate_edit: true
+            }
+        };
 
     constructor() {
         this.state = createDefaultAppState();
@@ -93,7 +86,7 @@ class TectoLiteApp {
             },
             (points) => this.handleDrawComplete(points),
             (pos, type) => this.handleFeaturePlace(pos, type),
-            (plateId, featureId, featureIds, plumeId, paintStrokeId, landmassId) => this.handleSelect(plateId, featureId, featureIds, plumeId, paintStrokeId, landmassId),
+            (plateId, featureId, featureIds, plumeId) => this.handleSelect(plateId, featureId, featureIds, plumeId),
             (points) => this.handleSplitApply(points),
             (active) => this.handleSplitPreviewChange(active),
             (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
@@ -105,10 +98,10 @@ class TectoLiteApp {
             },
             (count) => this.handleDrawUpdate(count),
             (rate) => {
-                 const speedCmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
-                 const speedDegInput = document.getElementById('speed-input-deg') as HTMLInputElement;
-                 if (speedDegInput) speedDegInput.value = rate.toFixed(2);
-                 if (speedCmInput) speedCmInput.value = this.convertDegMaToCmYr(rate).toFixed(2);
+                const speedCmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
+                const speedDegInput = document.getElementById('speed-input-deg') as HTMLInputElement;
+                if (speedDegInput) speedDegInput.value = rate.toFixed(2);
+                if (speedCmInput) speedCmInput.value = this.convertDegMaToCmYr(rate).toFixed(2);
             },
             (active) => {
                 const el = document.getElementById('edit-controls');
@@ -163,13 +156,13 @@ class TectoLiteApp {
             const cursorVal = isWidth ? e.clientX : e.clientY;
             const diff = inverse ? (startVal - cursorVal) : (cursorVal - startVal);
             newVal = startDim + diff;
-            
+
             // Constrain minimums
             const minSize = 50;
             if (newVal < minSize) newVal = minSize; // Allow user to make it smaller than CSS min-width if they really want, or respect it
-            
+
             target.style[dimension] = `${newVal}px`;
-            
+
             // If resizing changes canvas container size, we must resize canvas
             this.canvasManager?.resizeCanvas();
         };
@@ -193,14 +186,14 @@ class TectoLiteApp {
                 startDim = target.getBoundingClientRect().height;
                 document.body.style.cursor = 'row-resize';
             }
-            
+
             document.addEventListener('mousemove', onMouseMove);
             document.addEventListener('mouseup', onMouseUp);
         });
     }
 
     private getHTML(): string {
-                return `
+        return `
             <div class="app-container">
                 <header class="app-header">
                     <h1 class="app-title">
@@ -303,9 +296,7 @@ class TectoLiteApp {
                         <label class="view-dropdown-item">
                              <input type="checkbox" id="check-future-features"> Show Future/Past <span class="info-icon" data-tooltip="Show features not yet born">(i)</span>
                         </label>
-                        <label class="view-dropdown-item">
-                             <input type="checkbox" id="check-show-paint"> Show Paint <span class="info-icon" data-tooltip="Show brush strokes on plates">(i)</span>
-                        </label>
+
                                 <label class="view-dropdown-item">
                                     <input type="checkbox" id="check-show-event-icons" ${this.state.world.globalOptions.showEventIcons ? 'checked' : ''}> Show Event Icons <span class="info-icon" data-tooltip="Show icons for guided creation events">(i)</span>
                                 </label>
@@ -326,18 +317,12 @@ class TectoLiteApp {
                                  <span id="plate-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 35px;">${Math.round((this.state.world.globalOptions.plateOpacity ?? 1.0) * 100)}%</span>
                              </div>
                         </div>
-                        <div style="padding: 4px 8px; border-top: 1px dotted var(--border-default); margin-top: 4px;">
-                             <label style="font-size: 11px; white-space: nowrap; font-weight: 600;">Landmass Opacity <span class="info-icon" data-tooltip="Adjust transparency of landmasses">(i)</span></label>
-                             <div style="display: flex; align-items: center; gap: 4px;">
-                                 <input type="range" id="landmass-opacity-slider" min="0" max="100" value="${(this.state.world.globalOptions.landmassOpacity ?? 0.9) * 100}" style="flex: 1; height: 4px;">
-                                 <span id="landmass-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 35px;">${Math.round((this.state.world.globalOptions.landmassOpacity ?? 0.9) * 100)}%</span>
-                             </div>
-                        </div>
+
                     </div>
                 </div>
 
                 <div class="view-dropdown-container">
-                    <button id="btn-automation-menu" class="btn btn-secondary" title="Geological Automation" style="${(this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableElevationSimulation || this.state.world.globalOptions.enableGuidedCreation) ? 'background-color: var(--color-success); color: white;' : ''}">
+                    <button id="btn-automation-menu" class="btn btn-secondary" title="Geological Automation" style="${(this.state.world.globalOptions.enableHotspots || this.state.world.globalOptions.enableGuidedCreation) ? 'background-color: var(--color-success); color: white;' : ''}">
                         <span class="icon">⚙️</span> Automation
                     </button>
                     <div id="automation-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
@@ -351,72 +336,9 @@ class TectoLiteApp {
                                  <input type="checkbox" id="check-enable-hotspots" ${this.state.world.globalOptions.enableHotspots ? 'checked' : ''}> Hotspot Tracking <span class="info-icon" data-tooltip="Stationary plumes create volcanic trails on moving plates">(i)</span>
                             </label>
                             
-                            <!-- Elevation System -->
-                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);">
-                                <div style="font-weight: 600; color: var(--text-highlight); margin-bottom: 6px;">⛰️ Elevation System <span style="font-size: 9px; background: #2563eb; color: white; padding: 1px 4px; border-radius: 3px; margin-left: 4px;">NEW</span></div>
-                                
-                                <label class="view-dropdown-item">
-                                    <input type="checkbox" id="check-enable-elevation" ${this.state.world.globalOptions.enableElevationSimulation ? 'checked' : ''}> Physical Elevation <span class="info-icon" data-tooltip="Simulate realistic mountain building and erosion using physics">(i)</span>
-                                </label>
-                                
-                                <div id="elevation-options" style="margin-left: 20px; display: ${this.state.world.globalOptions.enableElevationSimulation ? 'block' : 'none'};">
-                                    <div style="margin: 8px 0;">
-                                        <label style="font-size: 10px; color: var(--text-secondary);">View Mode:</label>
-                                        <select id="elevation-view-mode" class="property-input" style="width: 100%; padding: 4px;">
-                                            <option value="off" ${this.state.world.globalOptions.elevationViewMode === 'off' ? 'selected' : ''}>Off</option>
-                                            <option value="overlay" ${this.state.world.globalOptions.elevationViewMode === 'overlay' ? 'selected' : ''}>Overlay</option>
-                                            <option value="absolute" ${this.state.world.globalOptions.elevationViewMode === 'absolute' ? 'selected' : ''}>Absolute</option>
-                                            <option value="landmass" ${this.state.world.globalOptions.elevationViewMode === 'landmass' ? 'selected' : ''}>Landmass Only</option>
-                                        </select>
-                                    </div>
-                                    
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
-                                        <span style="font-size: 10px; color: var(--text-secondary);">Mesh Resolution:</span>
-                                        <input type="number" id="elevation-resolution" class="property-input" value="${this.state.world.globalOptions.meshResolution || 150}" min="50" max="300" step="25" style="width: 70px;"> km
-                                    </div>
-                                    
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
-                                        <span style="font-size: 10px; color: var(--text-secondary);">Uplift Rate:</span>
-                                        <input type="number" id="elevation-uplift" class="property-input" value="${this.state.world.globalOptions.upliftRate || 1000}" min="100" max="5000" step="100" style="width: 70px;"> m/Ma
-                                    </div>
-                                    
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
-                                        <span style="font-size: 10px; color: var(--text-secondary);">Erosion Rate:</span>
-                                        <input type="number" id="elevation-erosion" class="property-input" value="${this.state.world.globalOptions.erosionRate || 0.001}" min="0.0001" max="0.01" step="0.0001" style="width: 70px;">
-                                    </div>
-                                    
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
-                                        <span style="font-size: 10px; color: var(--text-secondary);">Sediment Rate:</span>
-                                        <input type="number" id="elevation-sediment-rate" class="property-input" value="${this.state.world.globalOptions.sedimentConsolidationRate || 0.001}" min="0.0001" max="0.01" step="0.0001" style="width: 70px;"> km/Ma
-                                    </div>
-                                    
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin: 4px 0;">
-                                        <span style="font-size: 10px; color: var(--text-secondary);">Sediment Ratio:</span>
-                                        <input type="number" id="elevation-sediment-ratio" class="property-input" value="${this.state.world.globalOptions.sedimentConsolidationRatio || 0.25}" min="0.1" max="1" step="0.05" style="width: 70px;">
-                                    </div>
-                                    
-                                    <button id="btn-reset-elevation-defaults" class="btn" style="width: 100%; margin-top: 8px; padding: 4px; font-size: 10px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); color: var(--text-default); cursor: pointer; border-radius: 3px;">
-                                        ↻ Reset to Defaults
-                                    </button>
-                                    
-                                    <div style="margin-top: 8px; padding: 6px; background: rgba(37, 99, 235, 0.1); border-radius: 4px; font-size: 9px; color: var(--text-secondary);">
-                                        💡 Use the Mesh Edit tool (M) to inspect and manually sculpt terrain
-                                    </div>
-                                </div>
-                            </div>
+                            <!-- Elevation System REMOVED -->
                             
-                            <!-- Paint Ageing and Erosion -->
-                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);">
-                                <div style="font-weight: 600; color: var(--text-highlight); margin-bottom: 6px;">🌊 Paint Erosion & Ageing</div>
-                                
-                                <div style="padding: 4px 8px;">
-                                     <label style="font-size: 11px; white-space: nowrap; font-weight: 600;">Erosion Rate <span class="info-icon" data-tooltip="Global multiplier for paint fading/deletion (1.0 = Normal, 2.0 = 2x Fading Speed)">(i)</span></label>
-                                     <div style="display: flex; align-items: center; gap: 4px;">
-                                         <input type="number" id="erosion-multiplier" class="property-input" value="1.0" min="0.1" step="0.1" style="flex: 1;">
-                                         <button id="btn-reset-erosion" class="btn btn-secondary" style="font-size: 10px; padding: 2px 4px;" title="Reset to 1.0">Reset</button>
-                                     </div>
-                                </div>
-                            </div>
+                            <!-- Paint Erosion REMOVED -->
                             
                             <!-- Event-Driven Guided Creation -->
                             <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);">
@@ -477,28 +399,7 @@ class TectoLiteApp {
                             <input type="number" id="global-planet-radius" class="property-input" value="${this.state.world.globalOptions.customRadiusEnabled ? (this.state.world.globalOptions.customPlanetRadius || 6371) : 6371}" step="100" style="width: 90px;" disabled>
                         </div>
                         
-                        <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border-default);">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 6px 0;">
-                                <label style="font-size: 10px; color: var(--text-secondary);">Ocean Level Preset:</label>
-                                <select id="global-ocean-level-preset" class="property-input" style="width: 110px; font-size: 10px;">
-                                    <option value="0">Modern Earth (0m)</option>
-                                    <option value="6">Last Interglacial (+6m)</option>
-                                    <option value="25">Pliocene (+25m)</option>
-                                    <option value="65">Eocene Optimum (+65m)</option>
-                                    <option value="250">Cretaceous High (+250m)</option>
-                                    <option value="-60">Early Holocene (-60m)</option>
-                                    <option value="-120">Last Glacial Max (-120m)</option>
-                                    <option value="custom">Custom</option>
-                                </select>
-                            </div>
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin: 6px 0;">
-                                <label style="font-size: 10px; color: var(--text-secondary);">Custom Level:</label>
-                                <input type="number" id="global-ocean-level" class="property-input" value="${this.state.world.globalOptions.oceanLevel ?? 0}" min="-6000" max="6000" step="100" style="width: 80px;"> m
-                            </div>
-                            <div style="font-size: 9px; color: var(--text-secondary); padding: 0 8px; margin-top: 4px;">
-                                💧 Elevation mesh above this level = land (colored). Below = ocean (blue)
-                            </div>
-                        </div>
+
                     </div>
                 </div>
             </div>
@@ -551,15 +452,7 @@ class TectoLiteApp {
                 </label>
               </div>
               
-              <!-- Layer Mode Toggle -->
-              <div style="display: flex; gap: 4px; margin-bottom: 8px; padding: 4px; background: var(--bg-input); border-radius: 4px;">
-                <button id="layer-mode-plate" class="btn ${this.state.world.layerMode === 'plate' ? 'btn-primary' : 'btn-secondary'}" style="flex:1; font-size: 11px; padding: 4px 8px;" title="Edit plates and their geometry (Hotkey: Shift+L)">
-                  🌍 Plate
-                </button>
-                <button id="layer-mode-landmass" class="btn ${this.state.world.layerMode === 'landmass' ? 'btn-primary' : 'btn-secondary'}" style="flex:1; font-size: 11px; padding: 4px 8px;" title="Edit landmasses - artistic layer (Hotkey: Shift+L)">
-                  🏝️ Landmass
-                </button>
-              </div>
+              <!-- Layer Mode Removed -->
               
               <div style="display: flex; gap: 4px; flex-wrap: wrap;">
                   <button class="tool-btn active" data-tool="select" style="flex:1;">
@@ -611,11 +504,7 @@ class TectoLiteApp {
                     <span class="tool-label">Flowline</span>
                     <span class="info-icon" data-tooltip="Drop a flowline seed to trace motion (Hotkey: T)">(i)</span>
                   </button>
-                  <button class="tool-btn" data-tool="paint" style="flex:1;">
-                    <span class="tool-icon">🖌️</span>
-                    <span class="tool-label">Paint</span>
-                    <span class="info-icon" data-tooltip="Paint on plates (Hotkey: P)">(i)</span>
-                  </button>
+
                   <button class="tool-btn" data-tool="mesh_edit" style="flex:1;">
                     <span class="tool-icon">🔺</span>
                     <span class="tool-label">Mesh</span>
@@ -669,66 +558,7 @@ class TectoLiteApp {
                      </div>
                  </div>
 
-                 <div id="paint-controls" style="display: none; flex-direction:column; gap:6px; margin-top: 8px; padding: 8px; border: 1px solid var(--border-default); border-radius: 4px;">
-                     <div style="font-size: 12px; font-weight: bold; color: var(--text-primary);">🖌️ Paint Tool</div>
-                     
-                     <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-                         <button id="paint-mode-brush" class="btn" style="flex:1; background: #3b82f6; color: white; cursor: default;">Brush</button>
-                     </div>
-                     
-                     <div id="paint-brush-options" style="display: flex; flex-direction: column; gap: 6px;">
-                         <div style="display: flex; flex-direction: column; gap: 4px;">
-                             <label style="font-size: 11px; color: var(--text-secondary);">Brush Color:</label>
-                             <input type="color" id="paint-color" value="#ff0000" style="width: 100%; height: 32px; cursor: pointer; border: 1px solid var(--border-default); border-radius: 3px;">
-                         </div>
-                         
-                         <div style="display: flex; flex-direction: column; gap: 4px;">
-                             <label style="font-size: 11px; color: var(--text-secondary);">Brush Size: <span id="paint-size-value" style="font-weight: bold;">5</span>px</label>
-                             <input type="range" id="paint-size" min="1" max="50" value="5" style="width: 100%;">
-                         </div>
-                         
-                         <div style="display: flex; flex-direction: column; gap: 4px;">
-                             <label style="font-size: 11px; color: var(--text-secondary);">Opacity: <span id="paint-opacity-value" style="font-weight: bold;">80</span>%</label>
-                             <input type="range" id="paint-opacity" min="0" max="100" value="80" style="width: 100%;">
-                         </div>
-                     </div>
-                     
-                     <button id="paint-clear-plate" class="btn btn-secondary" style="margin-top: 4px;">Clear Plate Paint</button>
 
-                     <!-- Paint Ageing (Fading) Options -->
-                     <hr class="property-divider" style="margin: 8px 0;">
-                     <div style="display: flex; flex-direction: column; gap: 4px;">
-                         <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer;">
-                             <input type="checkbox" id="paint-ageing-enabled"> Ageing Lines (Fade)
-                         </label>
-                         
-                         <div id="paint-ageing-options" style="display: flex; flex-direction: column; gap: 6px; margin-left: 18px;">
-                             <div style="display: flex; flex-direction: column; gap: 2px;">
-                                 <label style="font-size: 10px; color: var(--text-secondary);">Fade Duration (Ma):</label>
-                                 <input type="number" id="paint-ageing-duration" class="property-input" min="1" step="10">
-                             </div>
-                             
-                             <div style="display: flex; flex-direction: column; gap: 2px;">
-                                 <label style="font-size: 10px; color: var(--text-secondary);">Max Transparency (%):</label>
-                                 <div style="display:flex; gap: 4px;">
-                                    <input type="number" id="paint-ageing-max-trans" class="property-input" min="0" max="100" step="5" style="flex:1;">
-                                    <button id="paint-ageing-reset" class="btn btn-secondary" style="padding: 2px 6px;" title="Reset to Defaults">↺</button>
-                                 </div>
-                             </div>
-
-                             <!-- Auto Delete Options -->
-                             <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
-                                <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer;">
-                                    <input type="checkbox" id="paint-auto-delete"> Auto-Delete
-                                </label>
-                                <div id="paint-auto-delete-options" style="display: none; flex-direction: column; gap: 2px; margin-left: 0px;">
-                                     <label style="font-size: 10px; color: var(--text-secondary);">Delete Delay (Ma):</label>
-                                     <input type="number" id="paint-delete-delay" class="property-input" min="0" step="10">
-                                </div>
-                             </div>
-                         </div>
-                     </div>
-                 </div>
 
                  <!-- Motion Mode Specifics -->
                  <div style="margin-top: 8px;">
@@ -930,16 +760,16 @@ class TectoLiteApp {
     }
 
 
-    public showModal(options: { 
-        title: string; 
-        content: string; 
+    public showModal(options: {
+        title: string;
+        content: string;
         width?: string;
-        buttons: { 
-            text: string; 
-            subtext?: string; 
+        buttons: {
+            text: string;
+            subtext?: string;
             isSecondary?: boolean;
-            onClick: () => void 
-        }[] 
+            onClick: () => void
+        }[]
     }): void {
         const appContainer = document.querySelector('.app-container');
         const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
@@ -948,7 +778,7 @@ class TectoLiteApp {
         if (isRetro) {
             // Strip HTML tags for clean alert text
             let cleanText = options.content.replace(/<[^>]*>/g, '');
-            
+
             // Check if this is a "Confirm" style (multiple choices) or "Alert" style (OK only)
             const mainAction = options.buttons.find(b => !b.isSecondary);
             const secondaryAction = options.buttons.find(b => b.isSecondary);
@@ -996,12 +826,12 @@ class TectoLiteApp {
           <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">${options.content}</div>
           <div id="modal-btn-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;"></div>
         `;
-        
+
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
 
         const btnContainer = dialog.querySelector('#modal-btn-container');
-        if(btnContainer) {
+        if (btnContainer) {
             // Check if we have a simple cancel button to group at bottom right
             const mainButtons = options.buttons.filter(b => !b.isSecondary);
             const secondaryButtons = options.buttons.filter(b => b.isSecondary);
@@ -1014,16 +844,16 @@ class TectoLiteApp {
                     background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;
                     cursor: pointer; color: var(--text-primary);
                 `;
-                
+
                 let inner = `<span style="font-weight: 600; font-size: 14px; color: var(--color-primary); margin-bottom: 2px;">${btn.text}</span>`;
-                if(btn.subtext) {
+                if (btn.subtext) {
                     inner += `<span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">${btn.subtext}</span>`;
                 }
                 b.innerHTML = inner;
 
                 b.addEventListener('mouseenter', () => b.style.borderColor = 'var(--color-primary)');
                 b.addEventListener('mouseleave', () => b.style.borderColor = 'var(--border-default)');
-                
+
                 b.addEventListener('click', () => {
                     document.body.removeChild(overlay);
                     btn.onClick();
@@ -1031,10 +861,10 @@ class TectoLiteApp {
                 btnContainer.appendChild(b);
             });
 
-            if(secondaryButtons.length > 0) {
+            if (secondaryButtons.length > 0) {
                 const row = document.createElement('div');
                 row.style.cssText = `display: flex; justify-content: flex-end; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);`;
-                
+
                 secondaryButtons.forEach(btn => {
                     const b = document.createElement('button');
                     b.className = 'btn btn-secondary';
@@ -1103,8 +933,8 @@ class TectoLiteApp {
         // Header with event type
         const eventEmoji = isCollision ? '💥' : '🔀';
         const eventLabel = isCollision ? 'COLLISION EVENT' : 'RIFT EVENT';
-        const collisionTypeLabel = event.interactionInfo.collisionType 
-            ? ` (${event.interactionInfo.collisionType.replace('-', ' → ')})` 
+        const collisionTypeLabel = event.interactionInfo.collisionType
+            ? ` (${event.interactionInfo.collisionType.replace('-', ' → ')})`
             : '';
 
         // Build plate info cards
@@ -1230,11 +1060,11 @@ class TectoLiteApp {
                 const checkbox = e.target as HTMLInputElement;
                 const item = checkbox.closest('.consequence-item') as HTMLElement;
                 const paramsContainer = item?.querySelector('.params-container') as HTMLElement;
-                
+
                 if (paramsContainer) {
                     paramsContainer.style.display = checkbox.checked ? 'block' : 'none';
                 }
-                
+
                 // Visual feedback
                 if (item) {
                     item.style.borderColor = checkbox.checked ? 'var(--accent-primary, #3b82f6)' : 'transparent';
@@ -1249,7 +1079,7 @@ class TectoLiteApp {
             const updatedConsequences = event.consequences.map(c => {
                 const checkbox = dialog.querySelector(`.consequence-checkbox[data-id="${c.id}"]`) as HTMLInputElement;
                 const selected = checkbox?.checked || false;
-                
+
                 // Collect parameter values
                 const params = { ...c.parameters };
                 const paramInputs = dialog.querySelectorAll(`.param-input[data-consequence-id="${c.id}"]`);
@@ -1275,16 +1105,16 @@ class TectoLiteApp {
             };
 
             this.state = eventSystem.commitEvent(this.state, event.id, updatedConsequences, timing);
-            
+
             document.body.removeChild(overlay);
             this.showToast(`Event committed with ${updatedConsequences.filter(c => c.selected).length} consequences`, 2000);
-            
+
             // Resume if was playing
             if (wasPlaying) {
                 this.simulation?.start();
                 this.state.world.isPlaying = true;
             }
-            
+
             this.updateTimeDisplay();
         });
 
@@ -1292,7 +1122,7 @@ class TectoLiteApp {
         dialog.querySelector('#event-skip-btn')?.addEventListener('click', () => {
             this.state = eventSystem.dismissEvent(this.state, event.id);
             document.body.removeChild(overlay);
-            
+
             // Resume if was playing
             if (wasPlaying) {
                 this.simulation?.start();
@@ -1310,7 +1140,7 @@ class TectoLiteApp {
 
         const events = this.state.world.tectonicEvents || [];
         const pendingEvent = events.find(e => e.id === pendingId);
-        
+
         if (pendingEvent) {
             this.showEventPopup(pendingEvent);
         }
@@ -1606,18 +1436,11 @@ class TectoLiteApp {
         });
 
         document.getElementById('check-show-hints')?.addEventListener('change', (e) => {
-            const checked = (e.target as HTMLInputElement).checked;
-            this.state.world.globalOptions.showHints = checked;
+            this.state.world.globalOptions.showHints = (e.target as HTMLInputElement).checked;
             this.updateHint(this.activeToolText);
         });
 
-        // Layer Mode Toggle (Plate vs Landmass)
-        document.getElementById('layer-mode-plate')?.addEventListener('click', () => {
-            this.setLayerMode('plate');
-        });
-        document.getElementById('layer-mode-landmass')?.addEventListener('click', () => {
-            this.setLayerMode('landmass');
-        });
+
 
         // UI Mode Toggle
         document.getElementById('btn-ui-mode')?.addEventListener('click', () => {
@@ -1705,10 +1528,7 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
-        document.getElementById('check-show-paint')?.addEventListener('change', (e) => {
-            this.state.world.showPaint = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
+
 
         document.getElementById('check-show-links')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.showLinks = (e.target as HTMLInputElement).checked;
@@ -1747,15 +1567,7 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
-        // Landmass Opacity Slider
-        const landmassOpacitySlider = document.getElementById('landmass-opacity-slider');
-        const landmassOpacityValue = document.getElementById('landmass-opacity-value');
-        landmassOpacitySlider?.addEventListener('input', (e) => {
-            const value = parseInt((e.target as HTMLInputElement).value);
-            this.state.world.globalOptions.landmassOpacity = value / 100;
-            if (landmassOpacityValue) landmassOpacityValue.textContent = `${value}%`;
-            this.canvasManager?.render();
-        });
+
 
         document.getElementById('check-fuse-motion-cluster')?.addEventListener('change', (e) => {
             this.fuseMotionClusterMode = (e.target as HTMLInputElement).checked;
@@ -1771,144 +1583,49 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
-        // Erosion Multiplier
-        document.getElementById('erosion-multiplier')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val > 0) {
-                 this.state.world.globalOptions.erosionMultiplier = val;
-                 this.canvasManager?.render();
-             }
-        });
 
-        document.getElementById('btn-reset-erosion')?.addEventListener('click', () => {
-             this.state.world.globalOptions.erosionMultiplier = 1.0;
-             const input = document.getElementById('erosion-multiplier') as HTMLInputElement;
-             if (input) input.value = "1.0";
-             this.canvasManager?.render();
-        });
 
 
         // Automation Settings
         const updateAutomationBtn = () => {
-             const btn = document.getElementById('btn-automation-menu');
-             if (btn) {
-                 const anyActive = this.state.world.globalOptions.enableHotspots ||
-                     this.state.world.globalOptions.enableElevationSimulation ||
-                     this.state.world.globalOptions.enableGuidedCreation ||
-                     this.state.world.globalOptions.pauseOnFusionSuggestion;
-                 if (anyActive) {
-                     btn.style.backgroundColor = 'var(--color-success)';
-                     btn.style.color = 'white';
-                 } else {
-                     btn.style.backgroundColor = '';
-                     btn.style.color = '';
-                 }
-             }
+            const btn = document.getElementById('btn-automation-menu');
+            if (btn) {
+                const anyActive = this.state.world.globalOptions.enableHotspots ||
+                    this.state.world.globalOptions.enableGuidedCreation ||
+                    this.state.world.globalOptions.pauseOnFusionSuggestion;
+                if (anyActive) {
+                    btn.style.backgroundColor = 'var(--color-success)';
+                    btn.style.color = 'white';
+                } else {
+                    btn.style.backgroundColor = '';
+                    btn.style.color = '';
+                }
+            }
         };
 
         document.getElementById('check-enable-hotspots')?.addEventListener('change', (e) => {
-             const checked = (e.target as HTMLInputElement).checked;
-             this.state.world.globalOptions.enableHotspots = checked;
-             
-             const subItem = (e.target as HTMLElement).closest('.view-dropdown-item')?.nextElementSibling as HTMLElement;
-             if (subItem && subItem.classList.contains('view-dropdown-subitem')) {
-                 subItem.style.display = checked ? 'flex' : 'none';
-             }
-             
-             updateAutomationBtn();
-             this.updateTimeDisplay();
+            const checked = (e.target as HTMLInputElement).checked;
+            this.state.world.globalOptions.enableHotspots = checked;
+
+            const subItem = (e.target as HTMLElement).closest('.view-dropdown-item')?.nextElementSibling as HTMLElement;
+            if (subItem && subItem.classList.contains('view-dropdown-subitem')) {
+                subItem.style.display = checked ? 'flex' : 'none';
+            }
+
+            updateAutomationBtn();
+            this.updateTimeDisplay();
         });
 
         document.getElementById('input-hotspot-rate')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val > 0) {
-                 this.state.world.globalOptions.hotspotSpawnRate = val;
-             }
-        });
-
-
-
-        // Elevation System controls
-        document.getElementById('check-enable-elevation')?.addEventListener('change', (e) => {
-            const enabled = (e.target as HTMLInputElement).checked;
-            this.state.world.globalOptions.enableElevationSimulation = enabled;
-            const optionsDiv = document.getElementById('elevation-options');
-            if (optionsDiv) optionsDiv.style.display = enabled ? 'block' : 'none';
-            updateAutomationBtn();
-            
-            if (!enabled) {
-                // Clear all meshes immediately when disabling to save memory
-                this.state.world.plates = this.state.world.plates.map(plate => ({
-                    ...plate,
-                    crustMesh: undefined,
-                    elevationSimulatedTime: undefined
-                }));
-                this.showToast('Elevation meshes cleared', 1500);
-            } else {
-                this.showToast('Elevation simulation enabled - meshes will generate as time advances', 2500);
-            }
-            
-            this.updateTimeDisplay();
-        });
-
-        document.getElementById('elevation-view-mode')?.addEventListener('change', (e) => {
-            const value = (e.target as HTMLSelectElement).value as any;
-            this.state.world.globalOptions.elevationViewMode = value;
-            this.updateTimeDisplay();
-        });
-
-        document.getElementById('elevation-resolution')?.addEventListener('change', (e) => {
-            const val = parseInt((e.target as HTMLInputElement).value);
-            if (!isNaN(val) && val >= 50 && val <= 300) {
-                this.state.world.globalOptions.meshResolution = val;
-            }
-        });
-
-        document.getElementById('elevation-uplift')?.addEventListener('change', (e) => {
             const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val) && val >= 0) {
-                this.state.world.globalOptions.upliftRate = val;
+            if (!isNaN(val) && val > 0) {
+                this.state.world.globalOptions.hotspotSpawnRate = val;
             }
         });
 
-        document.getElementById('elevation-erosion')?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val) && val >= 0) {
-                this.state.world.globalOptions.erosionRate = val;
-            }
-        });
 
-        document.getElementById('elevation-sediment-rate')?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val) && val >= 0) {
-                this.state.world.globalOptions.sedimentConsolidationRate = val;
-            }
-        });
 
-        document.getElementById('elevation-sediment-ratio')?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val) && val >= 0 && val <= 1) {
-                this.state.world.globalOptions.sedimentConsolidationRatio = val;
-            }
-        });
 
-        document.getElementById('btn-reset-elevation-defaults')?.addEventListener('click', () => {
-            // Reset to default values
-            this.state.world.globalOptions.meshResolution = 150;
-            this.state.world.globalOptions.upliftRate = 1000;
-            this.state.world.globalOptions.erosionRate = 0.001;
-            this.state.world.globalOptions.sedimentConsolidationRate = 0.001;
-            this.state.world.globalOptions.sedimentConsolidationRatio = 0.25;
-            
-            // Update UI inputs
-            (document.getElementById('elevation-resolution') as HTMLInputElement).value = '150';
-            (document.getElementById('elevation-uplift') as HTMLInputElement).value = '1000';
-            (document.getElementById('elevation-erosion') as HTMLInputElement).value = '0.001';
-            (document.getElementById('elevation-sediment-rate') as HTMLInputElement).value = '0.001';
-            (document.getElementById('elevation-sediment-ratio') as HTMLInputElement).value = '0.25';
-            
-            this.showToast('Elevation parameters reset to defaults', 1500);
-        });
 
         // Guided Creation System controls
         document.getElementById('check-enable-guided')?.addEventListener('change', (e) => {
@@ -1917,11 +1634,11 @@ class TectoLiteApp {
             const optionsDiv = document.getElementById('guided-options');
             if (optionsDiv) optionsDiv.style.display = enabled ? 'block' : 'none';
             updateAutomationBtn();
-            
+
             if (enabled) {
                 this.showToast('Guided Creation enabled - events will trigger popups', 2000);
             }
-            
+
             this.updateTimeDisplay();
         });
 
@@ -1942,7 +1659,7 @@ class TectoLiteApp {
                 this.showToast('No events to clear', 1500);
                 return;
             }
-            
+
             if (confirm(`Clear all ${count} tectonic events? This cannot be undone.`)) {
                 this.state.world.tectonicEvents = [];
                 this.state.world.pendingEventId = null;
@@ -1958,10 +1675,10 @@ class TectoLiteApp {
             // Let's use current center of projection
             const centerLat = this.state.viewport.rotate[1] * -1; // approx
             const centerLon = this.state.viewport.rotate[0] * -1;
-            
+
             // For proper "Screen Center" we need inverse projection, but let's just stick to (0,0) or some random spot for now if complex.
             // Actually, let's just use (0,0) or the inverse of rotation.
-            
+
             const newPlume = {
                 id: generateId(),
                 position: [centerLon, centerLat] as any, // Simple approx
@@ -1969,158 +1686,22 @@ class TectoLiteApp {
                 strength: 1,
                 active: true
             };
-            
+
             if (!this.state.world.mantlePlumes) {
                 this.state.world.mantlePlumes = [];
             }
             this.state.world.mantlePlumes.push(newPlume);
-            
+
             // alert(`Created Mantle Plume at [${centerLon.toFixed(1)}, ${centerLat.toFixed(1)}]. If you move a plate over this location, 'Hotspot Track' volcanoes will appear.`);
             this.canvasManager?.render();
         });
 
-        // Paint tool controls
-        document.getElementById('paint-color')?.addEventListener('change', (e) => {
-            this.canvasManager?.setPaintColor((e.target as HTMLInputElement).value);
-        });
 
-        document.getElementById('paint-size')?.addEventListener('input', (e) => {
-            const size = (e.target as HTMLInputElement).value;
-            document.getElementById('paint-size-value')!.textContent = size;
-            this.canvasManager?.setPaintSize(parseInt(size));
-        });
-
-        document.getElementById('paint-opacity')?.addEventListener('input', (e) => {
-            const opacity = (e.target as HTMLInputElement).value;
-            document.getElementById('paint-opacity-value')!.textContent = opacity;
-            this.canvasManager?.setPaintOpacity(parseInt(opacity) / 100);
-        });
-
-        // Orogeny/Paint Ageing - Shared controls from Automation Menu
-        const syncAgeingUI = () => {
-             const g = this.state.world.globalOptions;
-             const enabled = g.paintAgeingEnabled !== false;
-             const autoDelete = g.paintAutoDelete === true;
-
-             // Sync Paint Tool UI
-             const cbPaint = document.getElementById('paint-ageing-enabled') as HTMLInputElement;
-             if (cbPaint) cbPaint.checked = enabled;
-             const divPaint = document.getElementById('paint-ageing-options');
-             if (divPaint) {
-                 divPaint.style.opacity = enabled ? '1' : '0.5';
-                 divPaint.style.pointerEvents = enabled ? 'auto' : 'none';
-             }
-             const inPDur = document.getElementById('paint-ageing-duration') as HTMLInputElement;
-             if (inPDur) inPDur.value = (g.paintAgeingDuration || 100).toString();
-             const inPTrans = document.getElementById('paint-ageing-max-trans') as HTMLInputElement;
-             if (inPTrans) inPTrans.value = Math.round((1.0 - (g.paintMaxWaitOpacity ?? 0.05)) * 100).toString();
-
-             // Sync Paint Tool Auto-Delete
-             const cbPaintDel = document.getElementById('paint-auto-delete') as HTMLInputElement;
-             if (cbPaintDel) cbPaintDel.checked = autoDelete;
-             const divPaintDel = document.getElementById('paint-auto-delete-options');
-             if (divPaintDel) divPaintDel.style.display = autoDelete ? 'flex' : 'none';
-             const inPaintDelDelay = document.getElementById('paint-delete-delay') as HTMLInputElement;
-             if (inPaintDelDelay) inPaintDelDelay.value = (g.paintDeleteDelay || 50).toString();
-
-             this.canvasManager?.render();
-        };
-
-        // Paint Tool Listeners (Synchronized)
-        document.getElementById('paint-ageing-enabled')?.addEventListener('change', (e) => {
-             const enabled = (e.target as HTMLInputElement).checked;
-             if (!this.state.world.globalOptions) return;
-             this.state.world.globalOptions.paintAgeingEnabled = enabled;
-             syncAgeingUI();
-        });
-
-        document.getElementById('paint-ageing-duration')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val > 0) {
-                 this.state.world.globalOptions.paintAgeingDuration = val;
-                 syncAgeingUI();
-             }
-        });
-
-        document.getElementById('paint-ageing-max-trans')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val >= 0 && val <= 100) {
-                 this.state.world.globalOptions.paintMaxWaitOpacity = 1.0 - (val / 100.0);
-                 syncAgeingUI();
-             }
-        });
-
-        document.getElementById('paint-ageing-reset')?.addEventListener('click', () => {
-             this.state.world.globalOptions.paintAgeingDuration = 100;
-             this.state.world.globalOptions.paintMaxWaitOpacity = 0.05; // 95% trans
-             // Reset delete defaults too? User didn't specify, but safer to leave alone or reset to 50
-             this.state.world.globalOptions.paintAutoDelete = false;
-             this.state.world.globalOptions.paintDeleteDelay = 50;
-             syncAgeingUI();
-        });
-
-        document.getElementById('paint-auto-delete')?.addEventListener('change', (e) => {
-             const enabled = (e.target as HTMLInputElement).checked;
-             if (!this.state.world.globalOptions) return;
-             this.state.world.globalOptions.paintAutoDelete = enabled;
-             syncAgeingUI();
-        });
-
-        document.getElementById('paint-delete-delay')?.addEventListener('change', (e) => {
-             const val = parseFloat((e.target as HTMLInputElement).value);
-             if (!isNaN(val) && val >= 0) {
-                 this.state.world.globalOptions.paintDeleteDelay = val;
-                 syncAgeingUI();
-             }
-        });
-
-        document.getElementById('paint-mode-brush')?.addEventListener('click', () => {
-            this.canvasManager?.setPaintMode('brush');
-            document.getElementById('paint-brush-options')!.style.display = 'flex';
-            document.getElementById('paint-poly-options')!.style.display = 'none';
-            document.getElementById('paint-mode-brush')!.style.background = '#3b82f6';
-            document.getElementById('paint-mode-brush')!.style.color = 'white';
-            document.getElementById('paint-mode-poly')!.classList.add('btn-secondary');
-            document.getElementById('paint-mode-poly')!.style.background = '';
-            document.getElementById('paint-mode-poly')!.style.color = '';
-        });
-
-        document.getElementById('paint-mode-poly')?.addEventListener('click', () => {
-            this.canvasManager?.setPaintMode('poly_fill');
-            document.getElementById('paint-brush-options')!.style.display = 'none';
-            document.getElementById('paint-poly-options')!.style.display = 'flex';
-            document.getElementById('paint-mode-poly')!.style.background = '#3b82f6';
-            document.getElementById('paint-mode-poly')!.style.color = 'white';
-            document.getElementById('paint-mode-poly')!.classList.remove('btn-secondary');
-            document.getElementById('paint-mode-brush')!.style.background = '';
-            document.getElementById('paint-mode-brush')!.style.color = '';
-        });
-
-        document.getElementById('paint-poly-color')?.addEventListener('change', (e) => {
-            this.canvasManager?.setPolyFillColor((e.target as HTMLInputElement).value);
-        });
-
-        document.getElementById('paint-poly-opacity')?.addEventListener('input', (e) => {
-            const opacity = (e.target as HTMLInputElement).value;
-            document.getElementById('paint-poly-opacity-value')!.textContent = opacity;
-            this.canvasManager?.setPolyFillOpacity(parseInt(opacity) / 100);
-        });
-
-        document.getElementById('paint-clear-plate')?.addEventListener('click', () => {
-            if (this.state.world.selectedPlateId) {
-                const plate = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
-                if (plate) {
-                    plate.paintStrokes = [];
-                    this.pushState();
-                    this.canvasManager?.render();
-                }
-            }
-        });
 
         // Global Options
         // Advanced Toggles
         // Speed Preset Logic
-        
+
         // 1. Toggle between Real World and Custom
         document.getElementById('check-use-custom-presets')?.addEventListener('change', (e) => {
             const isCustom = (e.target as HTMLInputElement).checked;
@@ -2154,190 +1735,159 @@ class TectoLiteApp {
         });
 
         document.getElementById('btn-reposition-pole-north')?.addEventListener('click', () => {
-             const selectedPlateId = this.state.world.selectedPlateId;
-             if (!selectedPlateId) {
-                 alert("Please select a plate first.");
-                 return;
-             }
-             
-             const plate = this.state.world.plates.find(p => p.id === selectedPlateId);
-             if (plate) {
-                 this.pushState(); // Save state for undo
-                 // Move pole to North Pole [0, 90]
-                 const northPole: Coordinate = [0, 90];
-                 this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: northPole });
-                 this.updatePropertiesPanel();
-                 this.canvasManager?.render();
-             }
+            const selectedPlateId = this.state.world.selectedPlateId;
+            if (!selectedPlateId) {
+                alert("Please select a plate first.");
+                return;
+            }
+
+            const plate = this.state.world.plates.find(p => p.id === selectedPlateId);
+            if (plate) {
+                this.pushState(); // Save state for undo
+                // Move pole to North Pole [0, 90]
+                const northPole: Coordinate = [0, 90];
+                this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: northPole });
+                this.updatePropertiesPanel();
+                this.canvasManager?.render();
+            }
         });
 
         document.getElementById('btn-reposition-pole-south')?.addEventListener('click', () => {
-             const selectedPlateId = this.state.world.selectedPlateId;
-             if (!selectedPlateId) {
-                 alert("Please select a plate first.");
-                 return;
-             }
-             
-             const plate = this.state.world.plates.find(p => p.id === selectedPlateId);
-             if (plate) {
-                 this.pushState(); // Save state for undo
-                 // Move pole to South Pole [0, -90]
-                 const southPole: Coordinate = [0, -90];
-                 this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: southPole });
-                 this.updatePropertiesPanel();
-                 this.canvasManager?.render();
-             }
+            const selectedPlateId = this.state.world.selectedPlateId;
+            if (!selectedPlateId) {
+                alert("Please select a plate first.");
+                return;
+            }
+
+            const plate = this.state.world.plates.find(p => p.id === selectedPlateId);
+            if (plate) {
+                this.pushState(); // Save state for undo
+                // Move pole to South Pole [0, -90]
+                const southPole: Coordinate = [0, -90];
+                this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: southPole });
+                this.updatePropertiesPanel();
+                this.canvasManager?.render();
+            }
         });
 
         // Edit Tool Controls
         document.getElementById('btn-edit-apply')?.addEventListener('click', () => {
-             // Show Modal
-             const modal = document.getElementById('apply-edit-modal');
-             const lblTime = document.getElementById('lbl-current-time');
-             if (modal && lblTime) {
-                 lblTime.textContent = this.state.world.currentTime.toFixed(1);
-                 modal.style.display = 'flex';
-             }
+            // Show Modal
+            const modal = document.getElementById('apply-edit-modal');
+            const lblTime = document.getElementById('lbl-current-time');
+            if (modal && lblTime) {
+                lblTime.textContent = this.state.world.currentTime.toFixed(1);
+                modal.style.display = 'flex';
+            }
         });
 
         const executeApply = (mode: 'generation' | 'event') => {
-             if (!this.canvasManager) return;
-             
-             // Check for landmass edit first
-             const landmassResult = this.canvasManager.getLandmassEditResult();
-             if (landmassResult) {
-                 // Apply landmass edit - GeoJSON format: coordinates are [lon, lat] tuples
-                 // Remove the closing point (first = last in GeoJSON ring)
-                 const coords = landmassResult.polygon.coordinates[0];
-                 const newPolygon = coords.slice(0, -1) as Coordinate[];
-                 
-                 this.state.world.plates = this.state.world.plates.map(p => {
-                     if (p.id === landmassResult.plateId && p.landmasses) {
-                         return {
-                             ...p,
-                             landmasses: p.landmasses.map(l => {
-                                 if (l.id === landmassResult.landmassId) {
-                                         return { ...l, polygon: newPolygon, lastEditedTime: this.state.world.currentTime };
-                                 }
-                                 return l;
-                             })
-                         };
-                     }
-                     return p;
-                 });
-                 
-                 this.canvasManager.cancelLandmassEdit();
-                 document.getElementById('edit-controls')!.style.display = 'none';
-                 document.getElementById('apply-edit-modal')!.style.display = 'none';
-                 this.canvasManager.render();
-                 return;
-             }
-             
-             // Plate edit
-             const result = this.canvasManager.getEditResult();
-             if (result) {
-                 this.state.world.plates = this.state.world.plates.map(p => {
-                     if (p.id === result.plateId) {
-                         const copy = {...p};
-                         copy.polygons = result.polygons; // Update current visual state immediately
-                         
-                         if (mode === 'generation') {
-                             // --- REWRITE HISTORY STRATEGY ---
-                             const dt = this.state.world.currentTime - p.birthTime;
-                             const rate = p.motion.eulerPole.rate;
-                             const angleDeg = rate * dt;
-                             const angleRad = angleDeg * Math.PI / 180;
-                             
-                             const poleVec = latLonToVector(p.motion.eulerPole.position);
-                             const invAngleRad = -angleRad;
-                             
-                             const newInitialPolys = result.polygons.map((poly: any) => {
-                                 const newPoints = poly.points.map((pt: Coordinate) => {
-                                     const v = latLonToVector(pt);
-                                     const vRot = rotateVector(v, poleVec, invAngleRad);
-                                     return vectorToLatLon(vRot);
-                                 });
-                                 return { ...poly, points: newPoints };
-                             });
-                             
-                             copy.initialPolygons = newInitialPolys;
+            if (!this.canvasManager) return;
 
-                             // CRITICAL: Propagate this base shape change to ALL future keyframes
-                             // Keyframes store absolute snapshots. If we change the source truth, 
-                             // we must update the snapshots to reflect "it was always this shape".
-                             if (copy.motionKeyframes) {
-                                 copy.motionKeyframes = copy.motionKeyframes.map(kf => {
-                                     // Re-calculate snapshot for this keyframe time based on NEW initial polygons
-                                     // Rotate from birthTime to keyframe.time
-                                     const kfDt = kf.time - p.birthTime;
-                                     const kfAngle = (rate * kfDt) * Math.PI / 180;
-                                     // Rotate forward from new birth shape
-                                     const newSnapshot = newInitialPolys.map((poly: Polygon) => ({
-                                         ...poly,
-                                         points: poly.points.map(pt => {
-                                             const v = latLonToVector(pt);
-                                             const vRot = rotateVector(v, poleVec, kfAngle);
-                                             return vectorToLatLon(vRot);
-                                         })
-                                     }));
-                                     
-                                     return {
-                                         ...kf,
-                                         snapshotPolygons: newSnapshot
-                                         // Features might need update too but let's stick to geometry first
-                                     };
-                                 });
-                             }
-                         } else {
-                             // --- KEYFRAME EVENT STRATEGY ---
-                             // Create a new keyframe at current time with the CURRENT polygons as snapshot
-                             const newKeyframe: MotionKeyframe = {
-                                 time: this.state.world.currentTime,
-                                 label: 'Edit', // Explicit label for timeline
-                                 eulerPole: p.motion.eulerPole, // Inherit current pole
-                                 snapshotPolygons: JSON.parse(JSON.stringify(result.polygons)), // Snapshot current shape
-                                 snapshotFeatures: [...p.features] // Snapshot current features
-                             };
-                             
-                             if (!copy.motionKeyframes) copy.motionKeyframes = [];
-                             copy.motionKeyframes.push(newKeyframe);
-                             // Sort keyframes to be safe
-                             copy.motionKeyframes.sort((a,b) => a.time - b.time);
-                         }
-                         return copy;
-                     }
-                     return p;
-                 });
-                 
-                 this.canvasManager.cancelEdit();
-                 document.getElementById('edit-controls')!.style.display = 'none';
-                 document.getElementById('apply-edit-modal')!.style.display = 'none';
+            // Plate edit
+            const result = this.canvasManager.getEditResult();
+            if (result) {
+                this.state.world.plates = this.state.world.plates.map(p => {
+                    if (p.id === result.plateId) {
+                        const copy = { ...p };
+                        copy.polygons = result.polygons; // Update current visual state immediately
 
-                 // FORCE SIMULATION UPDATE to reflect changes immediately
-                 this.simulation?.setTime(this.state.world.currentTime);
-                 
-                 this.canvasManager.render();
-             }
+                        if (mode === 'generation') {
+                            // --- REWRITE HISTORY STRATEGY ---
+                            const dt = this.state.world.currentTime - p.birthTime;
+                            const rate = p.motion.eulerPole.rate;
+                            const angleDeg = rate * dt;
+                            const angleRad = angleDeg * Math.PI / 180;
+
+                            const poleVec = latLonToVector(p.motion.eulerPole.position);
+                            const invAngleRad = -angleRad;
+
+                            const newInitialPolys = result.polygons.map((poly: any) => {
+                                const newPoints = poly.points.map((pt: Coordinate) => {
+                                    const v = latLonToVector(pt);
+                                    const vRot = rotateVector(v, poleVec, invAngleRad);
+                                    return vectorToLatLon(vRot);
+                                });
+                                return { ...poly, points: newPoints };
+                            });
+
+                            copy.initialPolygons = newInitialPolys;
+
+                            // CRITICAL: Propagate this base shape change to ALL future keyframes
+                            // Keyframes store absolute snapshots. If we change the source truth, 
+                            // we must update the snapshots to reflect "it was always this shape".
+                            if (copy.motionKeyframes) {
+                                copy.motionKeyframes = copy.motionKeyframes.map(kf => {
+                                    // Re-calculate snapshot for this keyframe time based on NEW initial polygons
+                                    // Rotate from birthTime to keyframe.time
+                                    const kfDt = kf.time - p.birthTime;
+                                    const kfAngle = (rate * kfDt) * Math.PI / 180;
+                                    // Rotate forward from new birth shape
+                                    const newSnapshot = newInitialPolys.map((poly: Polygon) => ({
+                                        ...poly,
+                                        points: poly.points.map(pt => {
+                                            const v = latLonToVector(pt);
+                                            const vRot = rotateVector(v, poleVec, kfAngle);
+                                            return vectorToLatLon(vRot);
+                                        })
+                                    }));
+
+                                    return {
+                                        ...kf,
+                                        snapshotPolygons: newSnapshot
+                                        // Features might need update too but let's stick to geometry first
+                                    };
+                                });
+                            }
+                        } else {
+                            // --- KEYFRAME EVENT STRATEGY ---
+                            // Create a new keyframe at current time with the CURRENT polygons as snapshot
+                            const newKeyframe: MotionKeyframe = {
+                                time: this.state.world.currentTime,
+                                label: 'Edit', // Explicit label for timeline
+                                eulerPole: p.motion.eulerPole, // Inherit current pole
+                                snapshotPolygons: JSON.parse(JSON.stringify(result.polygons)), // Snapshot current shape
+                                snapshotFeatures: [...p.features] // Snapshot current features
+                            };
+
+                            if (!copy.motionKeyframes) copy.motionKeyframes = [];
+                            copy.motionKeyframes.push(newKeyframe);
+                            // Sort keyframes to be safe
+                            copy.motionKeyframes.sort((a, b) => a.time - b.time);
+                        }
+                        return copy;
+                    }
+                    return p;
+                });
+
+                this.canvasManager.cancelEdit();
+                document.getElementById('edit-controls')!.style.display = 'none';
+                document.getElementById('apply-edit-modal')!.style.display = 'none';
+
+                // FORCE SIMULATION UPDATE to reflect changes immediately
+                this.simulation?.setTime(this.state.world.currentTime);
+
+                this.canvasManager.render();
+            }
         };
 
         document.getElementById('btn-apply-generation')?.addEventListener('click', () => executeApply('generation'));
         document.getElementById('btn-apply-event')?.addEventListener('click', () => executeApply('event'));
         document.getElementById('btn-apply-cancel')?.addEventListener('click', () => {
-             document.getElementById('apply-edit-modal')!.style.display = 'none';
+            document.getElementById('apply-edit-modal')!.style.display = 'none';
         });
 
         document.getElementById('btn-edit-cancel')?.addEventListener('click', () => {
-             if (this.canvasManager) {
-                 this.canvasManager.cancelEdit();
-                 this.canvasManager.cancelLandmassEdit();
-             }
-             document.getElementById('edit-controls')!.style.display = 'none';
+            if (this.canvasManager) {
+                this.canvasManager.cancelEdit();
+            }
+            document.getElementById('edit-controls')!.style.display = 'none';
         });
 
         // 2. Event Delegation for Presets
         document.addEventListener('click', (e) => {
             const target = e.target as HTMLElement;
-            
+
             // Real World Apply
             if (target.classList.contains('speed-preset-apply')) {
                 const idx = parseInt(target.getAttribute('data-idx') || '0');
@@ -2348,7 +1898,7 @@ class TectoLiteApp {
                     this.applySpeedToSelected(rateDegMa);
                 }
             }
-            
+
             // Custom Preset Apply
             if (target.classList.contains('custom-preset-apply')) {
                 const idx = parseInt(target.getAttribute('data-idx') || '0');
@@ -2357,7 +1907,7 @@ class TectoLiteApp {
                 const rateDegMa = this.convertCmYrToDegMa(speedCmYr);
                 this.applySpeedToSelected(rateDegMa);
             }
-            
+
             // Show info dialog
             // Handle clicking on the name itself which now has the class
             if (target.closest('.speed-preset-info')) {
@@ -2368,20 +1918,20 @@ class TectoLiteApp {
                 }
             }
         });
-        
+
         // 3. Custom Preset Input Changes
         document.addEventListener('change', (e) => {
-             const target = e.target as HTMLInputElement;
-             if (target.classList.contains('custom-preset-input')) {
-                 const idx = parseInt(target.getAttribute('data-idx') || '0');
-                 const val = parseFloat(target.value);
-                 if (!isNaN(val) && val >= 0) {
-                     const current = [...(this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0])];
-                     current[idx] = val;
-                     this.state.world.globalOptions.ratePresets = current;
-                     // We don't need to full updateUI here, just state update so it exports
-                 }
-             }
+            const target = e.target as HTMLInputElement;
+            if (target.classList.contains('custom-preset-input')) {
+                const idx = parseInt(target.getAttribute('data-idx') || '0');
+                const val = parseFloat(target.value);
+                if (!isNaN(val) && val >= 0) {
+                    const current = [...(this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0])];
+                    current[idx] = val;
+                    this.state.world.globalOptions.ratePresets = current;
+                    // We don't need to full updateUI here, just state update so it exports
+                }
+            }
         });
 
 
@@ -2528,32 +2078,9 @@ class TectoLiteApp {
         });
 
         // Ocean Level
-        const oceanLevelInput = document.getElementById('global-ocean-level') as HTMLInputElement;
-        const oceanLevelPreset = document.getElementById('global-ocean-level-preset') as HTMLSelectElement;
-        
-        oceanLevelPreset?.addEventListener('change', (e) => {
-            const val = (e.target as HTMLSelectElement).value;
-            if (val !== 'custom') {
-                const numVal = parseFloat(val);
-                this.state.world.globalOptions.oceanLevel = numVal;
-                if (oceanLevelInput) {
-                    oceanLevelInput.value = numVal.toString();
-                }
-                this.updateUI();
-            }
-        });
-        
-        oceanLevelInput?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(val)) {
-                this.state.world.globalOptions.oceanLevel = val;
-                // Set preset to 'custom' when manually editing
-                if (oceanLevelPreset) {
-                    oceanLevelPreset.value = 'custom';
-                }
-                this.updateUI();
-            }
-        });
+
+
+
 
         // Hotkeys
         document.addEventListener('keydown', (e) => {
@@ -2575,13 +2102,7 @@ class TectoLiteApp {
                 return;
             }
 
-            // Layer Mode Toggle (Shift+L)
-            if (e.shiftKey && e.key.toLowerCase() === 'l') {
-                e.preventDefault();
-                const newMode = this.state.world.layerMode === 'plate' ? 'landmass' : 'plate';
-                this.setLayerMode(newMode);
-                return;
-            }
+
 
             switch (e.key.toLowerCase()) {
                 case 'v': this.setActiveTool('select'); break;
@@ -2593,14 +2114,18 @@ class TectoLiteApp {
                 case 'g': this.setActiveTool('fuse'); break;
                 case 'l': this.setActiveTool('link'); break;
                 case 't': this.setActiveTool('flowline'); break;
-                case 'p': this.setActiveTool('paint'); break;
-                case 'm': this.setActiveTool('mesh_edit'); break;
+
                 case 'enter':
-                    // Apply poly fill if in poly fill mode
-                    this.canvasManager?.applyPaintPolyFill();
+                    if (this.state.activeTool === 'draw') {
+                        this.canvasManager?.applyDraw();
+                    } else if (this.state.activeTool === 'split') {
+                        this.canvasManager?.applySplit();
+                    }
                     break;
                 case 'escape':
                     this.canvasManager?.cancelDrawing();
+                    this.canvasManager?.cancelSplit();
+                    this.canvasManager?.cancelMotion();
                     break;
                 case ' ':
                     e.preventDefault();
@@ -2611,20 +2136,7 @@ class TectoLiteApp {
                 case 'backspace':
                     this.deleteSelected();
                     break;
-                case '+':
-                case '=':
-                    // Raise selected vertex elevation
-                    if (this.state.activeTool === 'mesh_edit' && this.state.world.selectedVertexId) {
-                        this.adjustSelectedVertexElevation(500);
-                    }
-                    break;
-                case '-':
-                case '_':
-                    // Lower selected vertex elevation
-                    if (this.state.activeTool === 'mesh_edit' && this.state.world.selectedVertexId) {
-                        this.adjustSelectedVertexElevation(-500);
-                    }
-                    break;
+
             }
         });
 
@@ -2641,16 +2153,10 @@ class TectoLiteApp {
 
         document.getElementById('time-slider')?.addEventListener('input', (e) => {
             const newTime = parseFloat((e.target as HTMLInputElement).value);
-            const currentTime = this.state.world.currentTime;
-            
-            // Show feedback when scrubbing backward with elevation enabled
-            if (this.state.world.globalOptions.enableElevationSimulation && newTime < currentTime) {
-                const hasAnyMesh = this.state.world.plates.some(p => p.crustMesh && p.crustMesh.length > 0);
-                if (hasAnyMesh) {
-                    this.showToast('Resetting elevation meshes...', 1500);
-                }
-            }
-            
+
+
+
+
             this.simulation?.setTime(newTime);
             this.updateTimeDisplay();
         });
@@ -2680,7 +2186,7 @@ class TectoLiteApp {
             const input = document.getElementById('time-input-field') as HTMLInputElement;
             if (modal && input) {
                 modal.style.display = 'flex';
-                
+
                 // Pre-populate with current display time
                 const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
                 const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
@@ -2721,9 +2227,7 @@ class TectoLiteApp {
                 const options = await showUnifiedExportDialog({
                     projection: this.state.world.projection,
                     showGrid: this.state.world.showGrid,
-                    includePaint: this.state.world.showPaint,
-                    includeFeatures: this.state.world.showFeatures,
-                    includeLandmasses: true
+                    includeFeatures: this.state.world.showFeatures
                 });
                 if (!options) return;
 
@@ -2734,9 +2238,7 @@ class TectoLiteApp {
                         waterMode: 'color' as const,
                         plateColorMode: 'native' as const,
                         showGrid: options.showGrid ?? this.state.world.showGrid,
-                        includePaint: options.includePaint ?? this.state.world.showPaint,
-                        includeFeatures: options.includeFeatures ?? this.state.world.showFeatures,
-                        includeLandmasses: options.includeLandmasses ?? true
+                        includeFeatures: options.includeFeatures ?? this.state.world.showFeatures
                     };
                     exportToPNG(this.state, pngOptions, options.width || 1920, options.height || 1080);
                 } else if (options.format === 'heightmap') {
@@ -3068,7 +2570,7 @@ class TectoLiteApp {
         const presets = this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0];
         // Ensure always 4 slots
         const slots = Array(4).fill(0).map((_, i) => presets[i] ?? (i + 1));
-        
+
         return slots.map((val, idx) => `
             <div style="display:flex; align-items:center; gap:6px;">
                  <label style="font-size:10px; color:#a6adc8; width:15px;">#${idx + 1}</label>
@@ -3082,7 +2584,7 @@ class TectoLiteApp {
     }
 
     private applySpeedToSelected(rate: number): void {
-        const plate = this.state.world.selectedPlateId 
+        const plate = this.state.world.selectedPlateId
             ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
             : null;
         if (plate) {
@@ -3115,7 +2617,7 @@ class TectoLiteApp {
         const degInput = document.getElementById('speed-input-deg') as HTMLInputElement;
         if (!cmInput || !degInput) return;
 
-        const plate = this.state.world.selectedPlateId 
+        const plate = this.state.world.selectedPlateId
             ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
             : null;
 
@@ -3177,11 +2679,11 @@ class TectoLiteApp {
         document.body.appendChild(overlay);
 
         const cleanup = () => document.body.removeChild(overlay);
-        
+
         dialog.querySelector('#preset-info-close')?.addEventListener('click', cleanup);
         dialog.querySelector('#preset-info-apply')?.addEventListener('click', () => {
             const rateDegMa = this.convertCmYrToDegMa(preset.speed);
-            const plate = this.state.world.selectedPlateId 
+            const plate = this.state.world.selectedPlateId
                 ? this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId)
                 : null;
             if (plate) {
@@ -3216,7 +2718,6 @@ class TectoLiteApp {
         (document.getElementById('check-euler-poles') as HTMLInputElement).checked = w.showEulerPoles;
         (document.getElementById('check-features') as HTMLInputElement).checked = w.showFeatures;
         (document.getElementById('check-future-features') as HTMLInputElement).checked = w.showFutureFeatures;
-        (document.getElementById('check-show-paint') as HTMLInputElement).checked = w.showPaint;
         const checkShowEventIcons = document.getElementById('check-show-event-icons') as HTMLInputElement | null;
         if (checkShowEventIcons) checkShowEventIcons.checked = w.globalOptions.showEventIcons === true;
 
@@ -3263,27 +2764,7 @@ class TectoLiteApp {
         if (projSelect) projSelect.value = w.projection;
 
         // Sync Paint Ageing Options
-        const paintAgeingEnabled = g.paintAgeingEnabled !== false; // Default true
-        const cbAgeing = document.getElementById('paint-ageing-enabled') as HTMLInputElement;
-        if (cbAgeing) {
-            cbAgeing.checked = paintAgeingEnabled;
-            const optionsDiv = document.getElementById('paint-ageing-options');
-            if (optionsDiv) optionsDiv.style.opacity = paintAgeingEnabled ? '1' : '0.5';
-            if (optionsDiv) optionsDiv.style.pointerEvents = paintAgeingEnabled ? 'auto' : 'none';
-        }
 
-        const inputAgeingDuration = document.getElementById('paint-ageing-duration') as HTMLInputElement;
-        if (inputAgeingDuration) {
-             inputAgeingDuration.value = (g.paintAgeingDuration || 100).toString();
-        }
-
-        const inputAgeingTrans = document.getElementById('paint-ageing-max-trans') as HTMLInputElement;
-        if (inputAgeingTrans) {
-             // Convert opacity to transparency %
-             const opacity = g.paintMaxWaitOpacity !== undefined ? g.paintMaxWaitOpacity : 0.05;
-             const trans = Math.round((1.0 - opacity) * 100);
-             inputAgeingTrans.value = trans.toString();
-        }
     }
 
     private updateUI(): void {
@@ -3319,7 +2800,6 @@ class TectoLiteApp {
             editControls.style.display = 'none';
             if (this.canvasManager) {
                 this.canvasManager.cancelEdit();
-                this.canvasManager.cancelLandmassEdit();
             }
         }
 
@@ -3361,62 +2841,13 @@ class TectoLiteApp {
             case 'flowline':
                 hintText = "Click on a plate to place a flowline seed.";
                 break;
-            case 'mesh_edit':
-                hintText = "Click on a vertex to select and inspect it. Use +/- keys to adjust elevation by 500m. Edit details in properties panel.";
-                break;
+
         }
 
         this.updateHint(hintText);
     }
 
-    private setLayerMode(mode: LayerMode): void {
-        this.state.world.layerMode = mode;
-        this.updateLayerModeUI();
-        
-        // Update hint based on mode
-        const tool = this.state.activeTool;
-        let hintText = "";
-        
-        if (mode === 'landmass') {
-            switch (tool) {
-                case 'draw':
-                    hintText = "🏝️ LANDMASS MODE: Click to draw a new landmass on the selected plate.";
-                    break;
-                case 'edit':
-                    hintText = "🏝️ LANDMASS MODE: Drag landmass vertices to reshape coastlines.";
-                    break;
-                case 'paint':
-                    hintText = "🏝️ LANDMASS MODE: Paint will be clipped to selected landmass.";
-                    break;
-                case 'select':
-                    hintText = "🏝️ LANDMASS MODE: Click to select a landmass polygon.";
-                    break;
-                default:
-                    hintText = `🏝️ LANDMASS MODE active. Tool: ${tool}`;
-            }
-        } else {
-            // Re-trigger standard hint
-            this.setActiveTool(tool);
-            return;
-        }
-        
-        this.updateHint(hintText);
-    }
 
-    private updateLayerModeUI(): void {
-        const plateBtn = document.getElementById('layer-mode-plate');
-        const landmassBtn = document.getElementById('layer-mode-landmass');
-        
-        if (plateBtn && landmassBtn) {
-            if (this.state.world.layerMode === 'plate') {
-                plateBtn.className = 'btn btn-primary';
-                landmassBtn.className = 'btn btn-secondary';
-            } else {
-                plateBtn.className = 'btn btn-secondary';
-                landmassBtn.className = 'btn btn-primary';
-            }
-        }
-    }
 
     private setActiveFeature(feature: FeatureType): void {
         this.state.activeFeatureType = feature;
@@ -3456,13 +2887,9 @@ class TectoLiteApp {
 
     private handleDrawComplete(points: Coordinate[]): void {
         if (points.length < 3) return;
-        
-        // Check if we're in Landmass mode
-        if (this.state.world.layerMode === 'landmass') {
-            this.handleLandmassDrawComplete(points);
-            return;
-        }
-        
+
+
+
         this.pushState(); // Save state for undo
 
         // Create Polygon
@@ -3516,53 +2943,7 @@ class TectoLiteApp {
         this.setActiveTool('select');
     }
 
-    private handleLandmassDrawComplete(points: Coordinate[]): void {
-        // Landmass mode: Add landmass to selected plate
-        const plateId = this.state.world.selectedPlateId;
-        
-        if (!plateId) {
-            alert("Please select a plate first to add a landmass to it.");
-            return;
-        }
-        
-        const plate = this.state.world.plates.find(p => p.id === plateId);
-        if (!plate) return;
-        
-        this.pushState();
-        
-        const currentTime = this.state.world.currentTime;
-        
-        // Create new landmass - linked to plate by default
-        const landmass: Landmass = {
-            id: generateId(),
-            polygon: points,
-            originalPolygon: points,
-            fillColor: '#8B4513', // Default brown (earth/land color)
-            opacity: 0.9,
-            name: `Landmass ${(plate.landmasses?.length || 0) + 1}`,
-            birthTime: currentTime,
-            linkedToPlateId: plateId // Link to parent plate by default
-        };
-        
-        // Update plate with new landmass
-        this.state = {
-            ...this.state,
-            world: {
-                ...this.state.world,
-                plates: this.state.world.plates.map(p =>
-                    p.id === plateId
-                        ? { ...p, landmasses: [...(p.landmasses || []), landmass] }
-                        : p
-                ),
-                selectedLandmassId: landmass.id,
-                selectedLandmassIds: [landmass.id]
-            }
-        };
-        
-        this.updateUI();
-        this.canvasManager?.render();
-        this.setActiveTool('select');
-    }
+
 
     private handleFeaturePlace(position: Coordinate, type: FeatureType): void {
         // Special case: Hotspots are effectively Mantle Plumes (Global Features)
@@ -3576,7 +2957,7 @@ class TectoLiteApp {
                 active: true,
                 spawnRate: this.state.world.globalOptions.hotspotSpawnRate || 1.0
             };
-            
+
             // Add to World State
             this.pushState();
             this.state = {
@@ -3588,14 +2969,14 @@ class TectoLiteApp {
                     selectedPlateId: null
                 }
             };
-            
+
             // Note: We need a way to SELECT the plume.
             // Currently selection only supports "selectedPlateId" and "selectedFeatureId".
             // We should add "selectedPlumeId" to state or handle it via UI.
             // For now, let's just render.
             this.canvasManager?.render();
             // alert(`Created Mantle Plume at [${position[0].toFixed(1)}, ${position[1].toFixed(1)}].`);
-            
+
             return;
         }
 
@@ -3603,8 +2984,8 @@ class TectoLiteApp {
         const plateId = this.state.world.selectedPlateId;
 
         if (!plateId) {
-             alert("For Plate features (Mountains, Volcanoes), please select a plate first.");
-             return;
+            alert("For Plate features (Mountains, Volcanoes), please select a plate first.");
+            return;
         }
         this.pushState(); // Save state for undo
 
@@ -3636,13 +3017,11 @@ class TectoLiteApp {
         this.canvasManager?.render();
     }
 
-    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null, paintStrokeId: string | null = null, landmassId: string | null = null): void {
+    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null): void {
         // Reset fusion/link state if switching away
         if (this.state.activeTool !== 'fuse') this.fusionFirstPlateId = null;
         if (this.state.activeTool !== 'link') {
             this.activeLinkSourceId = null;
-            this.activeLinkSourceLandmassId = null;
-            this.activeLinkSourcePlateId = null;
         }
 
         // Tool Logic Interception
@@ -3652,74 +3031,30 @@ class TectoLiteApp {
         }
 
         if (this.state.activeTool === 'link') {
-            if (landmassId) {
-                this.handleLandmassLinkTool(landmassId, plateId!);
-                return;
-            }
             if (plateId) this.handleLinkTool(plateId);
             return;
         }
 
         // Selection Logic
         if (this.state.activeTool === 'select') {
-             if (landmassId) {
-                 const plate = this.state.world.plates.find(p => p.id === plateId);
-                 const landmass = plate?.landmasses?.find(l => l.id === landmassId);
-                 this.updateHint(`Selected Landmass: ${landmass?.name || 'Unnamed'}.`);
-             } else if (paintStrokeId) {
-                 this.updateHint("Selected Paint Stroke.");
-             } else if (plateId) {
-                 const plate = this.state.world.plates.find(p => p.id === plateId);
-                 this.updateHint(`Selected ${plate?.name || 'Plate'}.`);
-             } else if (plumeId) {
-                 this.updateHint("Selected Mantle Plume.");
-             } else {
-                 this.updateHint(null);
-             }
+            if (plateId) {
+                const plate = this.state.world.plates.find(p => p.id === plateId);
+                this.updateHint(`Selected ${plate?.name || 'Plate'}.`);
+            } else if (plumeId) {
+                this.updateHint("Selected Mantle Plume.");
+            } else {
+                this.updateHint(null);
+            }
         }
-        
-        // Handle landmass selection
-        if (landmassId) {
-            this.state.world.selectedLandmassId = landmassId;
-            this.state.world.selectedLandmassIds = [landmassId];
-            this.state.world.selectedPlateId = plateId; // Keep plate context
-            this.state.world.selectedFeatureId = null;
-            this.state.world.selectedFeatureIds = [];
-            this.state.world.selectedPaintStrokeId = null;
-            this.state.world.selectedPaintStrokeIds = [];
-        } else if (paintStrokeId) {
-            this.state.world.selectedPaintStrokeId = paintStrokeId;
-            this.state.world.selectedPaintStrokeIds = [paintStrokeId];
-            this.state.world.selectedPlateId = plateId; // Keep plate context
-            this.state.world.selectedFeatureId = null;
-            this.state.world.selectedFeatureIds = [];
-            this.state.world.selectedLandmassId = null;
-            this.state.world.selectedLandmassIds = [];
-        } else if (plumeId) {
-             // If plume selected, deselect others and set ID to selectedFeatureId for UI binding
-             this.state.world.selectedPlateId = null;
-             this.state.world.selectedFeatureId = plumeId;
-             this.state.world.selectedFeatureIds = [plumeId];
-             this.state.world.selectedPaintStrokeId = null;
-             this.state.world.selectedPaintStrokeIds = [];
-             this.state.world.selectedLandmassId = null;
-             this.state.world.selectedLandmassIds = [];
+
+        if (plumeId) {
+            this.state.world.selectedPlateId = null;
+            this.state.world.selectedFeatureId = plumeId;
+            this.state.world.selectedFeatureIds = [plumeId];
         } else {
-             this.state.world.selectedPlateId = plateId;
-             this.state.world.selectedFeatureId = featureId ?? null;
-             this.state.world.selectedPaintStrokeId = null;
-             this.state.world.selectedPaintStrokeIds = [];
-             this.state.world.selectedLandmassId = null;
-             this.state.world.selectedLandmassIds = [];
-    
-             // Handle multi-selection
-             if (featureIds.length > 0) {
-                 this.state.world.selectedFeatureIds = featureIds;
-             } else if (featureId) {
-                 this.state.world.selectedFeatureIds = [featureId];
-             } else {
-                 this.state.world.selectedFeatureIds = [];
-             }
+            this.state.world.selectedPlateId = plateId;
+            this.state.world.selectedFeatureId = featureId ?? null;
+            this.state.world.selectedFeatureIds = featureIds.length > 0 ? featureIds : (featureId ? [featureId] : []);
         }
 
         this.updateUI();
@@ -3784,8 +3119,8 @@ class TectoLiteApp {
                             text: 'Cancel',
                             isSecondary: true,
                             onClick: () => {
-                               this.fusionFirstPlateId = null;
-                               this.updateHint("Select parent plate to create a motion cluster.");
+                                this.fusionFirstPlateId = null;
+                                this.updateHint("Select parent plate to create a motion cluster.");
                             }
                         }
                     ]
@@ -3804,7 +3139,7 @@ class TectoLiteApp {
                         onClick: () => {
                             this.pushState();
                             const result = fusePlates(this.state, this.fusionFirstPlateId!, plateId);
-                            
+
                             if (result.success && result.newState) {
                                 this.state = result.newState;
                                 this.fusionFirstPlateId = null;
@@ -3822,8 +3157,8 @@ class TectoLiteApp {
                         text: 'Cancel',
                         isSecondary: true,
                         onClick: () => {
-                           this.fusionFirstPlateId = null;
-                           this.updateHint("Select first plate to fuse");
+                            this.fusionFirstPlateId = null;
+                            this.updateHint("Select first plate to fuse");
                         }
                     }
                 ]
@@ -3837,118 +3172,7 @@ class TectoLiteApp {
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
 
-        // If we have a landmass selected (from handleLandmassLinkTool), link it to this plate
-        if (this.activeLinkSourceLandmassId && this.activeLinkSourcePlateId) {
-            const sourcePlate = this.state.world.plates.find(p => p.id === this.activeLinkSourcePlateId);
-            const landmass = sourcePlate?.landmasses?.find(l => l.id === this.activeLinkSourceLandmassId);
-            
-            if (!landmass) {
-                this.activeLinkSourceLandmassId = null;
-                this.activeLinkSourcePlateId = null;
-                return;
-            }
 
-            const isLinked = landmass.linkedToPlateId === plateId;
-
-            if (isLinked) {
-                // Unlink landmass from plate
-                this.showModal({
-                    title: `Unlink Landmass from Plate`,
-                    content: `Do you want to <strong>unlink</strong> landmass <strong>${landmass.name || 'Unnamed'}</strong> from plate <strong>${plate.name}</strong>?<br><br>
-                        <small>The landmass will move independently.</small>`,
-                    buttons: [
-                        {
-                            text: "Unlink",
-                            onClick: () => {
-                                this.pushState();
-                                this.state.world.plates = this.state.world.plates.map(p => {
-                                    if (p.id === this.activeLinkSourcePlateId) {
-                                        return {
-                                            ...p,
-                                            landmasses: p.landmasses?.map(l => {
-                                                if (l.id === this.activeLinkSourceLandmassId) {
-                                                    return { ...l, linkedToPlateId: undefined };
-                                                }
-                                                return l;
-                                            }) || []
-                                        };
-                                    }
-                                    return p;
-                                });
-
-                                this.updateHint(`Unlinked ${landmass.name || 'Unnamed'} from ${plate.name}`);
-                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-
-                                this.activeLinkSourceLandmassId = null;
-                                this.activeLinkSourcePlateId = null;
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
-                        },
-                        {
-                            text: 'Cancel',
-                            isSecondary: true,
-                            onClick: () => {
-                                this.activeLinkSourceLandmassId = null;
-                                this.activeLinkSourcePlateId = null;
-                                this.updateHint("Select a landmass to link");
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
-                        }
-                    ]
-                });
-            } else {
-                // Link landmass to plate
-                this.showModal({
-                    title: `Link Landmass to Plate`,
-                    content: `Link landmass <strong>${landmass.name || 'Unnamed'}</strong> to plate <strong>${plate.name}</strong>?<br><br>
-                        <small>The landmass will move with the plate's motion.</small>`,
-                    buttons: [
-                        {
-                            text: "Link",
-                            onClick: () => {
-                                this.pushState();
-                                this.state.world.plates = this.state.world.plates.map(p => {
-                                    if (p.id === this.activeLinkSourcePlateId) {
-                                        return {
-                                            ...p,
-                                            landmasses: p.landmasses?.map(l => {
-                                                if (l.id === this.activeLinkSourceLandmassId) {
-                                                    return { ...l, linkedToPlateId: plateId };
-                                                }
-                                                return l;
-                                            }) || []
-                                        };
-                                    }
-                                    return p;
-                                });
-
-                                this.updateHint(`Linked ${landmass.name || 'Unnamed'} to ${plate.name}`);
-                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-
-                                this.activeLinkSourceLandmassId = null;
-                                this.activeLinkSourcePlateId = null;
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
-                        },
-                        {
-                            text: 'Cancel',
-                            isSecondary: true,
-                            onClick: () => {
-                                this.activeLinkSourceLandmassId = null;
-                                this.activeLinkSourcePlateId = null;
-                                this.updateHint("Select a landmass to link");
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
-                        }
-                    ]
-                });
-            }
-            return;
-        }
 
         // Step 1: Select parent/anchor plate
         if (!this.activeLinkSourceId) {
@@ -4003,32 +3227,32 @@ class TectoLiteApp {
                 content: `Do you want to <strong>unlink</strong> child plate <strong>${plate.name}</strong> from parent <strong>${parentPlate.name}</strong>?<br><br>
                     <small>${plate.name} will move independently with the combined motion it currently has.</small>`,
                 buttons: [
-                     {
+                    {
                         text: "Unlink",
                         onClick: () => {
                             this.pushState();
-                            
+
                             const currentTime = this.state.world.currentTime;
-                            
+
                             // Get parent's current Euler pole
                             const parentKeyframes = parentPlate.motionKeyframes || [];
                             const parentActiveKeyframe = parentKeyframes
                                 .filter(kf => kf.time <= currentTime)
                                 .sort((a, b) => b.time - a.time)[0];
-                            
+
                             const parentPole = parentActiveKeyframe?.eulerPole || { position: [0, 90], rate: 0 };
-                            
+
                             this.state.world.plates = this.state.world.plates.map(p => {
                                 if (p.id === childId) {
                                     // Bake in the parent's motion as the child's new base motion
                                     const childKeyframes = p.motionKeyframes || [];
-                                    
+
                                     // Add a new keyframe with parent's pole (the combined motion at unlink time)
                                     const newKeyframes = [...childKeyframes];
-                                    
+
                                     // Find if there's already a keyframe at this time
                                     const existingIndex = newKeyframes.findIndex(kf => Math.abs(kf.time - currentTime) < 0.001);
-                                    
+
                                     if (existingIndex >= 0) {
                                         // Update existing keyframe to use parent's pole
                                         newKeyframes[existingIndex] = {
@@ -4041,14 +3265,12 @@ class TectoLiteApp {
                                             time: currentTime,
                                             eulerPole: parentPole,
                                             snapshotPolygons: p.polygons, // Current position becomes the snapshot
-                                            snapshotFeatures: p.features,
-                                            snapshotPaintStrokes: p.paintStrokes,
-                                            snapshotLandmasses: p.landmasses
+                                            snapshotFeatures: p.features
                                         });
                                     }
-                                    
-                                    return { 
-                                        ...p, 
+
+                                    return {
+                                        ...p,
                                         linkedToPlateId: undefined,
                                         unlinkTime: currentTime,  // Mark when link ended
                                         motionKeyframes: newKeyframes
@@ -4065,8 +3287,8 @@ class TectoLiteApp {
                             this.updateUI();
                             this.canvasManager?.render();
                         }
-                     },
-                     {
+                    },
+                    {
                         text: 'Cancel',
                         isSecondary: true,
                         onClick: () => {
@@ -4075,13 +3297,13 @@ class TectoLiteApp {
                             this.updateUI();
                             this.canvasManager?.render();
                         }
-                     }
+                    }
                 ]
             });
         } else {
             // Check if this exact pair is already linked
             const isAlreadyLinked = plate.linkedToPlateId === parentId;
-            
+
             if (isAlreadyLinked) {
                 // Auto-unlink: if you try to link an already-linked pair, unlink them instead
                 this.showModal({
@@ -4089,32 +3311,32 @@ class TectoLiteApp {
                     content: `<strong>${plate.name}</strong> is already linked to <strong>${parentPlate.name}</strong>.<br><br>
                         Do you want to <strong>unlink</strong> them? Motion will be baked in.`,
                     buttons: [
-                         {
+                        {
                             text: "Unlink",
                             onClick: () => {
                                 this.pushState();
-                                
+
                                 const currentTime = this.state.world.currentTime;
-                                
+
                                 // Get parent's current Euler pole
                                 const parentKeyframes = parentPlate.motionKeyframes || [];
                                 const parentActiveKeyframe = parentKeyframes
                                     .filter(kf => kf.time <= currentTime)
                                     .sort((a, b) => b.time - a.time)[0];
-                                
+
                                 const parentPole = parentActiveKeyframe?.eulerPole || { position: [0, 90], rate: 0 };
-                                
+
                                 this.state.world.plates = this.state.world.plates.map(p => {
                                     if (p.id === childId) {
                                         // Bake in the parent's motion as the child's new base motion
                                         const childKeyframes = p.motionKeyframes || [];
-                                        
+
                                         // Add a new keyframe with parent's pole (the combined motion at unlink time)
                                         const newKeyframes = [...childKeyframes];
-                                        
+
                                         // Find if there's already a keyframe at this time
                                         const existingIndex = newKeyframes.findIndex(kf => Math.abs(kf.time - currentTime) < 0.001);
-                                        
+
                                         if (existingIndex >= 0) {
                                             // Update existing keyframe to use parent's pole
                                             newKeyframes[existingIndex] = {
@@ -4128,13 +3350,12 @@ class TectoLiteApp {
                                                 eulerPole: parentPole,
                                                 snapshotPolygons: p.polygons, // Current position becomes the snapshot
                                                 snapshotFeatures: p.features,
-                                                snapshotPaintStrokes: p.paintStrokes,
-                                                snapshotLandmasses: p.landmasses
+
                                             });
                                         }
-                                        
-                                        return { 
-                                            ...p, 
+
+                                        return {
+                                            ...p,
                                             linkedToPlateId: undefined,
                                             motionKeyframes: newKeyframes
                                         };
@@ -4150,8 +3371,8 @@ class TectoLiteApp {
                                 this.updateUI();
                                 this.canvasManager?.render();
                             }
-                         },
-                         {
+                        },
+                        {
                             text: 'Cancel',
                             isSecondary: true,
                             onClick: () => {
@@ -4160,7 +3381,7 @@ class TectoLiteApp {
                                 this.updateUI();
                                 this.canvasManager?.render();
                             }
-                         }
+                        }
                     ]
                 });
             } else {
@@ -4170,22 +3391,22 @@ class TectoLiteApp {
                     content: `Link <strong>${plate.name}</strong> (child) to <strong>${parentPlate.name}</strong> (parent/anchor).<br><br>
                         <small>Child inherits parent motion. Add relative rotation in properties panel later if needed (e.g., Somalia relative to Africa).</small>`,
                     buttons: [
-                         {
+                        {
                             text: "Link",
                             onClick: () => {
                                 this.pushState();
                                 const currentTime = this.state.world.currentTime;
-                                
+
                                 this.state.world.plates = this.state.world.plates.map(p => {
                                     if (p.id === childId) {
                                         // Create a keyframe at link time with zero motion (default pole)
                                         // This prevents the child from "teleporting" when linked
                                         const childKeyframes = p.motionKeyframes || [];
                                         const newKeyframes = [...childKeyframes];
-                                        
+
                                         // Check if there's already a keyframe at this time
                                         const existingIndex = newKeyframes.findIndex(kf => Math.abs(kf.time - currentTime) < 0.001);
-                                        
+
                                         if (existingIndex < 0) {
                                             // Add new keyframe with zero rate (child stops moving on its own while linked)
                                             newKeyframes.push({
@@ -4193,13 +3414,12 @@ class TectoLiteApp {
                                                 eulerPole: { position: [0, 90], rate: 0 },
                                                 snapshotPolygons: p.polygons,
                                                 snapshotFeatures: p.features,
-                                                snapshotPaintStrokes: p.paintStrokes,
-                                                snapshotLandmasses: p.landmasses
+
                                             });
                                         }
-                                        
-                                        return { 
-                                            ...p, 
+
+                                        return {
+                                            ...p,
                                             linkedToPlateId: parentId,
                                             linkTime: currentTime,
                                             unlinkTime: undefined, // Clear any previous unlink time
@@ -4217,8 +3437,8 @@ class TectoLiteApp {
                                 this.updateUI();
                                 this.canvasManager?.render();
                             }
-                         },
-                         {
+                        },
+                        {
                             text: 'Cancel',
                             isSecondary: true,
                             onClick: () => {
@@ -4234,45 +3454,7 @@ class TectoLiteApp {
         }
     }
 
-    private handleLandmassLinkTool(landmassId: string, plateId: string): void {
-        const plate = this.state.world.plates.find(p => p.id === plateId);
-        if (!plate) return;
 
-        const landmass = plate.landmasses?.find(l => l.id === landmassId);
-        if (!landmass) return;
-
-        // Step 1: Select landmass (child)
-        if (!this.activeLinkSourceLandmassId) {
-            this.activeLinkSourceLandmassId = landmassId;
-            this.activeLinkSourcePlateId = plateId;
-            this.state.world.selectedLandmassId = landmassId;
-
-            this.updateHint(`Selected landmass ${landmass.name || 'Unnamed'} - now select a PLATE to link it to (or click the same landmass to cancel)`);
-
-            this.updateUI();
-            this.canvasManager?.render();
-            return;
-        }
-
-        // If clicking the same landmass, cancel selection
-        if (this.activeLinkSourceLandmassId === landmassId) {
-            this.activeLinkSourceLandmassId = null;
-            this.activeLinkSourcePlateId = null;
-            this.state.world.selectedLandmassId = null;
-            this.updateHint("Select a landmass to link");
-            this.updateUI();
-            this.canvasManager?.render();
-            return;
-        }
-
-        // If we have a landmass selected and user clicks another landmass, switch selection
-        this.activeLinkSourceLandmassId = landmassId;
-        this.activeLinkSourcePlateId = plateId;
-        this.state.world.selectedLandmassId = landmassId;
-        this.updateHint(`Selected landmass ${landmass.name || 'Unnamed'} - now select a PLATE to link it to`);
-        this.updateUI();
-        this.canvasManager?.render();
-    }
 
     private handleSplitApply(points: Coordinate[]): void {
         if (points.length < 2) return;
@@ -4327,40 +3509,7 @@ class TectoLiteApp {
     private deleteSelected(): void {
         this.pushState(); // Save state for undo
 
-        const { selectedFeatureId, selectedFeatureIds, selectedPlateId, selectedLandmassId } = this.state.world;
-        const paintIds = this.state.world.selectedPaintStrokeIds || (this.state.world.selectedPaintStrokeId ? [this.state.world.selectedPaintStrokeId] : []);
-
-        // Delete landmass if selected (priority over plate)
-        if (selectedLandmassId && selectedPlateId) {
-            this.state.world.plates = this.state.world.plates.map(p => {
-                if (p.id === selectedPlateId && p.landmasses) {
-                    return {
-                        ...p,
-                        landmasses: p.landmasses.filter(l => l.id !== selectedLandmassId)
-                    };
-                }
-                return p;
-            });
-            this.state.world.selectedLandmassId = null;
-            this.state.world.selectedLandmassIds = [];
-            this.updateUI();
-            this.canvasManager?.render();
-            return;
-        }
-
-        if (paintIds.length > 0) {
-            // Delete selected paint strokes
-            const idSet = new Set(paintIds);
-             this.state.world.plates = this.state.world.plates.map(p => {
-                if(!p.paintStrokes) return p;
-                return {
-                    ...p,
-                    paintStrokes: p.paintStrokes.filter((s:any) => !idSet.has(s.id))
-                };
-            });
-            this.state.world.selectedPaintStrokeId = null;
-            this.state.world.selectedPaintStrokeIds = [];
-        }
+        const { selectedFeatureId, selectedFeatureIds, selectedPlateId } = this.state.world;
 
         if (selectedFeatureId || (selectedFeatureIds && selectedFeatureIds.length > 0)) {
             // Build set of all feature IDs to delete
@@ -4386,7 +3535,7 @@ class TectoLiteApp {
 
             this.state.world.selectedFeatureId = null;
             this.state.world.selectedFeatureIds = [];
-        } else if (selectedPlateId && paintIds.length === 0) { 
+        } else if (selectedPlateId) {
             // Only delete plate if we didn't just delete strokes using the same key press 
             // (though UI usually separates them, hotkey collision is possible)
             this.deletePlates([selectedPlateId]);
@@ -4423,11 +3572,11 @@ class TectoLiteApp {
         if (!list) return;
 
         list.innerHTML = '';
-        
+
         // --- 1. PLATES SECTION ---
         const platesSection = this.createExplorerSection('Plates', 'plates', this.state.world.plates.length);
         list.appendChild(platesSection.header);
-        
+
         if (this.explorerState.sections['plates']) {
             const content = platesSection.content;
             if (this.state.world.plates.length === 0) {
@@ -4474,7 +3623,7 @@ class TectoLiteApp {
 
         // --- 2. ACTIONS SECTION (Previously Events) ---
         // Aggregate all plate events + user actions
-        let allEvents: {time: number, desc: string, plateName: string, plateId: string, type: string}[] = [];
+        let allEvents: { time: number, desc: string, plateName: string, plateId: string, type: string }[] = [];
 
         const addAction = (time: number | undefined, desc: string, plate: TectonicPlate, type: string) => {
             if (time === undefined || isNaN(time)) return;
@@ -4482,229 +3631,114 @@ class TectoLiteApp {
         };
 
         this.state.world.plates.forEach(p => {
-             if(p.events) {
-                 p.events.forEach(ev => {
-                     let desc: string = ev.type;
-                     if(ev.type === 'motion_change') desc = 'Motion Change';
-                     if(ev.type === 'split') desc = 'Plate Split';
-                     if(ev.type === 'fusion') desc = 'Fusion';
-                     addAction(ev.time, desc, p, ev.type);
-                 });
-             }
-             // Also add creation time as event
-             addAction(p.birthTime, 'Created', p, 'created');
+            if (p.events) {
+                p.events.forEach(ev => {
+                    let desc: string = ev.type;
+                    if (ev.type === 'motion_change') desc = 'Motion Change';
+                    if (ev.type === 'split') desc = 'Plate Split';
+                    if (ev.type === 'fusion') desc = 'Fusion';
+                    addAction(ev.time, desc, p, ev.type);
+                });
+            }
+            // Also add creation time as event
+            addAction(p.birthTime, 'Created', p, 'created');
 
-             // Feature placements
-             p.features.forEach(f => {
-                 if (typeof f.generatedAt === 'number') {
-                     const label = f.name ? `Feature Placed: ${f.name}` : `Feature Placed: ${f.type}`;
-                     addAction(f.generatedAt, label, p, 'feature');
-                 }
-             });
+            // Feature placements
+            p.features.forEach(f => {
+                if (typeof f.generatedAt === 'number') {
+                    const label = f.name ? `Feature Placed: ${f.name}` : `Feature Placed: ${f.type}`;
+                    addAction(f.generatedAt, label, p, 'feature');
+                }
+            });
 
-             // Plate edits captured as explicit Edit keyframes
-             p.motionKeyframes?.forEach(kf => {
-                 if (kf.label === 'Edit') {
-                     addAction(kf.time, 'Plate Edited', p, 'plate_edit');
-                 }
-             });
+            // Plate edits captured as explicit Edit keyframes
+            p.motionKeyframes?.forEach(kf => {
+                if (kf.label === 'Edit') {
+                    addAction(kf.time, 'Plate Edited', p, 'plate_edit');
+                }
+            });
 
-             // Landmass actions
-             p.landmasses?.forEach(l => {
-                 addAction(l.birthTime, `Landmass Created: ${l.name || 'Landmass'}`, p, 'landmass_create');
-                 if (typeof l.lastEditedTime === 'number' && l.lastEditedTime !== l.birthTime) {
-                     addAction(l.lastEditedTime, `Landmass Edited: ${l.name || 'Landmass'}`, p, 'landmass_edit');
-                 }
-             });
+
         });
-        
+
         // Sort by time
-        allEvents.sort((a,b) => a.time - b.time);
-        
+        allEvents.sort((a, b) => a.time - b.time);
+
         const actionSection = this.createExplorerSection('Actions', 'events', allEvents.length);
         list.appendChild(actionSection.header);
-        
+
         if (this.explorerState.sections['events']) {
-             const actionContent = actionSection.content;
-             const filters = this.explorerState.actionFilters;
-             const filterRow = document.createElement('div');
-             filterRow.style.display = 'grid';
-             filterRow.style.gridTemplateColumns = '1fr 1fr';
-             filterRow.style.gap = '4px';
-             filterRow.style.marginBottom = '6px';
+            const actionContent = actionSection.content;
+            const filters = this.explorerState.actionFilters;
+            const filterRow = document.createElement('div');
+            filterRow.style.display = 'grid';
+            filterRow.style.gridTemplateColumns = '1fr 1fr';
+            filterRow.style.gap = '4px';
+            filterRow.style.marginBottom = '6px';
 
-             const createFilter = (key: string, label: string) => {
-                 const wrapper = document.createElement('label');
-                 wrapper.style.display = 'flex';
-                 wrapper.style.alignItems = 'center';
-                 wrapper.style.gap = '6px';
-                 wrapper.style.cursor = 'pointer';
-                 wrapper.style.fontSize = '11px';
+            const createFilter = (key: string, label: string) => {
+                const wrapper = document.createElement('label');
+                wrapper.style.display = 'flex';
+                wrapper.style.alignItems = 'center';
+                wrapper.style.gap = '6px';
+                wrapper.style.cursor = 'pointer';
+                wrapper.style.fontSize = '11px';
 
-                 const input = document.createElement('input');
-                 input.type = 'checkbox';
-                 input.checked = !!filters[key];
-                 input.addEventListener('change', () => {
-                     this.explorerState.actionFilters[key] = input.checked;
-                     this.updateExplorer();
-                 });
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.checked = !!filters[key];
+                input.addEventListener('change', () => {
+                    this.explorerState.actionFilters[key] = input.checked;
+                    this.updateExplorer();
+                });
 
-                 const span = document.createElement('span');
-                 span.textContent = label;
+                const span = document.createElement('span');
+                span.textContent = label;
 
-                 wrapper.appendChild(input);
-                 wrapper.appendChild(span);
-                 filterRow.appendChild(wrapper);
-             };
+                wrapper.appendChild(input);
+                wrapper.appendChild(span);
+                filterRow.appendChild(wrapper);
+            };
 
-             createFilter('created', 'Created');
-             createFilter('motion_change', 'Motion');
-             createFilter('split', 'Split');
-             createFilter('fusion', 'Fusion');
-             createFilter('feature', 'Features');
-             createFilter('landmass_create', 'Landmass+');
-             createFilter('landmass_edit', 'Landmass Edit');
-             createFilter('plate_edit', 'Plate Edit');
+            createFilter('created', 'Created');
+            createFilter('motion_change', 'Motion');
+            createFilter('split', 'Split');
+            createFilter('fusion', 'Fusion');
+            createFilter('feature', 'Features');
+            createFilter('landmass_create', 'Landmass+');
+            createFilter('landmass_edit', 'Landmass Edit');
+            createFilter('plate_edit', 'Plate Edit');
 
-             actionContent.appendChild(filterRow);
+            actionContent.appendChild(filterRow);
 
-             const filteredEvents = allEvents.filter(ev => filters[ev.type] !== false);
-             if (filteredEvents.length === 0) {
-                 const empty = document.createElement('p');
-                 empty.className = 'empty-message';
-                 empty.textContent = 'No actions recorded';
-                 actionContent.appendChild(empty);
-             } else {
-                 filteredEvents.forEach(ev => {
-                     const row = document.createElement('div');
-                     row.className = 'paint-stroke-item';
-                     row.style.cursor = 'pointer';
-                     row.innerText = `${ev.time.toFixed(1)} Ma: ${ev.desc} (${ev.plateName})`;
-                     
-                     // Click to select the plate involved in the action
-                     row.onclick = () => {
-                         this.handleSelect(ev.plateId, null);
-                     };
+            const filteredEvents = allEvents.filter(ev => filters[ev.type] !== false);
+            if (filteredEvents.length === 0) {
+                const empty = document.createElement('p');
+                empty.className = 'empty-message';
+                empty.textContent = 'No actions recorded';
+                actionContent.appendChild(empty);
+            } else {
+                filteredEvents.forEach(ev => {
+                    const row = document.createElement('div');
+                    row.className = 'paint-stroke-item';
+                    row.style.cursor = 'pointer';
+                    row.innerText = `${ev.time.toFixed(1)} Ma: ${ev.desc} (${ev.plateName})`;
 
-                     actionContent.appendChild(row);
-                 });
-             }
-             list.appendChild(actionContent);
-        }
+                    // Click to select the plate involved in the action
+                    row.onclick = () => {
+                        this.handleSelect(ev.plateId, null);
+                    };
 
-        // --- 3. PAINT STROKES SECTION ---
-        let allStrokes: any[] = [];
-        this.state.world.plates.forEach(p => {
-            if (p.paintStrokes) {
-                p.paintStrokes.forEach(s => allStrokes.push({...s, _plateId: p.id}));
+                    actionContent.appendChild(row);
+                });
             }
-        });
-        
-        const paintSection = this.createExplorerSection('Paint Strokes', 'paint', allStrokes.length);
-        list.appendChild(paintSection.header);
-        
-        if (this.explorerState.sections['paint']) {
-             const paintContent = paintSection.content;
-             if (allStrokes.length === 0) {
-                 paintContent.innerHTML = '<p class="empty-message">No paint strokes</p>';
-             } else {
-                 const groups: {[key: string]: any[]} = {};
-                 allStrokes.forEach(s => {
-                     // Group by Plate ID to keep manual and auto strokes of a plate together
-                     const k = s._plateId;
-                     if(!groups[k]) groups[k] = [];
-                     groups[k].push(s);
-                 });
-                 
-                 Object.keys(groups).forEach(gid => { // gid is plateId
-                     const plate = this.state.world.plates.find(p => p.id === gid);
-                     const label = plate ? plate.name : 'Unknown Plate';
-                     
-                     const isGroupExpanded = this.explorerState.paintGroups[gid];
-                     // Check if ALL in group are selected
-                     const groupIds = groups[gid].map(s => s.id);
-                     const allSelected = groupIds.length > 0 && groupIds.every(id => this.state.world.selectedPaintStrokeIds?.includes(id));
-                     
-                     const gHeader = document.createElement('div');
-                     gHeader.className = `paint-group-header ${isGroupExpanded ? 'selected' : ''}`;
-                     // Add checkbox-like indicator or just bold if selected
-                     const selIndicator = allSelected ? '☑' : '☐';
-                     
-                     gHeader.innerHTML = `<span>${selIndicator} ${label} (${groups[gid].length})</span> <span>${isGroupExpanded ? '▼' : '▶'}</span>`;
-                     gHeader.onclick = (_e) => {
-                         // Click on header logic:
-                         // Select all strokes in this group (Plate)
-                         
-                         const currentSelected = new Set(this.state.world.selectedPaintStrokeIds || []);
-                         
-                         if (allSelected) {
-                             // Deselect all in group
-                             groupIds.forEach(id => currentSelected.delete(id));
-                         } else {
-                             // Select all in group
-                             groupIds.forEach(id => currentSelected.add(id));
-                             // Ensure we are in paint selection mode
-                             this.state.world.selectedPlateId = null;
-                             this.state.world.selectedFeatureId = null;
-                         }
-                         
-                         this.state.world.selectedPaintStrokeIds = Array.from(currentSelected);
-                         // Sync single ID
-                         this.state.world.selectedPaintStrokeId = this.state.world.selectedPaintStrokeIds.length > 0 ? this.state.world.selectedPaintStrokeIds[0] : null;
-
-                         // Also toggle expansion
-                         if(!allSelected) {
-                            this.explorerState.paintGroups[gid] = true;
-                         }
-                         
-                         this.updatePropertiesPanel();
-                         this.updateExplorer();
-                         this.canvasManager?.render();
-                     };
-                     
-                     paintContent.appendChild(gHeader);
-                     
-                     if(isGroupExpanded) {
-                         groups[gid].forEach(s => {
-                             const row = document.createElement('div');
-                             const isSel = this.state.world.selectedPaintStrokeIds?.includes(s.id);
-                             row.className = `paint-stroke-item ${isSel ? 'selected' : ''}`;
-                             
-                             // Differentiate manual vs auto in the individual item text
-                             const type = s.boundaryId ? 'Auto' : 'Manual';
-                             row.innerText = `${type} - ${s.id.substring(0,4)}...`;
-                             
-                             row.onclick = (e) => {
-                                 e.stopPropagation();
-                                 const id = s.id;
-                                 let newSel = new Set(this.state.world.selectedPaintStrokeIds || []);
-                                 
-                                 if (e.ctrlKey || e.metaKey) {
-                                     if(newSel.has(id)) newSel.delete(id);
-                                     else newSel.add(id);
-                                 } else {
-                                     newSel = new Set([id]);
-                                 }
-                                 
-                                 this.state.world.selectedPaintStrokeIds = Array.from(newSel);
-                                 this.state.world.selectedPaintStrokeId = this.state.world.selectedPaintStrokeIds.length > 0 ? this.state.world.selectedPaintStrokeIds[0] : null;
-
-                                 this.state.world.selectedPlateId = null;
-                                 this.state.world.selectedFeatureId = null;
-                                 this.updatePropertiesPanel();
-                                 this.updateExplorer();
-                                 this.canvasManager?.render();
-                             };
-                             paintContent.appendChild(row);
-                         });
-                    }
-                 });
-             }
-             list.appendChild(paintContent);
+            list.appendChild(actionContent);
         }
+
     }
 
-    private createExplorerSection(title: string, key: string, count: number): {header: HTMLElement, content: HTMLElement} {
+
+    private createExplorerSection(title: string, key: string, count: number): { header: HTMLElement, content: HTMLElement } {
         const header = document.createElement('div');
         header.className = 'explorer-header';
         header.style.marginBottom = '2px';
@@ -4716,8 +3750,8 @@ class TectoLiteApp {
         };
         const content = document.createElement('div');
         content.className = 'explorer-content';
-        if(key === 'plates') content.classList.add('plate-list');
-        return {header, content};
+        if (key === 'plates') content.classList.add('plate-list');
+        return { header, content };
     }
 
     private togglePlateVisibility(plateId: string): void {
@@ -4735,587 +3769,33 @@ class TectoLiteApp {
         this.updateExplorer();
         this.canvasManager?.render();
     }
-    
+
     /**
      * Smooth vertex elevation by averaging with neighbors
      */
-    private smoothVertexElevation(plate: any, vertex: any): void {
-        if (!plate.crustMesh) return;
-        
-        // Build neighbor graph using Delaunay triangulation
-        const vertices = plate.crustMesh;
-        const points: [number, number][] = vertices.map((v: any) => [v.pos[0], v.pos[1]]);
-        
-        try {
-            // Import Delaunay at runtime
-            import('d3-delaunay').then(({ Delaunay }) => {
-                const delaunay = Delaunay.from(points);
-                
-                // Find neighbors of the selected vertex
-                const vertexIdx = vertices.findIndex((v: any) => v.id === vertex.id);
-                if (vertexIdx === -1) return;
-                
-                const neighbors = new Set<number>();
-                
-                // Extract neighbors from triangulation
-                for (let i = 0; i < delaunay.triangles.length; i += 3) {
-                    const idx0 = delaunay.triangles[i];
-                    const idx1 = delaunay.triangles[i + 1];
-                    const idx2 = delaunay.triangles[i + 2];
-                    
-                    if (idx0 === vertexIdx) {
-                        neighbors.add(idx1);
-                        neighbors.add(idx2);
-                    } else if (idx1 === vertexIdx) {
-                        neighbors.add(idx0);
-                        neighbors.add(idx2);
-                    } else if (idx2 === vertexIdx) {
-                        neighbors.add(idx0);
-                        neighbors.add(idx1);
-                    }
-                }
-                
-                if (neighbors.size === 0) {
-                    console.log('No neighbors found for vertex');
-                    return;
-                }
-                
-                // Calculate average elevation of neighbors
-                let sum = 0;
-                neighbors.forEach(idx => {
-                    sum += vertices[idx].elevation;
-                });
-                const avgElevation = sum / neighbors.size;
-                
-                // Blend 50% with neighbors
-                const oldElevation = vertex.elevation;
-                vertex.elevation = (vertex.elevation + avgElevation) / 2;
-                
-                // Save to history
-                this.historyManager.push(this.state);
-                
-                // Update UI
-                this.updatePropertiesPanel();
-                this.canvasManager?.render();
-                
-                console.log(`Smoothed vertex: ${Math.round(oldElevation)}m → ${Math.round(vertex.elevation)}m (${neighbors.size} neighbors, avg: ${Math.round(avgElevation)}m)`);
-            });
-        } catch (error) {
-            console.error('Error smoothing elevation:', error);
-        }
-    }
-    
+
+
     /**
      * Adjust selected vertex elevation by delta (for keyboard shortcuts)
      */
-    private adjustSelectedVertexElevation(delta: number): void {
-        if (!this.state.world.selectedVertexPlateId || !this.state.world.selectedVertexId) return;
-        
-        const plate = this.state.world.plates.find(p => p.id === this.state.world.selectedVertexPlateId);
-        if (!plate || !plate.crustMesh) return;
-        
-        const vertex = plate.crustMesh.find(v => v.id === this.state.world.selectedVertexId);
-        if (!vertex) return;
-        
-        const oldElevation = vertex.elevation;
-        vertex.elevation += delta;
-        
-        // Save to history
-        this.historyManager.push(this.state);
-        
-        // Update UI
-        this.updatePropertiesPanel();
-        this.canvasManager?.render();
-        
-        console.log(`Vertex ${vertex.id.substring(0, 8)}: Elevation ${Math.round(oldElevation)}m → ${Math.round(vertex.elevation)}m (${delta > 0 ? '+' : ''}${delta}m)`);
-    }
+
 
     private updatePropertiesPanel(): void {
         const content = document.getElementById('properties-content');
         if (!content) return;
 
-        // Check for Paint Stroke Selection
-        // Support multi-select logic
-        const selIds = this.state.world.selectedPaintStrokeIds || (this.state.world.selectedPaintStrokeId ? [this.state.world.selectedPaintStrokeId] : []);
-        
-        if (selIds.length > 0) {
-            // If multiple selected, show aggregate info
-            if (selIds.length > 1) {
-                 content.innerHTML = `
-                    <h3 class="panel-section-title">Paint Strokes (${selIds.length})</h3>
-                    <div class="property-group">
-                        <label class="property-label">Multiple selected</label>
-                    </div>
-                    <div class="property-group" style="margin-top:20px;">
-                        <button id="btn-delete-stroke" class="btn btn-danger" style="width:100%">Delete Selected (${selIds.length})</button>
-                    </div>
-                 `;
-                 
-                document.getElementById('btn-delete-stroke')?.addEventListener('click', () => {
-                    this.state.world.plates = this.state.world.plates.map(p => {
-                        if(!p.paintStrokes) return p;
-                        return {
-                            ...p,
-                            paintStrokes: p.paintStrokes.filter((s:any) => !selIds.includes(s.id))
-                        };
-                    });
-                    this.state.world.selectedPaintStrokeIds = [];
-                    this.state.world.selectedPaintStrokeId = null;
-                    this.updateUI();
-                    this.canvasManager?.render();
-                });
-                return;
-            }
 
-            // Single item logic
-            const strokeId = selIds[0];
-            let foundStroke: any = null;
-            let strokePlate: any = null;
 
-            // Find the stroke across all plates
-            for (const plate of this.state.world.plates) {
-                if (plate.paintStrokes) {
-                    const stroke = plate.paintStrokes.find((s: any) => s.id === strokeId);
-                    if (stroke) {
-                        foundStroke = stroke;
-                        strokePlate = plate;
-                        break;
-                    }
-                }
-            }
 
-            if (foundStroke && strokePlate) {
-                const sourceDisplay = foundStroke.source || 'user';
-
-                content.innerHTML = `
-                    <h3 class="panel-section-title">Paint Stroke</h3>
-                    
-                    <div class="property-group">
-                        <label class="property-label">ID</label>
-                        <span class="property-value">${foundStroke.id.substring(0,8)}</span>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Source</label>
-                        <span class="property-value">${sourceDisplay === 'orogeny' ? '⚙️ Orogeny' : '🖌️ User'}</span>
-                    </div>
-
-                    <!-- Fade Override Settings -->
-                    <div class="property-group" style="padding: 6px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 6px;">
-                        <div style="font-size: 10px; font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">Fade Override (Optional)</div>
-                         <div style="display: flex; flex-direction: column; gap: 4px;">
-                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <label style="font-size: 10px;">Duration (Ma):</label>
-                                <input type="number" id="prop-stroke-fade-dur" class="property-input" 
-                                    value="${foundStroke.ageingDuration || ''}" 
-                                    placeholder="Global" style="width: 50px;">
-                             </div>
-                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <label style="font-size: 10px;">Max Trans (%):</label>
-                                <input type="number" id="prop-stroke-fade-max" class="property-input" 
-                                    value="${foundStroke.maxAgeingOpacity !== undefined ? Math.round((1.0 - foundStroke.maxAgeingOpacity) * 100) : ''}" 
-                                    placeholder="Global" style="width: 50px;">
-                             </div>
-                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                 <label style="font-size: 10px;">Auto-Delete:</label>
-                                 <select id="prop-stroke-auto-delete" class="property-input" style="width: 60px; font-size: 10px; padding: 0;">
-                                     <option value="" ${foundStroke.autoDelete === undefined ? 'selected' : ''}>Global</option>
-                                     <option value="true" ${foundStroke.autoDelete === true ? 'selected' : ''}>Yes</option>
-                                     <option value="false" ${foundStroke.autoDelete === false ? 'selected' : ''}>No</option>
-                                 </select>
-                             </div>
-                             <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <label style="font-size: 10px;">Delay (Ma):</label>
-                                <input type="number" id="prop-stroke-delete-delay" class="property-input" 
-                                    value="${foundStroke.deleteDelay !== undefined ? foundStroke.deleteDelay : ''}" 
-                                    placeholder="Global" style="width: 50px;">
-                             </div>
-                         </div>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Timeline (Ma)</label>
-                        <div style="display: flex; gap: 4px;">
-                             <input type="number" id="prop-stroke-birth-time" class="property-input" title="Start Time" value="${foundStroke.birthTime !== undefined ? this.getDisplayTimeValue(foundStroke.birthTime) : ''}" step="5" style="flex:1">
-                             <span style="align-self: center;">-</span>
-                             <input type="number" id="prop-stroke-death-time" class="property-input" title="End Time" value="${foundStroke.deathTime !== undefined ? this.getDisplayTimeValue(foundStroke.deathTime) : ''}" placeholder="Active" step="5" style="flex:1">
-                        </div>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Color</label>
-                        <input type="color" id="prop-stroke-color" value="${foundStroke.color}" style="width: 100%; height: 28px; cursor: pointer;">
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Width (px)</label>
-                        <input type="number" id="prop-stroke-width" class="property-input" value="${foundStroke.width}" min="1" max="20">
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Opacity</label>
-                        <input type="range" id="prop-stroke-opacity" min="0" max="100" value="${Math.round(foundStroke.opacity * 100)}" style="width: 100%;">
-                        <span id="prop-stroke-opacity-value" style="font-size: 10px; color: var(--text-secondary);">${Math.round(foundStroke.opacity * 100)}%</span>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">On Plate</label>
-                        <span class="property-value">${strokePlate.name}</span>
-                    </div>
-
-                    <div class="property-group" style="margin-top:20px;">
-                        <button id="btn-delete-stroke" class="btn btn-danger" style="width:100%">Delete Stroke</button>
-                    </div>
-                `;
-
-                // Bind events
-                document.getElementById('prop-stroke-birth-time')?.addEventListener('change', (e) => {
-                    const val = parseFloat((e.target as HTMLInputElement).value);
-                    if (!isNaN(val)) {
-                        foundStroke.birthTime = this.transformInputTime(val);
-                        this.canvasManager?.render();
-                        // this.updateExplorer(); // Timeline might change? Actions list uses birthTime but strokes list doesn't sort by time yet explicitly, just groups.
-                    }
-                });
-
-                document.getElementById('prop-stroke-fade-dur')?.addEventListener('change', (e) => {
-                    const val = (e.target as HTMLInputElement).value;
-                    if (val === '') {
-                        delete foundStroke.ageingDuration;
-                    } else {
-                        const num = parseFloat(val);
-                        if (!isNaN(num) && num > 0) foundStroke.ageingDuration = num;
-                    }
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-stroke-fade-max')?.addEventListener('change', (e) => {
-                    const val = (e.target as HTMLInputElement).value;
-                    if (val === '') {
-                        delete foundStroke.maxAgeingOpacity;
-                    } else {
-                        const num = parseFloat(val);
-                        if (!isNaN(num) && num >= 0 && num <= 100) {
-                             foundStroke.maxAgeingOpacity = 1.0 - (num / 100.0);
-                        }
-                    }
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-stroke-auto-delete')?.addEventListener('change', (e) => {
-                    const val = (e.target as HTMLSelectElement).value;
-                    if (val === '') {
-                        delete foundStroke.autoDelete;
-                    } else {
-                        foundStroke.autoDelete = val === 'true';
-                    }
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-stroke-delete-delay')?.addEventListener('change', (e) => {
-                    const val = (e.target as HTMLInputElement).value;
-                    if (val === '') {
-                        delete foundStroke.deleteDelay;
-                    } else {
-                        const num = parseFloat(val);
-                        if (!isNaN(num) && num >= 0) {
-                            foundStroke.deleteDelay = num;
-                        }
-                    }
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-stroke-death-time')?.addEventListener('change', (e) => {
-                    const val = (e.target as HTMLInputElement).value;
-                    if (val === '') {
-                        delete foundStroke.deathTime;
-                    } else {
-                        const num = parseFloat(val);
-                        if (!isNaN(num)) {
-                            foundStroke.deathTime = this.transformInputTime(num);
-                        }
-                    }
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-stroke-color')?.addEventListener('input', (e) => {
-                    foundStroke.color = (e.target as HTMLInputElement).value;
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-stroke-width')?.addEventListener('change', (e) => {
-                    const val = parseInt((e.target as HTMLInputElement).value);
-                    if (!isNaN(val) && val >= 1) {
-                        foundStroke.width = val;
-                        this.canvasManager?.render();
-                    }
-                });
-
-                document.getElementById('prop-stroke-opacity')?.addEventListener('input', (e) => {
-                    const val = parseInt((e.target as HTMLInputElement).value) / 100;
-                    foundStroke.opacity = val;
-                    const display = document.getElementById('prop-stroke-opacity-value');
-                    if (display) display.textContent = `${Math.round(val * 100)}%`;
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('btn-delete-stroke')?.addEventListener('click', () => {
-                    strokePlate.paintStrokes = strokePlate.paintStrokes.filter((s: any) => s.id !== strokeId);
-                    this.state.world.selectedPaintStrokeId = null;
-                    this.state.world.selectedPaintStrokeIds = [];
-                    this.updateUI();
-                    this.canvasManager?.render();
-                });
-
-                return;
-            }
-        }
-
-        // Check for Landmass Selection
-        const landmassIds = this.state.world.selectedLandmassIds || (this.state.world.selectedLandmassId ? [this.state.world.selectedLandmassId] : []);
-        
-        if (landmassIds.length > 0) {
-            const landmassId = landmassIds[0];
-            let foundLandmass: Landmass | null = null;
-            let landmassPlate: TectonicPlate | null = null;
-
-            // Find the landmass across all plates
-            for (const plate of this.state.world.plates) {
-                if (plate.landmasses) {
-                    const landmass = plate.landmasses.find(l => l.id === landmassId);
-                    if (landmass) {
-                        foundLandmass = landmass;
-                        landmassPlate = plate;
-                        break;
-                    }
-                }
-            }
-
-            if (foundLandmass && landmassPlate) {
-                content.innerHTML = `
-                    <h3 class="panel-section-title">🏝️ Landmass</h3>
-                    
-                    <div class="property-group">
-                        <label class="property-label">Name</label>
-                        <input type="text" id="prop-landmass-name" class="property-input" value="${foundLandmass.name || ''}" placeholder="Unnamed Landmass">
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Description</label>
-                        <textarea id="prop-landmass-desc" class="property-input" rows="2" placeholder="Add notes...">${foundLandmass.description || ''}</textarea>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Fill Color</label>
-                        <input type="color" id="prop-landmass-color" value="${foundLandmass.fillColor}" style="width: 100%; height: 28px; cursor: pointer;">
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Stroke Color</label>
-                        <div style="display: flex; gap: 4px; align-items: center;">
-                            <input type="color" id="prop-landmass-stroke-color" value="${foundLandmass.strokeColor || '#000000'}" style="flex: 1; height: 28px; cursor: pointer;">
-                            <button id="prop-landmass-stroke-clear" class="btn btn-secondary" style="padding: 4px 8px; font-size: 10px;">Clear</button>
-                        </div>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Opacity</label>
-                        <input type="range" id="prop-landmass-opacity" min="0" max="100" value="${Math.round(foundLandmass.opacity * 100)}" style="width: 100%;">
-                        <span id="prop-landmass-opacity-value" style="font-size: 10px; color: var(--text-secondary);">${Math.round(foundLandmass.opacity * 100)}%</span>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Timeline (Ma)</label>
-                        <div style="display: flex; gap: 4px;">
-                             <input type="number" id="prop-landmass-birth-time" class="property-input" title="Birth Time" value="${this.getDisplayTimeValue(foundLandmass.birthTime)}" step="5" style="flex:1">
-                             <span style="align-self: center;">-</span>
-                             <input type="number" id="prop-landmass-death-time" class="property-input" title="Death Time" value="${foundLandmass.deathTime !== undefined ? this.getDisplayTimeValue(foundLandmass.deathTime) : ''}" placeholder="Active" step="5" style="flex:1">
-                        </div>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">Vertices</label>
-                        <span class="property-value">${foundLandmass.polygon.length}</span>
-                    </div>
-
-                    <div class="property-group">
-                        <label class="property-label">On Plate</label>
-                        <span class="property-value">${landmassPlate.name}</span>
-                    </div>
-
-                    <div class="property-group" style="margin-top:20px;">
-                        <button id="btn-delete-landmass" class="btn btn-danger" style="width:100%">Delete Landmass</button>
-                    </div>
-                `;
-
-                // Bind events
-                document.getElementById('prop-landmass-name')?.addEventListener('change', (e) => {
-                    foundLandmass!.name = (e.target as HTMLInputElement).value;
-                });
-
-                document.getElementById('prop-landmass-desc')?.addEventListener('change', (e) => {
-                    foundLandmass!.description = (e.target as HTMLTextAreaElement).value;
-                });
-
-                document.getElementById('prop-landmass-color')?.addEventListener('input', (e) => {
-                    foundLandmass!.fillColor = (e.target as HTMLInputElement).value;
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-landmass-stroke-color')?.addEventListener('input', (e) => {
-                    foundLandmass!.strokeColor = (e.target as HTMLInputElement).value;
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-landmass-stroke-clear')?.addEventListener('click', () => {
-                    delete foundLandmass!.strokeColor;
-                    this.updatePropertiesPanel();
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-landmass-opacity')?.addEventListener('input', (e) => {
-                    const val = parseInt((e.target as HTMLInputElement).value) / 100;
-                    foundLandmass!.opacity = val;
-                    const display = document.getElementById('prop-landmass-opacity-value');
-                    if (display) display.textContent = `${Math.round(val * 100)}%`;
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('prop-landmass-birth-time')?.addEventListener('change', (e) => {
-                    const val = parseFloat((e.target as HTMLInputElement).value);
-                    if (!isNaN(val)) {
-                        foundLandmass!.birthTime = this.transformInputTime(val);
-                        this.canvasManager?.render();
-                    }
-                });
-
-                document.getElementById('prop-landmass-death-time')?.addEventListener('change', (e) => {
-                    const val = (e.target as HTMLInputElement).value;
-                    if (val === '') {
-                        delete foundLandmass!.deathTime;
-                    } else {
-                        const num = parseFloat(val);
-                        if (!isNaN(num)) {
-                            foundLandmass!.deathTime = this.transformInputTime(num);
-                        }
-                    }
-                    this.canvasManager?.render();
-                });
-
-                document.getElementById('btn-delete-landmass')?.addEventListener('click', () => {
-                    this.pushState();
-                    landmassPlate!.landmasses = landmassPlate!.landmasses!.filter(l => l.id !== landmassId);
-                    this.state.world.selectedLandmassId = null;
-                    this.state.world.selectedLandmassIds = [];
-                    this.updateUI();
-                    this.canvasManager?.render();
-                });
-
-                return;
-            }
-        }
 
         // Check for Mesh Vertex Selection
-        if (this.state.world.selectedVertexPlateId && this.state.world.selectedVertexId) {
-            const plateId = this.state.world.selectedVertexPlateId;
-            const vertexId = this.state.world.selectedVertexId;
-            
-            const plate = this.state.world.plates.find(p => p.id === plateId);
-            if (plate && plate.crustMesh) {
-                const vertex = plate.crustMesh.find(v => v.id === vertexId);
-                
-                if (vertex) {
-                    content.innerHTML = `
-                        <h3 class="panel-section-title">Mesh Vertex</h3>
-                        
-                        <div class="property-group">
-                            <label class="property-label">Vertex ID</label>
-                            <span class="property-value">${vertex.id.substring(0,8)}</span>
-                        </div>
 
-                        <div class="property-group">
-                            <label class="property-label">Position (Lon, Lat)</label>
-                            <span class="property-value">${vertex.pos[0].toFixed(2)}°, ${vertex.pos[1].toFixed(2)}°</span>
-                        </div>
-
-                        <div class="property-group">
-                            <label class="property-label">On Plate</label>
-                            <span class="property-value">${plate.name}</span>
-                        </div>
-
-                        <div class="property-group" style="background: var(--bg-elevated); padding: 8px; border-radius: 4px; margin-bottom: 8px;">
-                            <div style="font-size: 10px; color: var(--text-secondary); margin-bottom: 4px; font-weight: 600;">PLATE MESH INFO</div>
-                            <div style="display: flex; justify-content: space-between; font-size: 11px;">
-                                <span>Total Vertices:</span>
-                                <span style="font-weight: bold; color: var(--color-primary);">${plate.crustMesh.length}</span>
-                            </div>
-                            <div style="display: flex; justify-content: space-between; font-size: 11px;">
-                                <span>Simulated To:</span>
-                                <span style="font-weight: bold; color: var(--accent-success);">${this.getDisplayTimeValue(plate.elevationSimulatedTime || plate.birthTime)} Ma</span>
-                            </div>
-                        </div>
-
-                        <div class="property-group">
-                            <label class="property-label">Elevation (m)</label>
-                            <input type="number" id="prop-vertex-elevation" class="property-input" value="${Math.round(vertex.elevation)}" step="100">
-                        </div>
-                        
-                        <div class="property-group" style="margin-top: 8px;">
-                            <button id="btn-smooth-elevation" class="btn btn-secondary" style="width: 100%; font-size: 11px;">
-                                Smooth with Neighbors
-                            </button>
-                        </div>
-
-                        <div class="property-group">
-                            <label class="property-label">Sediment Thickness (m)</label>
-                            <span class="property-value">${Math.round(vertex.sediment)}</span>
-                        </div>
-
-                        <div class="property-group" style="margin-top:20px;">
-                            <button id="btn-deselect-vertex" class="btn btn-secondary" style="width:100%">Deselect</button>
-                        </div>
-                    `;
-
-                    // Bind elevation edit event
-                    document.getElementById('prop-vertex-elevation')?.addEventListener('change', (e) => {
-                        const val = parseFloat((e.target as HTMLInputElement).value);
-                        if (!isNaN(val)) {
-                            const oldElevation = vertex.elevation;
-                            vertex.elevation = val;
-                            
-                            // Save to history for undo/redo
-                            this.historyManager.push(this.state);
-                            
-                            this.canvasManager?.render();
-                            
-                            // Log the change
-                            console.log(`Vertex ${vertex.id.substring(0, 8)}: Elevation ${Math.round(oldElevation)}m → ${Math.round(val)}m`);
-                        }
-                    });
-
-                    // Bind smooth elevation button
-                    document.getElementById('btn-smooth-elevation')?.addEventListener('click', () => {
-                        this.smoothVertexElevation(plate, vertex);
-                    });
-
-                    // Bind deselect button
-                    document.getElementById('btn-deselect-vertex')?.addEventListener('click', () => {
-                        this.state.world.selectedVertexPlateId = null;
-                        this.state.world.selectedVertexId = null;
-                        this.updateUI();
-                        this.canvasManager?.render();
-                    });
-
-                    return;
-                }
-            }
-        }
 
         // Check for Mantle Plume Selection (No Plate, but Feature ID set)
         if (!this.state.world.selectedPlateId && this.state.world.selectedFeatureId && this.state.world.mantlePlumes) {
             const plumeId = this.state.world.selectedFeatureId;
             const plume = this.state.world.mantlePlumes.find(p => p.id === plumeId);
-            
+
             if (plume) {
                 const globalRate = this.state.world.globalOptions.hotspotSpawnRate || 1.0;
                 const isGlobal = plume.spawnRate === undefined;
@@ -5326,7 +3806,7 @@ class TectoLiteApp {
                     
                     <div class="property-group">
                         <label class="property-label">ID</label>
-                        <span class="property-value">${plume.id.substring(0,6)}</span>
+                        <span class="property-value">${plume.id.substring(0, 6)}</span>
                     </div>
 
                     <div class="property-group">
@@ -5353,24 +3833,24 @@ class TectoLiteApp {
                 document.getElementById('prop-plume-active')?.addEventListener('change', (e) => {
                     plume.active = (e.target as HTMLInputElement).checked;
                 });
-                
+
                 const propPlumeRate = document.getElementById('prop-plume-rate-main') as HTMLInputElement;
-                
+
                 if (propPlumeRate) {
-                     propPlumeRate.addEventListener('change', (e) => {
-                         const val = parseFloat((e.target as HTMLInputElement).value);
-                         if (!isNaN(val) && val > 0) plume.spawnRate = val;
-                     });
+                    propPlumeRate.addEventListener('change', (e) => {
+                        const val = parseFloat((e.target as HTMLInputElement).value);
+                        if (!isNaN(val) && val > 0) plume.spawnRate = val;
+                    });
                 }
-                
+
                 document.getElementById('btn-delete-plume')?.addEventListener('click', () => {
-                     this.state.world.mantlePlumes = this.state.world.mantlePlumes?.filter(p => p.id !== plumeId);
-                     this.state.world.selectedFeatureId = null;
-                     this.state.world.selectedFeatureIds = [];
-                     this.updateUI();
-                     this.canvasManager?.render();
+                    this.state.world.mantlePlumes = this.state.world.mantlePlumes?.filter(p => p.id !== plumeId);
+                    this.state.world.selectedFeatureId = null;
+                    this.state.world.selectedFeatureIds = [];
+                    this.updateUI();
+                    this.canvasManager?.render();
                 });
-                
+
                 return;
             }
         }
@@ -5420,15 +3900,9 @@ class TectoLiteApp {
         <input type="number" id="prop-density" class="property-input" value="${plate.density || (plate.crustType === 'oceanic' ? 3.0 : 2.7)}" step="0.1">
       </div>
 
-      <div class="property-group">
-        <label class="property-label">Mesh Starting Height (m) <span class="info-icon" data-tooltip="Initial elevation when mesh is generated. Leave blank to use isostatic calculation.">(i)</span></label>
-        <input type="number" id="prop-mesh-height" class="property-input" value="${plate.meshStartingHeight ?? ''}" placeholder="Auto (isostatic)" step="100">
-      </div>
 
-      <div class="property-group">
-        <label class="property-label">Crustal Thickness (km) <span class="info-icon" data-tooltip="Baseline crustal thickness for isostatic calculations. Continental: 35km, Oceanic: 7km, Thickened: 40-70km">(i)</span></label>
-        <input type="number" id="prop-crustal-thickness" class="property-input" value="${plate.crustalThickness ?? ''}" placeholder="${plate.crustType === 'oceanic' ? 7 : 35}" step="1" min="5" max="100">
-      </div>
+
+
       
       <div class="property-group">
         <label class="property-label">Layer (Z-Index) <span class="info-icon" data-tooltip="Visual stacking order. Continental plates get an automatic +1 bonus.">(i)</span></label>
@@ -5554,7 +4028,7 @@ class TectoLiteApp {
         document.getElementById('prop-crust-type')?.addEventListener('change', (e) => {
             const val = (e.target as HTMLSelectElement).value as 'continental' | 'oceanic';
             plate.crustType = val;
-            
+
             // Auto-update density defaults
             const densityInput = document.getElementById('prop-density') as HTMLInputElement;
             if (val === 'oceanic') {
@@ -5574,43 +4048,9 @@ class TectoLiteApp {
             }
         });
 
-        document.getElementById('prop-mesh-height')?.addEventListener('change', (e) => {
-            const val = (e.target as HTMLInputElement).value;
-            if (val === '' || val === null) {
-                // Clear custom height to use isostatic calculation
-                plate.meshStartingHeight = undefined;
-            } else {
-                const numVal = parseFloat(val);
-                if (!isNaN(numVal)) {
-                    plate.meshStartingHeight = numVal;
-                    // If mesh already generated, clear it so it regenerates with new height
-                    if (plate.crustMesh && plate.crustMesh.length > 0) {
-                        plate.crustMesh = undefined;
-                        plate.elevationSimulatedTime = undefined;
-                        this.canvasManager?.render();
-                    }
-                }
-            }
-        });
 
-        document.getElementById('prop-crustal-thickness')?.addEventListener('change', (e) => {
-            const val = (e.target as HTMLInputElement).value;
-            if (val === '' || val === null) {
-                // Clear custom thickness to use reference thickness
-                plate.crustalThickness = undefined;
-            } else {
-                const numVal = parseFloat(val);
-                if (!isNaN(numVal) && numVal > 0) {
-                    plate.crustalThickness = numVal;
-                    // Clear mesh so it regenerates with new thickness
-                    if (plate.crustMesh && plate.crustMesh.length > 0) {
-                        plate.crustMesh = undefined;
-                        plate.elevationSimulatedTime = undefined;
-                        this.canvasManager?.render();
-                    }
-                }
-            }
-        });
+
+
 
         document.getElementById('prop-z-index')?.addEventListener('change', (e) => {
             const val = parseInt((e.target as HTMLInputElement).value);
@@ -5659,7 +4099,7 @@ class TectoLiteApp {
             pole.visible = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
         });
-        
+
         document.getElementById('btn-copy-momentum')?.addEventListener('click', () => {
             const cbSpeed = document.getElementById('cb-copy-speed') as HTMLInputElement;
             const cbPole = document.getElementById('cb-copy-pole') as HTMLInputElement;
@@ -5679,12 +4119,12 @@ class TectoLiteApp {
             if (!this.momentumClipboard) return;
             const cbSpeed = document.getElementById('cb-copy-speed') as HTMLInputElement;
             const cbPole = document.getElementById('cb-copy-pole') as HTMLInputElement;
-            
+
             // Check checkboxes again for PASTE filtering (allowing user to uncheck before paste)
             // Or rely on clipboard content? 
             // User request: "add default on checkboxes ... so that the user can also only copy selective attributes"
             // Interpreting this as: Checkboxes affect what gets applied/pasted.
-            
+
             const doPasteSpeed = cbSpeed && cbSpeed.checked;
             const doPastePole = cbPole && cbPole.checked;
             const clip = this.momentumClipboard.eulerPole;
@@ -5725,17 +4165,17 @@ class TectoLiteApp {
 
         if (!singleFeatureId) {
             let html = '';
-            
+
             if (selectedFeatureIds.length > 1) {
-                 html += `
+                html += `
                   <hr class="property-divider">
                   <h4 class="property-section-title">Features</h4>
                   <p class="empty-message">${selectedFeatureIds.length} features selected</p>
                  `;
             } else {
-                 html += '<hr class="property-divider"><h4 class="property-section-title">Features</h4>';
+                html += '<hr class="property-divider"><h4 class="property-section-title">Features</h4>';
             }
-            
+
             // Plate Bound
             html += '<h5 style="margin:4px 0; font-size: 11px; color:var(--text-secondary);">Plate Bound</h5>';
             const features = plate.features;
@@ -5762,7 +4202,7 @@ class TectoLiteApp {
                     const activeColor = p.active ? '#ff00aa' : '#888888';
                     html += `<div class="plume-list-item" data-id="${p.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size:11px; border-left: 2px solid ${activeColor}; display:flex; justify-content:space-between;">
                         <span>Mantle Plume</span>
-                        <span style="color:var(--text-secondary);">${p.id.substring(0,6)}</span>
+                        <span style="color:var(--text-secondary);">${p.id.substring(0, 6)}</span>
                     </div>`;
                 });
                 html += '</div>';
@@ -5807,17 +4247,17 @@ class TectoLiteApp {
         <textarea id="feature-description" class="property-input" rows="2" placeholder="Description...">${description}</textarea>
       </div>
       ${(() => {
-          if (feature.type === 'hotspot' && feature.properties?.source === 'plume' && feature.properties?.plumeId) {
-             const plumeId = feature.properties.plumeId as string;
-             const plume = this.state.world.mantlePlumes?.find(p => p.id === plumeId);
-             if (plume) {
-                 const currentRate = plume.spawnRate;
-                 const globalRate = this.state.world.globalOptions.hotspotSpawnRate || 1.0;
-                 // If define, use it. If undefined, it uses global.
-                 const isGlobal = currentRate === undefined;
-                 const displayRate = isGlobal ? globalRate : currentRate;
-                 
-                 return `
+                if (feature.type === 'hotspot' && feature.properties?.source === 'plume' && feature.properties?.plumeId) {
+                    const plumeId = feature.properties.plumeId as string;
+                    const plume = this.state.world.mantlePlumes?.find(p => p.id === plumeId);
+                    if (plume) {
+                        const currentRate = plume.spawnRate;
+                        const globalRate = this.state.world.globalOptions.hotspotSpawnRate || 1.0;
+                        // If define, use it. If undefined, it uses global.
+                        const isGlobal = currentRate === undefined;
+                        const displayRate = isGlobal ? globalRate : currentRate;
+
+                        return `
                    <hr class="property-divider">
                    <h4 class="property-section-title">Mantle Plume Source</h4>
                    <div style="background:var(--bg-elevated); padding:8px; border-radius:4px;">
@@ -5831,10 +4271,10 @@ class TectoLiteApp {
                        </div>
                    </div>
                  `;
-             }
-          }
-          return '';
-      })()}
+                    }
+                }
+                return '';
+            })()}
     `;
     }
 
@@ -5845,31 +4285,31 @@ class TectoLiteApp {
             : (selectedFeatureIds.length === 0 ? selectedFeatureId : null);
 
         if (!singleFeatureId) {
-             // Bind list events
-             document.querySelectorAll('.feature-list-item').forEach(el => {
-                 el.addEventListener('click', () => {
-                     const id = el.getAttribute('data-id');
-                     if (id) {
-                         this.state.world.selectedFeatureId = id;
-                         this.state.world.selectedFeatureIds = [id];
-                         this.updateUI();
-                         this.canvasManager?.render();
-                     }
-                 });
-             });
-             document.querySelectorAll('.plume-list-item').forEach(el => {
-                 el.addEventListener('click', () => {
-                     const id = el.getAttribute('data-id');
-                     if (id) {
-                         this.state.world.selectedPlateId = null; 
-                         this.state.world.selectedFeatureId = id;
-                         this.state.world.selectedFeatureIds = [];
-                         this.updateUI();
-                         this.canvasManager?.render();
-                     }
-                 });
-             });
-             return;
+            // Bind list events
+            document.querySelectorAll('.feature-list-item').forEach(el => {
+                el.addEventListener('click', () => {
+                    const id = el.getAttribute('data-id');
+                    if (id) {
+                        this.state.world.selectedFeatureId = id;
+                        this.state.world.selectedFeatureIds = [id];
+                        this.updateUI();
+                        this.canvasManager?.render();
+                    }
+                });
+            });
+            document.querySelectorAll('.plume-list-item').forEach(el => {
+                el.addEventListener('click', () => {
+                    const id = el.getAttribute('data-id');
+                    if (id) {
+                        this.state.world.selectedPlateId = null;
+                        this.state.world.selectedFeatureId = id;
+                        this.state.world.selectedFeatureIds = [];
+                        this.updateUI();
+                        this.canvasManager?.render();
+                    }
+                });
+            });
+            return;
         }
 
         document.getElementById('feature-name')?.addEventListener('change', (e) => {
@@ -5908,40 +4348,40 @@ class TectoLiteApp {
         const propPlumeUseGlobal = document.getElementById('prop-plume-use-global') as HTMLInputElement;
 
         if (propPlumeRate && propPlumeUseGlobal) {
-             // Find plume ID
-             // We need to look up the feature again
-             const plates = this.state.world.plates;
-             let feature;
-             for (const p of plates) {
-                 feature = p.features.find(f => f.id === singleFeatureId);
-                 if (feature) break;
-             }
+            // Find plume ID
+            // We need to look up the feature again
+            const plates = this.state.world.plates;
+            let feature;
+            for (const p of plates) {
+                feature = p.features.find(f => f.id === singleFeatureId);
+                if (feature) break;
+            }
 
-             if (feature && feature.type === 'hotspot' && feature.properties?.plumeId) {
-                 const plumeId = feature.properties.plumeId;
-                 const plume = this.state.world.mantlePlumes?.find(p => p.id === plumeId);
+            if (feature && feature.type === 'hotspot' && feature.properties?.plumeId) {
+                const plumeId = feature.properties.plumeId;
+                const plume = this.state.world.mantlePlumes?.find(p => p.id === plumeId);
 
-                 if (plume) {
-                     propPlumeUseGlobal.addEventListener('change', (e) => {
-                         const useGlobal = (e.target as HTMLInputElement).checked;
-                         propPlumeRate.disabled = useGlobal;
-                         
-                         if (useGlobal) {
-                             delete plume.spawnRate;
-                             propPlumeRate.value = (this.state.world.globalOptions.hotspotSpawnRate || 1.0).toString();
-                         } else {
-                             plume.spawnRate = parseFloat(propPlumeRate.value) || 1.0;
-                         }
-                     });
+                if (plume) {
+                    propPlumeUseGlobal.addEventListener('change', (e) => {
+                        const useGlobal = (e.target as HTMLInputElement).checked;
+                        propPlumeRate.disabled = useGlobal;
 
-                     propPlumeRate.addEventListener('change', (e) => {
-                         const val = parseFloat((e.target as HTMLInputElement).value);
-                         if (!isNaN(val) && val > 0) {
-                             plume.spawnRate = val;
-                         }
-                     });
-                 }
-             }
+                        if (useGlobal) {
+                            delete plume.spawnRate;
+                            propPlumeRate.value = (this.state.world.globalOptions.hotspotSpawnRate || 1.0).toString();
+                        } else {
+                            plume.spawnRate = parseFloat(propPlumeRate.value) || 1.0;
+                        }
+                    });
+
+                    propPlumeRate.addEventListener('change', (e) => {
+                        const val = parseFloat((e.target as HTMLInputElement).value);
+                        if (!isNaN(val) && val > 0) {
+                            plume.spawnRate = val;
+                        }
+                    });
+                }
+            }
         }
     }
 
@@ -5973,7 +4413,7 @@ class TectoLiteApp {
         // Remove existing toast if any
         const existing = document.getElementById('toast-notification');
         if (existing) existing.remove();
-        
+
         const toast = document.createElement('div');
         toast.id = 'toast-notification';
         toast.style.cssText = `
@@ -5993,7 +4433,7 @@ class TectoLiteApp {
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         `;
         toast.textContent = message;
-        
+
         // Add animation keyframes if not present
         if (!document.getElementById('toast-styles')) {
             const style = document.createElement('style');
@@ -6010,9 +4450,9 @@ class TectoLiteApp {
             `;
             document.head.appendChild(style);
         }
-        
+
         document.body.appendChild(toast);
-        
+
         setTimeout(() => {
             toast.style.animation = 'toastFadeOut 0.2s ease-in forwards';
             setTimeout(() => toast.remove(), 200);
@@ -6023,21 +4463,21 @@ class TectoLiteApp {
         const display = document.getElementById('current-time');
         const slider = document.getElementById('time-slider') as HTMLInputElement;
         const modeLabel = document.getElementById('time-mode-label');
-        
+
         // Get current max time from timeline input
         const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
         const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-        
+
         // Transform internal time to display time
         const displayTime = toDisplayTime(this.state.world.currentTime, {
             maxTime: maxTime,
             mode: this.state.world.timeMode
         });
-        
+
         // Update display
         if (display) display.textContent = Math.abs(displayTime).toFixed(1);
         if (slider) slider.value = String(this.state.world.currentTime);
-        
+
         // Update label
         const label = this.state.world.timeMode === 'negative' ? 'years ago' : 'Ma';
         if (modeLabel) modeLabel.textContent = label;
@@ -6051,7 +4491,7 @@ class TectoLiteApp {
         if (!this.state.world.isPlaying) return;
 
         const currentTime = this.state.world.currentTime;
-        
+
         // Skip if in cooldown period (user rejected suggestions recently)
         if (currentTime < this.fusionSuggestionCooldownUntil) return;
 
@@ -6078,8 +4518,8 @@ class TectoLiteApp {
             const key = a < b ? `${a}|${b}` : `${b}|${a}`;
             const current = candidatePairs.get(key);
             if (!current || boundary.velocity > current.velocity) {
-                candidatePairs.set(key, { 
-                    ids: a < b ? [a, b] : [b, a], 
+                candidatePairs.set(key, {
+                    ids: a < b ? [a, b] : [b, a],
                     velocity: boundary.velocity,
                     overlapArea: boundary.overlapArea ?? 0,
                     crustTypes: [
@@ -6107,7 +4547,7 @@ class TectoLiteApp {
             const name1 = p1?.name || pair.ids[0];
             const name2 = p2?.name || pair.ids[1];
             const cmYr = (pair.velocity * planetRadius * 100000) / 1e6; // rad/Ma -> cm/yr
-            
+
             // Determine collision type label
             const ct0 = pair.crustTypes[0];
             const ct1 = pair.crustTypes[1];
@@ -6115,10 +4555,10 @@ class TectoLiteApp {
             if (ct0 === 'oceanic' && ct1 === 'oceanic') collisionType = 'Oceanic-Oceanic';
             else if (ct0 === 'continental' && ct1 === 'continental') collisionType = 'Continental-Continental';
             else if ((ct0 === 'oceanic' && ct1 === 'continental') || (ct0 === 'continental' && ct1 === 'oceanic')) collisionType = 'Ocean-Continent';
-            
+
             // Convert overlap area (deg²) to km² (rough approximation: 1 deg² ≈ 12300 km² at equator)
             const overlapKm2 = pair.overlapArea * 12300;
-            
+
             return `<div style="margin-bottom: 10px; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px;">
                 <b>${name1}</b> ↔ <b>${name2}</b><br>
                 <span style="font-size: 11px; color: #aaa;">
@@ -6151,15 +4591,15 @@ class TectoLiteApp {
                 content,
                 width: '480px',
                 buttons: [
-                    { 
-                        text: 'Skip (5 Ma cooldown)', 
+                    {
+                        text: 'Skip (5 Ma cooldown)',
                         isSecondary: true,
                         onClick: () => {
                             // Set cooldown to block suggestions for next 5 Ma
                             this.fusionSuggestionCooldownUntil = currentTime + 5;
                         }
                     },
-                    { text: 'OK', onClick: () => {} }
+                    { text: 'OK', onClick: () => { } }
                 ]
             });
         } else {
@@ -6170,31 +4610,31 @@ class TectoLiteApp {
     private confirmTimeInput(): void {
         const input = document.getElementById('time-input-field') as HTMLInputElement;
         const modal = document.getElementById('time-input-modal');
-        
+
         if (!input || !modal) return;
-        
+
         const displayTimeStr = input.value.trim();
         const parsedDisplayTime = parseTimeInput(displayTimeStr);
-        
+
         if (parsedDisplayTime === null) {
             alert('Please enter a valid time value');
             return;
         }
-        
+
         // Get max time for transformation
         const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
         const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-        
+
         // Transform display time to internal time
         const internalTime = toInternalTime(parsedDisplayTime, {
             maxTime: maxTime,
             mode: this.state.world.timeMode
         });
-        
+
         // Set the time
         this.simulation?.setTime(internalTime);
         this.updateTimeDisplay();
-        
+
         // Close modal
         modal.style.display = 'none';
     }
@@ -6207,10 +4647,10 @@ class TectoLiteApp {
      */
     private getDisplayTimeValue(internalTime: number | null | undefined): number | null {
         if (internalTime === null || internalTime === undefined) return null;
-        
+
         const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
         const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-        
+
         return toDisplayTime(internalTime, {
             maxTime: maxTime,
             mode: this.state.world.timeMode
@@ -6220,7 +4660,7 @@ class TectoLiteApp {
     private transformInputTime(userInputTime: number): number {
         const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
         const maxTime = maxTimeInput ? parseInt(maxTimeInput.value) : 500;
-        
+
         return toInternalTime(userInputTime, {
             maxTime: maxTime,
             mode: this.state.world.timeMode
@@ -6271,9 +4711,7 @@ class TectoLiteApp {
                     time: currentTime,
                     eulerPole: updated.motion.eulerPole,
                     snapshotPolygons: p.polygons,
-                    snapshotFeatures: p.features,
-                    snapshotPaintStrokes: p.paintStrokes || [],
-                    snapshotLandmasses: p.landmasses
+                    snapshotFeatures: p.features
                 };
 
                 const otherKeyframes = (p.motionKeyframes || []).filter(k => Math.abs(k.time - currentTime) > 0.001);
@@ -6300,45 +4738,7 @@ class TectoLiteApp {
             // When history is changed (motion keyframe added/modified), any Orogeny strokes 
             // generated in the future of the current time are now invalid results of a previous timeline.
             // We must prune them to avoid "ghosts" of interactions that may no longer happen.
-            if (processedPlate.paintStrokes && processedPlate.paintStrokes.length > 0) {
-                const prunedStrokes = processedPlate.paintStrokes.filter(s => {
-                    // Keep manual strokes (user drawing)
-                    if (s.source !== 'orogeny') return true;
-                    
-                    // Keep strokes from the past (birthTime < currentTime)
-                    // We treat stroke at Exactly currentTime as "past" (keep it) or "future" (discard)?
-                    // Since we are changing motion AT currentTime, the stroke generated AT currentTime 
-                    // is based on the OLD motion. It should probably be discarded so it can be regenerated this frame.
-                    // So: discard if birthTime >= currentTime.
-                    if (s.birthTime !== undefined && s.birthTime >= currentTime) return false;
-                    
-                    return true;
-                });
 
-                if (prunedStrokes.length !== processedPlate.paintStrokes.length) {
-                    processedPlate = {
-                        ...processedPlate,
-                        paintStrokes: prunedStrokes
-                    };
-                    
-                    // If we just modified the target plate's keyframe above, we should update the snapshot too,
-                    // otherwise the keyframe snapshot contains invalid future strokes.
-                    // However, snapshots represent the state "at that time".
-                    // If we are at T=50, the "future" strokes shouldn't exist in reality.
-                    // So cleaning them is correct.
-                    if (processedPlate.id === plateId && processedPlate.motionKeyframes) {
-                        // Find the keyframe we just added/updated (it's at currentTime)
-                        const keyframeIndex = processedPlate.motionKeyframes.findIndex(k => Math.abs(k.time - currentTime) < 0.001);
-                        if (keyframeIndex !== -1) {
-                            const kf = processedPlate.motionKeyframes[keyframeIndex];
-                            processedPlate.motionKeyframes[keyframeIndex] = {
-                                ...kf,
-                                snapshotPaintStrokes: prunedStrokes
-                            };
-                        }
-                    }
-                }
-            }
 
             return processedPlate;
         });
@@ -6370,9 +4770,9 @@ class TectoLiteApp {
         const current = this.state.world.currentTime;
         const displayCurrent = toDisplayTime(current, {
             maxTime: this.getMaxTime(),
-            mode: this.state.world.timeMode
+            mode: this.timeMode
         });
-        
+
         lblCurrent.textContent = String(displayCurrent);
         input.value = '';
         lblSpeedDeg.textContent = '--';
@@ -6412,11 +4812,11 @@ class TectoLiteApp {
             }
 
             const angleDeg = angleRad * 180 / Math.PI;
-            const rate = angleDeg / dt; 
+            const rate = angleDeg / dt;
 
             const speedMag = Math.abs(rate);
             lblSpeedDeg.textContent = rate.toFixed(2);
-            
+
             const cmYr = this.convertDegMaToCmYr(speedMag);
             lblSpeedCm.textContent = cmYr.toFixed(2);
 
@@ -6429,14 +4829,14 @@ class TectoLiteApp {
         const onInput = () => calculate();
 
         const onConfirm = () => {
-             const rate = calculate();
-             if (rate === null) {
-                 return;
-             }
-             
-             const pole = vectorToLatLon(axis);
-             this.handleMotionChange(plateId, pole, rate);
-             close();
+            const rate = calculate();
+            if (rate === null) {
+                return;
+            }
+
+            const pole = vectorToLatLon(axis);
+            this.handleMotionChange(plateId, pole, rate);
+            close();
         };
 
         const onKey = (e: KeyboardEvent) => {
@@ -6464,7 +4864,7 @@ class TectoLiteApp {
 
         // Only update this plate's motion (linked children inherit automatically)
         this.addMotionKeyframe(plateId, newEulerPole);
-        
+
         // Refresh property panel to show updated Euler pole position
         this.updatePropertiesPanel();
         // Force a canvas render to update Euler pole visualization
@@ -6518,30 +4918,13 @@ class TectoLiteApp {
     }
 
     // Helper for TimelineSystem to replace a plate (updating state)
-    public replacePlate(plate: TectonicPlate, invalidationTime?: number): void {
+    public replacePlate(plate: TectonicPlate): void {
         const index = this.state.world.plates.findIndex(p => p.id === plate.id);
         if (index !== -1) {
             let newPlates = [...this.state.world.plates];
             newPlates[index] = plate;
 
-            // Prune Future Orogeny Strokes if time provided
-            if (invalidationTime !== undefined) {
-                newPlates = newPlates.map(p => {
-                    if (!p.paintStrokes) return p;
-                    const pruned = p.paintStrokes.filter(s => {
-                        // Keep manual strokes (user drawing)
-                        if (s.source !== 'orogeny') return true;
-                        // Prune if birthTime is after invalidation time
-                        if (s.birthTime !== undefined && s.birthTime >= invalidationTime) return false;
-                        return true;
-                    });
-                    
-                    if (pruned.length !== p.paintStrokes.length) {
-                        return { ...p, paintStrokes: pruned };
-                    }
-                    return p;
-                });
-            }
+
 
             this.state = {
                 ...this.state,

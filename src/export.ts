@@ -26,9 +26,7 @@ export interface PNGExportOptions {
     waterMode: 'transparent' | 'color' | 'white';
     plateColorMode: 'native' | 'land';
     showGrid: boolean;
-    includePaint?: boolean;
     includeFeatures?: boolean;
-    includeLandmasses?: boolean;
 }
 
 export function exportToPNG(
@@ -50,7 +48,7 @@ export function exportToPNG(
     // Use the current viewport settings but scaled to the new resolution
     const ratio = width / state.viewport.width;
     const currentTime = state.world.currentTime;
-    const { waterMode, plateColorMode, includeLandmasses, includeFeatures, includePaint } = options;
+    const { waterMode, plateColorMode, includeFeatures } = options;
 
     const exportViewport = {
         ...state.viewport,
@@ -117,14 +115,7 @@ export function exportToPNG(
             ctx.stroke();
         }
 
-        // Landmasses
-        if (includeLandmasses && plate.landmasses) {
-            for (const landmass of plate.landmasses) {
-                if (currentTime < landmass.birthTime) continue;
-                if (landmass.deathTime !== undefined && currentTime >= landmass.deathTime) continue;
-                drawLandmass(ctx, pm, landmass, ratio);
-            }
-        }
+
 
         // Features
         if (includeFeatures !== false) {
@@ -133,36 +124,7 @@ export function exportToPNG(
             }
         }
 
-        // Paint Strokes
-        if (includePaint && plate.paintStrokes) {
-            for (const stroke of plate.paintStrokes) {
-                if (stroke.points.length < 2) continue;
 
-                ctx.strokeStyle = stroke.color;
-                ctx.lineWidth = stroke.width * ratio;
-                ctx.globalAlpha = stroke.opacity;
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-
-                ctx.beginPath();
-                let isFirstPoint = true;
-
-                for (const point of stroke.points) {
-                    const proj = pm.project(point);
-                    if (!proj) continue;
-
-                    if (isFirstPoint) {
-                        ctx.moveTo(proj[0], proj[1]);
-                        isFirstPoint = false;
-                    } else {
-                        ctx.lineTo(proj[0], proj[1]);
-                    }
-                }
-
-                ctx.stroke();
-                ctx.globalAlpha = 1.0;
-            }
-        }
     }
 
     // Trigger download
@@ -193,34 +155,7 @@ function drawFeature(
     ctx.restore();
 }
 
-function drawLandmass(
-    ctx: CanvasRenderingContext2D,
-    pm: ProjectionManager,
-    landmass: { polygon: [number, number][]; fillColor: string; strokeColor?: string; opacity: number },
-    scaleRatio: number
-): void {
-    if (!landmass.polygon || landmass.polygon.length < 3) return;
 
-    const ring = [...landmass.polygon, landmass.polygon[0]];
-    const geojson = {
-        type: 'Polygon',
-        coordinates: [ring]
-    } as any;
-
-    ctx.save();
-    ctx.globalAlpha = landmass.opacity;
-    ctx.beginPath();
-    pm.getPathGenerator()(geojson);
-    ctx.fillStyle = landmass.fillColor || '#8B4513';
-    ctx.fill();
-
-    if (landmass.strokeColor) {
-        ctx.strokeStyle = landmass.strokeColor;
-        ctx.lineWidth = 1 * scaleRatio;
-        ctx.stroke();
-    }
-    ctx.restore();
-}
 
 // JSON Export functionality
 const SAVE_VERSION = 1;
@@ -542,17 +477,13 @@ export interface UnifiedExportOptions {
 export function showUnifiedExportDialog(defaults?: {
     projection?: ProjectionType;
     showGrid?: boolean;
-    includePaint?: boolean;
     includeFeatures?: boolean;
-    includeLandmasses?: boolean;
 }): Promise<UnifiedExportOptions | null> {
     return new Promise((resolve) => {
         const pngDefaults = {
             projection: defaults?.projection || 'orthographic',
             showGrid: defaults?.showGrid ?? true,
-            includePaint: defaults?.includePaint ?? true,
-            includeFeatures: defaults?.includeFeatures ?? true,
-            includeLandmasses: defaults?.includeLandmasses ?? true
+            includeFeatures: defaults?.includeFeatures ?? true
         };
 
         const overlay = document.createElement('div');
@@ -615,14 +546,6 @@ export function showUnifiedExportDialog(defaults?: {
                     <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
                         <input type="checkbox" id="png-include-features" ${pngDefaults.includeFeatures ? 'checked' : ''}>
                         <span>Features</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                        <input type="checkbox" id="png-include-paint" ${pngDefaults.includePaint ? 'checked' : ''}>
-                        <span>Paint</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                        <input type="checkbox" id="png-include-landmasses" ${pngDefaults.includeLandmasses ? 'checked' : ''}>
-                        <span>Landmasses</span>
                     </label>
                 </div>
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution:</label>
@@ -706,15 +629,15 @@ export function showUnifiedExportDialog(defaults?: {
                 const target = e.target as HTMLElement;
                 const formatId = target.id;
                 const format = formatId.replace('fmt-', '') as UnifiedExportFormat;
-                
+
                 selectedFormat = format;
-                
+
                 // Update button styles
                 formatBtns.forEach((b) => {
                     (b as HTMLElement).style.borderColor = '#45475a';
                 });
                 (target as HTMLElement).style.borderColor = '#89b4fa';
-                
+
                 // Show/hide option panels
                 (dialog.querySelector('#options-png') as HTMLElement).style.display = format === 'png' ? 'block' : 'none';
                 (dialog.querySelector('#options-heightmap') as HTMLElement).style.display = format === 'heightmap' ? 'block' : 'none';
@@ -730,32 +653,24 @@ export function showUnifiedExportDialog(defaults?: {
             const height = dialog.querySelector('#export-height') as HTMLInputElement;
             const grid = dialog.querySelector('#png-show-grid') as HTMLInputElement;
             const features = dialog.querySelector('#png-include-features') as HTMLInputElement;
-            const paint = dialog.querySelector('#png-include-paint') as HTMLInputElement;
-            const landmasses = dialog.querySelector('#png-include-landmasses') as HTMLInputElement;
 
-            if (!width || !height || !grid || !features || !paint || !landmasses) return;
+            if (!width || !height || !grid || !features) return;
 
             if (preset === 'presentation') {
                 width.value = '1920';
                 height.value = '1080';
                 grid.checked = false;
                 features.checked = true;
-                paint.checked = false;
-                landmasses.checked = true;
             } else if (preset === 'print') {
                 width.value = '4096';
                 height.value = '2160';
                 grid.checked = false;
                 features.checked = true;
-                paint.checked = true;
-                landmasses.checked = true;
             } else if (preset === 'gis') {
                 width.value = '4096';
                 height.value = '2048';
                 grid.checked = true;
                 features.checked = false;
-                paint.checked = false;
-                landmasses.checked = true;
             }
         };
 
@@ -772,15 +687,13 @@ export function showUnifiedExportDialog(defaults?: {
 
         dialog.querySelector('#export-confirm')?.addEventListener('click', () => {
             cleanup();
-            
+
             if (selectedFormat === 'png') {
                 const w = parseInt((dialog.querySelector('#export-width') as HTMLInputElement).value);
                 const h = parseInt((dialog.querySelector('#export-height') as HTMLInputElement).value);
                 const proj = (dialog.querySelector('#export-projection') as HTMLSelectElement).value as ProjectionType;
                 const showGrid = (dialog.querySelector('#png-show-grid') as HTMLInputElement).checked;
                 const includeFeatures = (dialog.querySelector('#png-include-features') as HTMLInputElement).checked;
-                const includePaint = (dialog.querySelector('#png-include-paint') as HTMLInputElement).checked;
-                const includeLandmasses = (dialog.querySelector('#png-include-landmasses') as HTMLInputElement).checked;
                 if (w > 0 && h > 0) {
                     resolve({
                         format: 'png',
@@ -788,9 +701,7 @@ export function showUnifiedExportDialog(defaults?: {
                         width: w,
                         height: h,
                         showGrid,
-                        includeFeatures,
-                        includePaint,
-                        includeLandmasses
+                        includeFeatures
                     });
                 }
             } else if (selectedFormat === 'heightmap') {

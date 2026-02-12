@@ -13,7 +13,7 @@ export class EventEffectsProcessor {
 
         if (committedEvents.length === 0) return state;
 
-        const meshEnabled = state.world.globalOptions.enableElevationSimulation === true;
+
         const planetRadius = state.world.globalOptions.customRadiusEnabled
             ? (state.world.globalOptions.customPlanetRadius || state.world.globalOptions.planetRadius)
             : state.world.globalOptions.planetRadius;
@@ -42,8 +42,7 @@ export class EventEffectsProcessor {
                 plates = plates.map(plate => {
                     if (!targetPlateIds.includes(plate.id)) return plate;
 
-                    const meshActive = meshEnabled && !!plate.crustMesh && plate.crustMesh.length > 0;
-                    if (meshActive) return plate;
+
 
                     const hasEventFeatures = plate.features.some(f => this.isEventFeature(f, event.id, consequence.id));
                     if (hasEventFeatures) return plate;

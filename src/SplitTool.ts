@@ -1,4 +1,4 @@
-import { AppState, TectonicPlate, Polygon, Coordinate, CrustVertex, Landmass, generateId, createDefaultMotion } from './types';
+import { AppState, TectonicPlate, Polygon, Coordinate, generateId, createDefaultMotion, MotionKeyframe } from './types';
 import {
     Vector3,
     latLonToVector,
@@ -7,9 +7,7 @@ import {
     dot,
     normalize,
     calculateSphericalCentroid,
-    distance
 } from './utils/sphericalMath';
-import { ElevationSystem } from './systems/ElevationSystem';
 
 // Legacy interface for start/end splits
 interface SplitLine {
@@ -251,58 +249,6 @@ function splitPolygonWithPolyline(
     return [polyA, polyB];
 }
 
-function sampleNearestVertexAttributes(
-    parentMesh: CrustVertex[],
-    position: Coordinate
-): Pick<CrustVertex, 'elevation' | 'sediment' | 'crustalThickness' | 'isOceanic'> {
-    if (parentMesh.length === 0) {
-        return { elevation: 0, sediment: 0, crustalThickness: 35, isOceanic: false };
-    }
-
-    let nearest = parentMesh[0];
-    let minDist = distance(position, nearest.pos);
-
-    for (let i = 1; i < parentMesh.length; i++) {
-        const candidate = parentMesh[i];
-        const d = distance(position, candidate.pos);
-        if (d < minDist) {
-            minDist = d;
-            nearest = candidate;
-        }
-    }
-
-    return {
-        elevation: nearest.elevation ?? 0,
-        sediment: nearest.sediment ?? 0,
-        crustalThickness: nearest.crustalThickness ?? (nearest.isOceanic ? 7 : 35),
-        isOceanic: nearest.isOceanic ?? false
-    };
-}
-
-function rebuildMeshFromParent(
-    plate: TectonicPlate,
-    parentMesh: CrustVertex[],
-    resolution: number
-): CrustVertex[] | undefined {
-    const elevationSystem = new ElevationSystem();
-    const initializedPlate = elevationSystem.initializePlateMesh(plate, resolution);
-
-    if (!initializedPlate.crustMesh || initializedPlate.crustMesh.length === 0) {
-        return undefined;
-    }
-
-    return initializedPlate.crustMesh.map(vertex => {
-        const attrs = sampleNearestVertexAttributes(parentMesh, vertex.pos);
-        return {
-            ...vertex,
-            elevation: attrs.elevation,
-            sediment: attrs.sediment,
-            crustalThickness: attrs.crustalThickness,
-            isOceanic: attrs.isOceanic
-        };
-    });
-}
-
 export function splitPlate(
     state: AppState,
     plateId: string,
@@ -381,157 +327,34 @@ export function splitPlate(
         }
     }
 
-    // Assign Paint Strokes based on point-in-polygon
-    const leftPaintStrokes = [];
-    const rightPaintStrokes = [];
 
-    // Calculate the new centers for proper paint coordinate conversion
+
+    // Calculate the new centers
     const leftCenter = calculateSphericalCentroid(leftPolygons.flatMap(p => p.points));
     const rightCenter = calculateSphericalCentroid(rightPolygons.flatMap(p => p.points));
 
-    if (plateToSplit.paintStrokes) {
-        for (const stroke of plateToSplit.paintStrokes) {
-            // Keep points as World Coordinates (SimulationEngine handles rotation)
-            // Visual clipping in CanvasManager handles hiding parts outside boundaries.
-            
-            if (stroke.points.length >= 2) {
-                const { id, points, ...strokeMeta } = stroke;
-                
-                // Add to Left Plate
-                const currentTime = state.world.currentTime;
-                leftPaintStrokes.push({ 
-                    ...strokeMeta, 
-                    points: [...stroke.points], 
-                    originalPoints: [...stroke.points], 
-                    birthTime: currentTime, // Reset birth time to split time
-                    id: generateId() 
-                });
-
-                // Add to Right Plate
-                rightPaintStrokes.push({ 
-                    ...strokeMeta, 
-                    points: [...stroke.points], 
-                    originalPoints: [...stroke.points], 
-                    birthTime: currentTime, // Reset birth time to split time
-                    id: generateId() 
-                });
-            }
-        }
-    }
-
-    // Split Landmasses using polygon clipping (geometric split)
-    const leftLandmasses: Landmass[] = [];
-    const rightLandmasses: Landmass[] = [];
-    
-    // Generate IDs for new plates early so we can link landmasses to them
+    // Generate IDs for new plates
     const leftPlateId = generateId();
     const rightPlateId = generateId();
 
     const currentTime = state.world.currentTime;
-    if (plateToSplit.landmasses) {
-        for (const landmass of plateToSplit.landmasses) {
-            // Split landmass polygon using the same polyline
-            const [leftPoly, rightPoly] = splitPolygonWithPolyline(landmass.polygon, polylinePoints);
-
-            if (leftPoly.length >= 3) {
-                leftLandmasses.push({
-                    ...landmass,
-                    id: generateId(),
-                    polygon: leftPoly,
-                    originalPolygon: leftPoly, // Reset original for new plate
-                    birthTime: currentTime, // Reset birth time to split time to prevent double-rotation in simulation
-                    // Update link to point to the new left plate (if was linked to parent)
-                    linkedToPlateId: landmass.linkedToPlateId === plateToSplit.id ? leftPlateId : landmass.linkedToPlateId
-                });
-            }
-            if (rightPoly.length >= 3) {
-                rightLandmasses.push({
-                    ...landmass,
-                    id: generateId(),
-                    polygon: rightPoly,
-                    originalPolygon: rightPoly, // Reset original for new plate
-                    birthTime: currentTime, // Reset birth time to split time to prevent double-rotation in simulation
-                    // Update link to point to the new right plate (if was linked to parent)
-                    linkedToPlateId: landmass.linkedToPlateId === plateToSplit.id ? rightPlateId : landmass.linkedToPlateId
-                });
-            }
-
-            // Fallback: If landmass wasn't intersected by split line (not added to either side)
-            // assign it to the appropriate plate based on which side contains it
-            if (leftPoly.length < 3 && rightPoly.length < 3) {
-                // Calculate centroid of the landmass to determine which plate contains it
-                const centroid = calculateSphericalCentroid(landmass.polygon);
-
-                // Check which child plate contains the landmass centroid
-                const inLeft = leftPolygons.some(poly => isPointInPolygon(centroid, poly.points));
-                const inRight = rightPolygons.some(poly => isPointInPolygon(centroid, poly.points));
-
-                const newLandmass = {
-                    ...landmass,
-                    id: generateId(),
-                    polygon: landmass.polygon,
-                    originalPolygon: landmass.polygon,
-                    birthTime: currentTime // Reset birth time to split time to prevent double-rotation
-                };
-
-                if (inLeft) {
-                    newLandmass.linkedToPlateId = landmass.linkedToPlateId === plateToSplit.id ? leftPlateId : landmass.linkedToPlateId;
-                    leftLandmasses.push(newLandmass);
-                } else if (inRight) {
-                    newLandmass.linkedToPlateId = landmass.linkedToPlateId === plateToSplit.id ? rightPlateId : landmass.linkedToPlateId;
-                    rightLandmasses.push(newLandmass);
-                } else {
-                    // Edge case: landmass on boundary - use dot product with normal to assign
-                    const v = latLonToVector(centroid);
-                    if (dot(v, overallNormal) > 0) {
-                        newLandmass.linkedToPlateId = landmass.linkedToPlateId === plateToSplit.id ? leftPlateId : landmass.linkedToPlateId;
-                        leftLandmasses.push(newLandmass);
-                    } else {
-                        newLandmass.linkedToPlateId = landmass.linkedToPlateId === plateToSplit.id ? rightPlateId : landmass.linkedToPlateId;
-                        rightLandmasses.push(newLandmass);
-                    }
-                }
-            }
-        }
-    }
-
-    // Rebuild Mesh for children (if parent had mesh) and transfer attributes
-    let leftMeshVertices: CrustVertex[] | undefined;
-    let rightMeshVertices: CrustVertex[] | undefined;
-
-    if (plateToSplit.crustMesh && plateToSplit.crustMesh.length > 0) {
-        const resolution = state.world.globalOptions.meshResolution || 150;
-        leftMeshVertices = rebuildMeshFromParent(
-            { ...plateToSplit, polygons: leftPolygons, center: leftCenter },
-            plateToSplit.crustMesh,
-            resolution
-        );
-        rightMeshVertices = rebuildMeshFromParent(
-            { ...plateToSplit, polygons: rightPolygons, center: rightCenter },
-            plateToSplit.crustMesh,
-            resolution
-        );
-    }
-
 
     // Create two new plates with default motion (0) OR inherited
     // currentTime already declared above
     const newMotion = inheritMomentum ? { ...plateToSplit.motion } : createDefaultMotion();
 
-    const leftKeyframe = {
+    const leftKeyframe: MotionKeyframe = {
         time: currentTime,
         eulerPole: { ...newMotion.eulerPole },
         snapshotPolygons: leftPolygons,
-        snapshotFeatures: leftFeatures,
-        snapshotLandmasses: leftLandmasses
+        snapshotFeatures: leftFeatures
     };
 
-    const rightKeyframe = {
+    const rightKeyframe: MotionKeyframe = {
         time: currentTime,
         eulerPole: { ...newMotion.eulerPole },
         snapshotPolygons: rightPolygons,
-        snapshotFeatures: rightFeatures,
-        snapshotLandmasses: rightLandmasses
+        snapshotFeatures: rightFeatures
     };
 
     const inheritedDescription = plateToSplit.inheritDescription ? plateToSplit.description : undefined;
@@ -543,8 +366,6 @@ export function splitPlate(
         name: `${plateToSplit.name} (A)`,
         polygons: leftPolygons,
         features: leftFeatures,
-        paintStrokes: leftPaintStrokes,
-        landmasses: leftLandmasses.length > 0 ? leftLandmasses : undefined,
         motion: newMotion,
         motionKeyframes: [leftKeyframe],
         visible: true,
@@ -557,9 +378,7 @@ export function splitPlate(
         parentPlateId: plateToSplit.id, // Track parent for feature propagation
         parentPlateIds: [plateToSplit.id],
         initialPolygons: leftPolygons,
-        initialFeatures: leftFeatures,
-        crustMesh: leftMeshVertices && leftMeshVertices.length > 0 ? leftMeshVertices : undefined,
-        elevationSimulatedTime: currentTime
+        initialFeatures: leftFeatures
     };
 
     const rightPlate: TectonicPlate = {
@@ -569,8 +388,6 @@ export function splitPlate(
         name: `${plateToSplit.name} (B)`,
         polygons: rightPolygons,
         features: rightFeatures,
-        paintStrokes: rightPaintStrokes,
-        landmasses: rightLandmasses.length > 0 ? rightLandmasses : undefined,
         motion: newMotion,
         motionKeyframes: [rightKeyframe],
         visible: true,
@@ -583,17 +400,13 @@ export function splitPlate(
         parentPlateId: plateToSplit.id, // Track parent for feature propagation
         parentPlateIds: [plateToSplit.id],
         initialPolygons: rightPolygons,
-        initialFeatures: rightFeatures,
-        crustMesh: rightMeshVertices && rightMeshVertices.length > 0 ? rightMeshVertices : undefined,
-        elevationSimulatedTime: currentTime
+        initialFeatures: rightFeatures
     };
 
-    // Mark old plate as dead and clear its mesh to prevent ghost interactions
+    // Mark old plate as dead
     const updatedOldPlate = {
         ...plateToSplit,
         deathTime: state.world.currentTime,
-        crustMesh: undefined, // Clear mesh to prevent ghost interactions on replay
-        elevationSimulatedTime: undefined,
         events: [
             ...(plateToSplit.events || []),
             {
@@ -617,3 +430,4 @@ export function splitPlate(
         }
     };
 }
+

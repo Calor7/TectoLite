@@ -1,5 +1,5 @@
-import { AppState, TectonicPlate, Coordinate, Feature, PaintStroke, Landmass } from './types';
-import polygonClipping from 'polygon-clipping';
+import { AppState, TectonicPlate, Coordinate, Feature } from './types';
+
 import {
     toRad,
     latLonToVector,
@@ -10,7 +10,6 @@ import {
 } from './utils/sphericalMath';
 import { BoundarySystem } from './BoundarySystem';
 import { GeologicalAutomationSystem } from './systems/GeologicalAutomation';
-import { ElevationSystem } from './systems/ElevationSystem';
 import { EventEffectsProcessor } from './systems/EventEffectsProcessor';
 import { eventSystem } from './systems/EventSystem';
 
@@ -20,15 +19,13 @@ export class SimulationEngine {
     private lastUpdate = 0;
     private animationId: number | null = null;
     private geologicalAutomation: GeologicalAutomationSystem;
-    private elevationSystem: ElevationSystem;
     private eventEffectsProcessor: EventEffectsProcessor;
 
     constructor(
         private getState: () => AppState,
         private setState: (updater: (state: AppState) => AppState) => void
-    ) { 
+    ) {
         this.geologicalAutomation = new GeologicalAutomationSystem();
-        this.elevationSystem = new ElevationSystem();
         this.eventEffectsProcessor = new EventEffectsProcessor();
     }
 
@@ -111,11 +108,9 @@ export class SimulationEngine {
             });
 
             // Calculate Boundaries if enabled
-            // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization OR Guided Creation is enabled.
+            // ALWAYS update boundaries if Visualization OR Guided Creation is enabled.
             // If none are on, clear boundaries to prevent stale artifacts.
-            const boundaries = (globalOptions.enableBoundaryVisualization || 
-                globalOptions.enableOrogeny || 
-                globalOptions.enableElevationSimulation ||
+            const boundaries = (globalOptions.enableBoundaryVisualization ||
                 globalOptions.enableGuidedCreation ||
                 globalOptions.pauseOnFusionSuggestion)
                 ? BoundarySystem.detectBoundaries(newPlates, time)
@@ -132,16 +127,16 @@ export class SimulationEngine {
                 }
             };
             const postAutomationState = this.geologicalAutomation.update(tempState);
-            
+
             // Phase 5: Event System (detect tectonic events for guided creation)
             const postEventState = eventSystem.update(postAutomationState);
             const postEffectState = this.eventEffectsProcessor.update(postEventState);
-            
-            // Phase 6: Elevation System (use signed deltaT to detect direction)
-            const deltaT = time - state.world.currentTime;
-            const finalState = this.elevationSystem.update(postEffectState, deltaT);
 
-            return finalState;
+            // Phase 6: Elevation System - REMOVED
+            // const deltaT = time - state.world.currentTime;
+            // const finalState = this.elevationSystem.update(postEffectState, deltaT);
+
+            return postEffectState;
         });
         this.updateFlowlines();
     }
@@ -199,16 +194,14 @@ export class SimulationEngine {
             });
 
             // Calculate Boundaries if enabled
-            // ALWAYS update boundaries if Orogeny OR Elevation OR Visualization OR Guided Creation is enabled.
+            // ALWAYS update boundaries if Visualization OR Guided Creation is enabled.
             // If none are on, clear boundaries to prevent stale artifacts.
-            const boundaries = (globalOptions.enableBoundaryVisualization || 
-                globalOptions.enableOrogeny || 
-                globalOptions.enableElevationSimulation ||
+            const boundaries = (globalOptions.enableBoundaryVisualization ||
                 globalOptions.enableGuidedCreation ||
                 globalOptions.pauseOnFusionSuggestion)
                 ? BoundarySystem.detectBoundaries(newPlates, newTime)
                 : [];
-            
+
             // Phase 3: Geological Automation (during tick)
             const tempState = {
                 ...state,
@@ -220,13 +213,10 @@ export class SimulationEngine {
                 }
             };
             const postAutomationState = this.geologicalAutomation.update(tempState);
-            
+
             // Phase 4: Event System (detect tectonic events for guided creation)
             const postEventState = eventSystem.update(postAutomationState);
-            const postEffectState = this.eventEffectsProcessor.update(postEventState);
-            
-            // Phase 5: Elevation System
-            const finalState = this.elevationSystem.update(postEffectState, deltaMa);
+            const finalState = this.eventEffectsProcessor.update(postEventState);
 
             return finalState;
         });
@@ -236,10 +226,10 @@ export class SimulationEngine {
     private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {
         // Check if this plate is linked to a parent plate - if so, inherit parent motion
         let parentLinkedPlate: TectonicPlate | undefined;
-        
+
         if (plate.linkedToPlateId) {
             parentLinkedPlate = allPlates.find(p => p.id === plate.linkedToPlateId);
-            
+
             // Prevent infinite recursion: if parent is also linked back to this plate, break the cycle
             if (parentLinkedPlate && parentLinkedPlate.linkedToPlateId === plate.id) {
                 console.warn(`Circular link detected between ${plate.id} and ${parentLinkedPlate.id}, breaking link`);
@@ -247,18 +237,9 @@ export class SimulationEngine {
             }
         }
 
-        // First, check if we need to inherit features/landmasses/paint from parent plate(s)
+        // First, check if we need to inherit features from parent plate(s)
         let inheritedFeatures: Feature[] = [];
-        let inheritedLandmasses: Landmass[] = [];
-        let inheritedPaintStrokes: PaintStroke[] = [];
         const parentIds = plate.parentPlateIds || (plate.parentPlateId ? [plate.parentPlateId] : []);
-
-        // Build a set of existing IDs on the child plate to avoid duplicates
-        const existingLandmassIds = new Set((plate.landmasses || []).map(l => l.id));
-        const existingStrokeIds = new Set((plate.paintStrokes || []).map(s => s.id));
-        // Track inherited source IDs to avoid inheriting the same parent item twice
-        const inheritedLandmassSourceIds = new Set<string>();
-        const inheritedStrokeSourceIds = new Set<string>();
 
         for (const pid of parentIds) {
             const parentPlate = allPlates.find(p => p.id === pid);
@@ -282,97 +263,6 @@ export class SimulationEngine {
                     !inheritedFeatures.some(existing => existing.id === f.id);
             });
             inheritedFeatures.push(...featuresToInherit);
-
-            // 2. Inherit Landmasses (with clipping for temporal consistency)
-            // Use landmass.polygon (current rotated position) for clipping since it matches parent's current frame
-            const candidateLandmasses = (parentPlate.landmasses || []).filter(l =>
-                l.birthTime !== undefined &&
-                l.birthTime >= parentPlate.birthTime &&
-                l.birthTime <= transitionTime
-            );
-
-            for (const landmass of candidateLandmasses) {
-                // Skip if already inherited from this source
-                if (inheritedLandmassSourceIds.has(landmass.id)) continue;
-                
-                // Create deterministic ID based on parent landmass ID + child plate ID
-                const inheritedId = `${landmass.id}_inherit_${plate.id}`;
-                
-                // Skip if child already has this inherited landmass
-                if (existingLandmassIds.has(inheritedId)) continue;
-                
-                // Use current polygon (rotated to match parent's current position) for clipping
-                // This ensures the clip happens in the same reference frame as the child's initialPolygons
-                const sourcePoly = landmass.polygon;
-                const childPolys: any = plate.initialPolygons.map(p => [p.points.map(pt => [pt[0], pt[1]])]);
-                const landmassPoly: any = [[sourcePoly.map(pt => [pt[0], pt[1]])]];
-                
-                try {
-                    const intersected = polygonClipping.intersection(childPolys, landmassPoly);
-                    if (intersected && intersected.length > 0) {
-                        for (const multiPoly of intersected) {
-                            for (const ring of multiPoly) {
-                                const points = ring.slice(0, -1).map(pt => [pt[0], pt[1]] as Coordinate);
-                                if (points.length >= 3) {
-                                    inheritedLandmasses.push({
-                                        ...landmass,
-                                        id: inheritedId,
-                                        polygon: points,
-                                        originalPolygon: points, // Reset original to clipped position
-                                        birthTime: transitionTime,
-                                        linkedToPlateId: plate.id
-                                    });
-                                    inheritedLandmassSourceIds.add(landmass.id);
-                                    break; // Only take first valid ring per landmass
-                                }
-                            }
-                            if (inheritedLandmassSourceIds.has(landmass.id)) break;
-                        }
-                    }
-                } catch (e) {
-                     // Fallback to centroid check using current position
-                     const centroid = calculateSphericalCentroid(sourcePoly);
-                     if (plate.initialPolygons.some(poly => this.isPointInPolygon(centroid, poly.points))) {
-                         inheritedLandmasses.push({
-                             ...landmass,
-                             id: inheritedId,
-                             polygon: sourcePoly,
-                             originalPolygon: sourcePoly,
-                             birthTime: transitionTime,
-                             linkedToPlateId: plate.id
-                         });
-                         inheritedLandmassSourceIds.add(landmass.id);
-                     }
-                }
-            }
-
-            // 3. Inherit Paint Strokes
-            const candidateStrokes = (parentPlate.paintStrokes || []).filter(s =>
-                s.birthTime !== undefined &&
-                s.birthTime >= parentPlate.birthTime &&
-                s.birthTime <= transitionTime
-            );
-
-            for (const stroke of candidateStrokes) {
-                // Skip if already inherited
-                if (inheritedStrokeSourceIds.has(stroke.id)) continue;
-                
-                const inheritedId = `${stroke.id}_inherit_${plate.id}`;
-                if (existingStrokeIds.has(inheritedId)) continue;
-                
-                // Use originalPoints for stable reference
-                const sourcePoints = stroke.originalPoints || stroke.points;
-                if (sourcePoints.length > 0 && plate.initialPolygons.some(poly => this.isPointInPolygon(sourcePoints[0], poly.points))) {
-                    inheritedPaintStrokes.push({
-                        ...stroke,
-                        id: inheritedId,
-                        points: [...sourcePoints],
-                        originalPoints: [...sourcePoints],
-                        birthTime: transitionTime
-                    });
-                    inheritedStrokeSourceIds.add(stroke.id);
-                }
-            }
         }
 
         // Find the active keyframe for this time (latest keyframe with time <= query time)
@@ -380,7 +270,8 @@ export class SimulationEngine {
 
         // If no keyframes, fall back to legacy motion from birth
         if (keyframes.length === 0) {
-            return this.calculateWithLegacyMotion(plate, time, inheritedFeatures, inheritedLandmasses, inheritedPaintStrokes);
+            // Note: calculateWithLegacyMotion also needs cleanup, but for now we pass fewer args
+            return this.calculateWithLegacyMotion(plate, time, inheritedFeatures);
         }
 
         // Find active keyframe (latest one that starts at or before query time)
@@ -396,23 +287,11 @@ export class SimulationEngine {
                 !initialFeatureIds.has(f.id) && f.generatedAt !== undefined
             );
             const mergedFeatures = [...(plate.initialFeatures || []), ...dynamicFeatures, ...inheritedFeatures];
-            
-            // Same for landmasses - filter out any that match inherited IDs to avoid duplicates
-            const inheritedLandmassIds = new Set(inheritedLandmasses.map(l => l.id));
-            const existingLandmasses = (plate.landmasses || []).filter(l => !inheritedLandmassIds.has(l.id));
-            const mergedLandmasses = [...existingLandmasses, ...inheritedLandmasses];
-
-            // Same for strokes
-            const inheritedStrokeIds = new Set(inheritedPaintStrokes.map(s => s.id));
-            const existingStrokes = (plate.paintStrokes || []).filter(s => !inheritedStrokeIds.has(s.id));
-            const mergedStrokes = [...existingStrokes, ...inheritedPaintStrokes];
 
             return {
                 ...plate,
                 polygons: plate.initialPolygons,
                 features: mergedFeatures,
-                landmasses: mergedLandmasses,
-                paintStrokes: mergedStrokes,
                 center: calculateSphericalCentroid(plate.initialPolygons.flatMap(p => p.points))
             };
         }
@@ -427,10 +306,10 @@ export class SimulationEngine {
 
         if (parentLinkedPlate) {
             // Check if we're within the link time window
-            const isWithinLinkWindow = 
-                (!plate.linkTime || time >= plate.linkTime) && 
+            const isWithinLinkWindow =
+                (!plate.linkTime || time >= plate.linkTime) &&
                 (!plate.unlinkTime || time < plate.unlinkTime);
-            
+
             if (isWithinLinkWindow) {
                 const parentKeyframes = parentLinkedPlate.motionKeyframes || [];
                 const linkStartTime = plate.linkTime || (parentKeyframes[0]?.time ?? 0);
@@ -438,30 +317,30 @@ export class SimulationEngine {
 
                 // Build segment-by-segment rotations, accounting for axis changes
                 const relevantKeyframes = parentKeyframes.filter(kf => kf.time <= time && kf.time >= motionStartTime);
-                
+
                 if (relevantKeyframes.length > 0) {
                     relevantKeyframes.sort((a, b) => a.time - b.time);
                     let prevTime = motionStartTime;
-                    
+
                     for (let i = 0; i < relevantKeyframes.length; i++) {
                         const kf = relevantKeyframes[i];
                         if (kf.eulerPole && kf.eulerPole.rate !== 0) {
                             const pole = kf.eulerPole;
                             const axis = latLonToVector(pole.position);
-                            
+
                             // Determine duration for this segment
                             let segmentEnd = time;
                             // If there's a next keyframe before our current time, stop at that keyframe
                             if (i + 1 < relevantKeyframes.length) {
                                 segmentEnd = Math.min(relevantKeyframes[i + 1].time, time);
                             }
-                            
+
                             const duration = segmentEnd - Math.max(kf.time, prevTime);
                             if (duration > 0) {
                                 const angle = toRad(pole.rate * duration);
                                 parentTransform.push({ axis, angle });
                             }
-                            
+
                             prevTime = segmentEnd;
                         }
                     }
@@ -507,36 +386,21 @@ export class SimulationEngine {
         const hasOwnMotion = ownAxis && ownAngle !== 0;
         const hasAnyMotion = hasParentMotion || hasOwnMotion;
 
+        // Get features from snapshot, then merge any dynamically added features
+        // (features with generatedAt > keyframe.time that exist in current plate.features)
+        const snapshotFeatureIds = new Set(activeKeyframe.snapshotFeatures.map(f => f.id));
+        const dynamicFeatures = plate.features.filter(f =>
+            !snapshotFeatureIds.has(f.id) &&
+            f.generatedAt !== undefined &&
+            f.generatedAt >= activeKeyframe.time
+        );
+
         // No motion case
         if (!hasAnyMotion) {
-            const snapshotFeatureIds = new Set(activeKeyframe.snapshotFeatures.map(f => f.id));
-            const dynamicFeatures = plate.features.filter(f =>
-                !snapshotFeatureIds.has(f.id) &&
-                f.generatedAt !== undefined &&
-                f.generatedAt >= activeKeyframe.time
-            );
-            
-            // Deduplicate landmasses: collect all IDs from snapshot and inherited
-            const snapshotLandmassIds = new Set((activeKeyframe.snapshotLandmasses || []).map(l => l.id));
-            const inheritedLandmassIds = new Set(inheritedLandmasses.map(l => l.id));
-            const allKnownLandmassIds = new Set([...snapshotLandmassIds, ...inheritedLandmassIds]);
-            const dynamicLandmasses = (plate.landmasses || []).filter(l => !allKnownLandmassIds.has(l.id));
-            // Also filter inherited to not duplicate snapshot
-            const filteredInheritedLandmasses = inheritedLandmasses.filter(l => !snapshotLandmassIds.has(l.id));
-
-            // Same for strokes
-            const snapshotStrokeIds = new Set((activeKeyframe.snapshotPaintStrokes || []).map(s => s.id));
-            const inheritedStrokeIds = new Set(inheritedPaintStrokes.map(s => s.id));
-            const allKnownStrokeIds = new Set([...snapshotStrokeIds, ...inheritedStrokeIds]);
-            const dynamicStrokes = (plate.paintStrokes || []).filter(s => !allKnownStrokeIds.has(s.id));
-            const filteredInheritedStrokes = inheritedPaintStrokes.filter(s => !snapshotStrokeIds.has(s.id));
-
             return {
                 ...plate,
                 polygons: activeKeyframe.snapshotPolygons,
                 features: [...activeKeyframe.snapshotFeatures, ...dynamicFeatures, ...inheritedFeatures],
-                landmasses: [...(activeKeyframe.snapshotLandmasses || []), ...dynamicLandmasses, ...filteredInheritedLandmasses],
-                paintStrokes: [...(activeKeyframe.snapshotPaintStrokes || []), ...dynamicStrokes, ...filteredInheritedStrokes],
                 center: calculateSphericalCentroid(activeKeyframe.snapshotPolygons.flatMap(p => p.points))
             };
         }
@@ -548,16 +412,16 @@ export class SimulationEngine {
         // Features rotate from their creation time, not from keyframe time
         const transformFeature = (feat: Feature, startTime: number, useOriginal: boolean = false): Feature => {
             const featureElapsed = Math.max(0, time - startTime);
-            
+
             // Calculate rotation for this specific feature based on its lifetime
             let result = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
-            
+
             // Apply parent motion if linked (for the feature's lifetime) AND within link time window
             if (parentTransform.length > 0 && parentLinkedPlate) {
-                const isWithinLinkWindow = 
-                    (!plate.linkTime || time >= plate.linkTime) && 
+                const isWithinLinkWindow =
+                    (!plate.linkTime || time >= plate.linkTime) &&
                     (!plate.unlinkTime || time < plate.unlinkTime);
-                
+
                 if (isWithinLinkWindow) {
                     // Apply parent motion segment by segment
                     for (const segment of parentTransform) {
@@ -567,7 +431,7 @@ export class SimulationEngine {
                     }
                 }
             }
-            
+
             // Apply child's own motion
             if (ownAxis && pole) {
                 const ownFeatureAngle = toRad(pole.rate * featureElapsed);
@@ -588,14 +452,7 @@ export class SimulationEngine {
             points: poly.points.map(transform)
         }));
 
-        // Get features from snapshot, then merge any dynamically added features
-        // (features with generatedAt > keyframe.time that exist in current plate.features)
-        const snapshotFeatureIds = new Set(activeKeyframe.snapshotFeatures.map(f => f.id));
-        const dynamicFeatures = plate.features.filter(f =>
-            !snapshotFeatureIds.has(f.id) &&
-            f.generatedAt !== undefined &&
-            f.generatedAt >= activeKeyframe.time
-        );
+
 
         // Transform snapshot features: Start from Keyframe Time (snapshot state)
         // Use current position (matches snapshot) -> useOriginal = false
@@ -617,146 +474,7 @@ export class SimulationEngine {
 
         const newFeatures = [...transformedSnapshotFeatures, ...transformedDynamicFeatures, ...transformedInheritedFeatures];
 
-        // --- Paint Stroke Transformation ---
-        // Identical logic to Features: Snapshot vs Dynamic
 
-        // Helper for Point Arrays (Paint Strokes)
-        const transformStroke = (stroke: PaintStroke, startTime: number, useOriginal: boolean = false): PaintStroke => {
-             if (!ownAxis || !pole) return stroke; // No own axis or pole means no rotation to apply
-             
-             const strokeElapsed = Math.max(0, time - startTime);
-             const strokeAngle = toRad(pole.rate * strokeElapsed);
-
-             if (strokeAngle === 0) return stroke;
-
-             // Source points: use originalPoints if available and requested
-             const sourcePoints = (useOriginal && stroke.originalPoints) ? stroke.originalPoints : stroke.points;
-
-             const newPoints = sourcePoints.map(p => {
-                 const v = latLonToVector(p);
-                 const vRot = rotateVector(v, ownAxis!, strokeAngle);
-                 return vectorToLatLon(vRot);
-             });
-
-             return {
-                 ...stroke,
-                 points: newPoints,
-                 originalPoints: stroke.originalPoints // Explicitly preserve
-             };
-        };
-
-        const snapshotStrokes = activeKeyframe.snapshotPaintStrokes || [];
-        const snapshotStrokeIds = new Set(snapshotStrokes.map(s => s.id));
-        
-        // Filter inherited to not duplicate snapshots
-        const inheritedStrokeIds = new Set(inheritedPaintStrokes.map(s => s.id));
-        const filteredInheritedStrokes = inheritedPaintStrokes.filter(s => !snapshotStrokeIds.has(s.id));
-        const allKnownStrokeIds = new Set([...snapshotStrokeIds, ...inheritedStrokeIds]);
-        
-        // Filter dynamic strokes (those created after keyframe OR legacy strokes without birthTime)
-        const currentStrokes = plate.paintStrokes || [];
-        const dynamicStrokes = currentStrokes.filter(s => 
-            !allKnownStrokeIds.has(s.id) &&
-            (s.birthTime === undefined || s.birthTime >= activeKeyframe.time)
-        );
-
-        // Transform Snapshot Strokes (From Keyframe Time, use points as source)
-        const transformSnapshotStrokes = snapshotStrokes.map(s => transformStroke(s, activeKeyframe.time, false));
-
-        // Transform Dynamic Strokes (From Birth Time, use originalPoints as source)
-        // Fallback to plate birthTime or 0 for legacy strokes
-        const transformDynamicStrokes = dynamicStrokes.map(s => transformStroke(s, s.birthTime !== undefined ? s.birthTime : (plate.birthTime || 0), true));
-
-        // Transform Inherited Strokes (From Transition)
-        const transformInheritedStrokes = filteredInheritedStrokes.map(s => transformStroke(s, plate.birthTime, false));
-
-        const newPaintStrokes = [...transformSnapshotStrokes, ...transformDynamicStrokes, ...transformInheritedStrokes];
-
-        // --- Landmass Transformation ---
-        // Identical logic to Features: Snapshot vs Dynamic
-        const transformLandmass = (landmass: any, startTime: number, useOriginal: boolean = false): any => {
-             // Only transform if landmass is linked to this plate
-             if (landmass.linkedToPlateId && landmass.linkedToPlateId !== plate.id) return landmass;
-             // If unlinked, don't transform
-             if (!landmass.linkedToPlateId) return landmass;
-
-             const elapsed = Math.max(0, time - startTime);
-             const sourcePolygon = (useOriginal && landmass.originalPolygon) ? landmass.originalPolygon : landmass.polygon;
-             let newPolygon = sourcePolygon;
-
-             // Apply parent motion
-             if (parentTransform.length > 0) {
-                 newPolygon = newPolygon.map((pt: any) => {
-                     let res = pt;
-                     for (const seg of parentTransform) {
-                         if (seg.angle !== 0) res = applyRotation(res, seg.axis, seg.angle);
-                     }
-                     return res;
-                 });
-             }
-
-             // Apply own motion
-             if (ownAxis && pole) {
-                 const angle = toRad(pole.rate * elapsed);
-                 if (angle !== 0) {
-                     newPolygon = newPolygon.map((pt: any) => applyRotation(pt, ownAxis!, angle));
-                 }
-             }
-
-             return { ...landmass, polygon: newPolygon, originalPolygon: landmass.originalPolygon ?? sourcePolygon };
-        };
-
-        const snapshotLandmasses = activeKeyframe.snapshotLandmasses || [];
-        const snapshotLandmassIds = new Set(snapshotLandmasses.map(l => l.id));
-        
-        // Filter inherited to not duplicate snapshots
-        const inheritedLandmassIds = new Set(inheritedLandmasses.map(l => l.id));
-        const filteredInheritedLandmasses = inheritedLandmasses.filter(l => !snapshotLandmassIds.has(l.id));
-        const allKnownLandmassIds = new Set([...snapshotLandmassIds, ...inheritedLandmassIds]);
-        
-        // Filter dynamic landmasses (those created after keyframe), excluding known IDs
-        const currentLandmassesList = plate.landmasses || [];
-        const dynamicLandmasses = currentLandmassesList.filter(l => 
-            !allKnownLandmassIds.has(l.id) &&
-            (l.birthTime === undefined || l.birthTime >= activeKeyframe.time)
-        );
-
-        // Transform Snapshots (From Keyframe Time)
-        const transformedSnapshotLandmasses = snapshotLandmasses.map(l => transformLandmass(l, activeKeyframe.time, false));
-
-        // Transform Dynamics (From Birth Time or Plate Birth Time)
-        const transformedDynamicLandmasses = dynamicLandmasses.map(l => transformLandmass(l, l.birthTime !== undefined ? l.birthTime : plate.birthTime, true));
-
-        // Transform Inherited (From Transition)
-        const transformedInheritedLandmasses = filteredInheritedLandmasses.map(l => transformLandmass(l, plate.birthTime, false));
-
-        const newLandmasses = [...transformedSnapshotLandmasses, ...transformedDynamicLandmasses, ...transformedInheritedLandmasses];
-
-        // --- Mesh Vertex Transformation ---
-        // Transform mesh vertices to follow plate rotation
-        // CHANGED: Use incremental update from last simulated time to prevent history rewriting issues
-        let newCrustMesh = plate.crustMesh;
-        if (plate.crustMesh && plate.crustMesh.length > 0 && ownAxis && pole) {
-            // Determine the time the current mesh positions are valid for
-            const meshTime = plate.elevationSimulatedTime !== undefined ? plate.elevationSimulatedTime : plate.birthTime;
-            
-            // Calculate elapsed time since last update
-            const dt = time - meshTime;
-            const meshAngle = toRad(pole.rate * dt);
-            
-            // Only rotate if there is a time delta and a rate (and use small threshold to avoid jitter)
-            if (Math.abs(meshAngle) > 1e-9) {
-                newCrustMesh = plate.crustMesh.map(vertex => {
-                    // Always use current 'pos' as the source for incremental update
-                    const v = latLonToVector(vertex.pos);
-                    const vRot = rotateVector(v, ownAxis!, meshAngle);
-                    return {
-                        ...vertex,
-                        pos: vectorToLatLon(vRot)
-                    };
-                });
-            }
-        }
 
         const allPoints = newPolygons.flatMap(poly => poly.points);
         const newCenter = calculateSphericalCentroid(allPoints);
@@ -765,9 +483,6 @@ export class SimulationEngine {
             ...plate,
             polygons: newPolygons,
             features: newFeatures,
-            paintStrokes: newPaintStrokes,
-            crustMesh: newCrustMesh,
-            landmasses: newLandmasses,
             center: newCenter
         };
 
@@ -776,11 +491,9 @@ export class SimulationEngine {
 
     // Legacy fallback for plates without keyframes
     calculateWithLegacyMotion(
-        plate: TectonicPlate, 
-        time: number, 
-        inheritedFeatures: Feature[] = [],
-        inheritedLandmasses: Landmass[] = [],
-        inheritedPaintStrokes: PaintStroke[] = []
+        plate: TectonicPlate,
+        time: number,
+        inheritedFeatures: Feature[] = []
     ): TectonicPlate {
         const pole = plate.motion?.eulerPole;
         const elapsed = time - plate.birthTime;
@@ -790,8 +503,6 @@ export class SimulationEngine {
                 ...plate,
                 polygons: plate.initialPolygons || plate.polygons,
                 features: [...(plate.initialFeatures || plate.features), ...inheritedFeatures],
-                landmasses: [...(plate.landmasses || []), ...inheritedLandmasses],
-                paintStrokes: [...(plate.paintStrokes || []), ...inheritedPaintStrokes],
                 center: plate.center
             };
         }
@@ -847,98 +558,6 @@ export class SimulationEngine {
 
         const newFeatures = [...transformedPlateFeatures, ...transformedInheritedFeatures];
 
-        // Transform mesh vertices from originalPos to avoid compounding
-        let newCrustMesh = plate.crustMesh;
-        if (plate.crustMesh && plate.crustMesh.length > 0 && angle !== 0) {
-            newCrustMesh = plate.crustMesh.map(vertex => {
-                // Use originalPos as source of truth, fallback to pos for legacy data
-                const sourcePos = vertex.originalPos || vertex.pos;
-                const v = latLonToVector(sourcePos);
-                const vRot = rotateVector(v, axis, angle);
-                return {
-                    ...vertex,
-                    pos: vectorToLatLon(vRot)
-                };
-            });
-        }
-
-        // Transform landmasses (legacy motion)
-        // First, filter out inherited IDs from plate's existing landmasses to avoid duplicates
-        const inheritedLandmassIds = new Set(inheritedLandmasses.map(l => l.id));
-        let newLandmassesList = (plate.landmasses || []).filter(l => !inheritedLandmassIds.has(l.id));
-        let transformedLandmasses = newLandmassesList.map(landmass => {
-            // Only transform if landmass is linked to this plate
-            if (!landmass.linkedToPlateId || landmass.linkedToPlateId !== plate.id) {
-                return landmass;
-            }
-
-            const landmassStartTime = landmass.birthTime ?? plate.birthTime;
-            const landmassElapsed = Math.max(0, time - landmassStartTime);
-            const landmassAngle = toRad(pole.rate * landmassElapsed);
-
-            if (landmassAngle === 0) return landmass;
-
-            const sourcePolygon = landmass.originalPolygon ?? landmass.polygon;
-            const newPolygon = sourcePolygon.map(pt => {
-                const v = latLonToVector(pt);
-                const vRot = rotateVector(v, axis, landmassAngle);
-                return vectorToLatLon(vRot);
-            });
-
-            return {
-                ...landmass,
-                polygon: newPolygon,
-                originalPolygon: landmass.originalPolygon ?? sourcePolygon
-            };
-        });
-
-        // Add transformed inherited landmasses
-        const transformedInheritedLandmasses = inheritedLandmasses.map(l => {
-             const lElapsed = Math.max(0, time - plate.birthTime);
-             const lAngle = toRad(pole.rate * lElapsed);
-             if (lAngle === 0) return l;
-             const newPoly = l.polygon.map(pt => {
-                 const v = latLonToVector(pt);
-                 const vRot = rotateVector(v, axis, lAngle);
-                 return vectorToLatLon(vRot);
-             });
-             return { ...l, polygon: newPoly };
-        });
-        
-        const finalLandmasses = [...transformedLandmasses, ...transformedInheritedLandmasses];
-
-        // Transform paint strokes (legacy motion)
-        // First, filter out inherited IDs from plate's existing strokes to avoid duplicates
-        const inheritedStrokeIds = new Set(inheritedPaintStrokes.map(s => s.id));
-        let sourceStrokes = (plate.paintStrokes || []).filter(s => !inheritedStrokeIds.has(s.id));
-        let transformedStrokes = sourceStrokes.map(stroke => {
-             const sElapsed = Math.max(0, time - (stroke.birthTime ?? plate.birthTime));
-             const sAngle = toRad(pole.rate * sElapsed);
-             if (sAngle === 0) return stroke;
-             const srcPoints = stroke.originalPoints ?? stroke.points;
-             const nPoints = srcPoints.map(pt => {
-                 const v = latLonToVector(pt);
-                 const vRot = rotateVector(v, axis, sAngle);
-                 return vectorToLatLon(vRot);
-             });
-             return { ...stroke, points: nPoints, originalPoints: srcPoints };
-        });
-
-        // Add transformed inherited strokes
-        const transformedInheritedStrokes = inheritedPaintStrokes.map(s => {
-             const sElapsed = Math.max(0, time - plate.birthTime);
-             const sAngle = toRad(pole.rate * sElapsed);
-             if (sAngle === 0) return s;
-             const nPoints = s.points.map(pt => {
-                 const v = latLonToVector(pt);
-                 const vRot = rotateVector(v, axis, sAngle);
-                 return vectorToLatLon(vRot);
-             });
-             return { ...s, points: nPoints };
-        });
-
-        const finalStrokes = [...transformedStrokes, ...transformedInheritedStrokes];
-
         const allPoints = newPolygons.flatMap(poly => poly.points);
         const newCenter = calculateSphericalCentroid(allPoints);
 
@@ -946,9 +565,6 @@ export class SimulationEngine {
             ...plate,
             polygons: newPolygons,
             features: newFeatures,
-            crustMesh: newCrustMesh,
-            landmasses: finalLandmasses,
-            paintStrokes: finalStrokes,
             center: newCenter
         };
 
@@ -963,7 +579,6 @@ export class SimulationEngine {
         // Ensure we strictly use the Source of Truth: initialPolygons
         let currentPolygons = plate.initialPolygons;
         let currentFeatures = plate.initialFeatures || [];
-        let currentLandmasses = plate.landmasses || [];
 
         // Also need to handle inherited features if we want to be perfect, 
         // but typically initialFeatures includes them if the plate was properly initialized.
@@ -987,8 +602,7 @@ export class SimulationEngine {
                 newKeyframes.push({
                     ...kf,
                     snapshotPolygons: currentPolygons,
-                    snapshotFeatures: currentFeatures,
-                    snapshotLandmasses: currentLandmasses.length > 0 ? currentLandmasses : undefined
+                    snapshotFeatures: currentFeatures
                 });
             } else {
                 // Subsequent keyframe
@@ -1025,24 +639,15 @@ export class SimulationEngine {
 
                 const nextFeatures = prevKf.snapshotFeatures.map(transformFeature);
 
-                // Rotate Landmasses
-                const transformLandmass = (l: Landmass): Landmass => {
-                    const nextPolygon = l.polygon.map(transform);
-                    return { ...l, polygon: nextPolygon };
-                };
-                const nextLandmasses = (prevKf.snapshotLandmasses || []).map(transformLandmass);
-
                 newKeyframes.push({
                     ...kf,
                     snapshotPolygons: nextPolygons,
-                    snapshotFeatures: nextFeatures,
-                    snapshotLandmasses: nextLandmasses.length > 0 ? nextLandmasses : undefined
+                    snapshotFeatures: nextFeatures
                 });
 
                 // Update for next iteration
                 currentPolygons = nextPolygons;
                 currentFeatures = nextFeatures;
-                currentLandmasses = nextLandmasses;
             }
         }
 
@@ -1058,7 +663,7 @@ export class SimulationEngine {
             const currentTime = state.world.currentTime;
             const fadeDuration = state.world.globalOptions.flowlineFadeDuration || 100;
             const autoDelete = state.world.globalOptions.flowlineAutoDelete !== false;
-            
+
             const newPlates = plates.map(plate => {
                 const flowlines = plate.features.filter(f => f.type === 'flowline');
                 if (flowlines.length === 0) return plate;
@@ -1072,16 +677,16 @@ export class SimulationEngine {
                         points.push(this.getPointPositionAtTime(origin, plate.id, t, plates));
                     }
                     points.push(this.getPointPositionAtTime(origin, plate.id, currentTime, plates));
-                    
+
                     // Calculate age and set death time if auto-delete is enabled
                     const age = currentTime - startTime;
                     let updatedFeature = { ...f, trail: points };
-                    
+
                     // If auto-delete is enabled and flowline has reached full transparency, set death time
                     if (autoDelete && age >= fadeDuration && !updatedFeature.deathTime) {
                         updatedFeature = { ...updatedFeature, deathTime: currentTime };
                     }
-                    
+
                     return updatedFeature;
                 });
                 return { ...plate, features: newFeatures };
