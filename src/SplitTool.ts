@@ -360,11 +360,11 @@ export function splitPlate(
     const riftPlate: TectonicPlate = {
         id: riftPlateId,
         slabId: riftPlateId,
-        name: `Rift ${plateToSplit.name}`,
-        description: `Rift formed from ${plateToSplit.name}`,
+        name: `Rift Axis ${plateToSplit.name}`,
+        description: `Rift Axis formed from ${plateToSplit.name}`,
         type: 'rift', // Explicit Rift Type
         crustType: 'oceanic',
-        color: '#00BFFF',
+        color: '#FF0000', // Red for Axis by default
         zIndex: -1,
         // active removed
         birthTime: state.world.currentTime,
@@ -386,7 +386,7 @@ export function splitPlate(
                 path: riftAxisPath // Use the actual cut path, not the drawn polyline
             }
         }],
-        initialPolygons: [{ id: generateId(), points: riftPolyPoints, closed: true, riftEdgeIndices: [] }],
+        initialPolygons: [{ id: generateId(), points: riftPolyPoints, closed: false, riftEdgeIndices: [] }],
         initialFeatures: [],
         motion: { ...newMotion }, // Inherit parent motion physics initially
         motionKeyframes: [],

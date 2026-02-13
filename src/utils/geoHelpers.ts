@@ -27,7 +27,19 @@ function ensureClockwise(coords: Coordinate[]): Coordinate[] {
 }
 
 // Convert internal Polygon type to GeoJSON Feature
-export function toGeoJSON(polygon: Polygon): GeoJSON.Feature<GeoJSON.Polygon> {
+export function toGeoJSON(polygon: Polygon): GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.LineString> {
+    // If explicitly open, return LineString
+    if (polygon.closed === false) {
+        return {
+            type: 'Feature',
+            properties: {},
+            geometry: {
+                type: 'LineString',
+                coordinates: polygon.points
+            }
+        };
+    }
+
     // Ensure clockwise winding for exterior ring (d3-geo convention)
     const coords = ensureClockwise(polygon.points.slice());
 

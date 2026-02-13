@@ -1334,14 +1334,29 @@ export class CanvasManager {
                 path(geojson);
 
                 // Apply plate opacity from global options
+                // Apply plate opacity from global options
                 const plateOpacity = state.world.globalOptions.plateOpacity ?? 1.0;
                 this.ctx.globalAlpha = plateOpacity;
                 this.ctx.fillStyle = plate.color;
-                this.ctx.fill();
+
+                // Only fill if closed (default true)
+                if (poly.closed !== false) {
+                    this.ctx.fill();
+                }
+
                 this.ctx.globalAlpha = 1.0;
 
-                this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
-                this.ctx.lineWidth = isSelected ? 2 : 1;
+                // Stroke style
+                if (plate.type === 'rift') {
+                    // Special styling for Rift Axis
+                    this.ctx.strokeStyle = isSelected ? '#ff3333' : '#ff0000'; // Red for Rift
+                    this.ctx.lineWidth = isSelected ? 4 : 2;
+                    // Ensure dashed line for specific look? keeping solid for now as "axis"
+                } else {
+                    this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
+                    this.ctx.lineWidth = isSelected ? 2 : 1;
+                }
+
                 this.ctx.stroke();
             }
 
