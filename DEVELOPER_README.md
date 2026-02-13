@@ -101,9 +101,26 @@ The app uses **vanilla TypeScript + Vite**. No React, no Angular, no framework. 
 
 ### Adding a new global option
 1. Add the field to `GlobalOptions` in `types.ts`
-2. Add the UI control in `ui/AppTemplate.ts`
+2. Add the UI control in `ui/AppTemplate.ts` (usually in the Settings dropdown)
 3. Add the event listener in `setupEventListeners()` in `main.ts`
 4. Read it where needed (usually `CanvasManager.ts` or `SimulationEngine.ts`)
+
+---
+
+## Oceanic Crust System
+
+The application supports two modes of oceanic crust generation, toggled via **Settings > Oceanic Crust**:
+
+### 1. Expanding Rifts (New System)
+- **Logic**: `SimulationEngine.generateRiftCrust()`
+- **Mechanism**: Continuously creates new "crust strips" (polygons) at divergent boundaries.
+- **Behavior**: New strips push older strips away, simulating seafloor spreading.
+- **Styles**: Uses `oceanicCrustColor` and `oceanicCrustOpacity` from global options.
+
+### 2. Flowlines (Legacy)
+- **Logic**: `SimulationEngine.updateFlowlines()`
+- **Mechanism**: Generates crust based on flowline paths from motion history.
+- **Status**: Deprecated but maintained for compatibility.
 
 ### Adding a new feature type
 1. Add to `FeatureType` union in `types.ts`
