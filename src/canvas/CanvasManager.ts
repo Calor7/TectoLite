@@ -1280,8 +1280,7 @@ export class CanvasManager {
             return zA - zB;
         });
 
-        // Collect poly_region features to render after all plates (image overlays should be on top)
-        const polyRegionFeatures: { feature: Feature; isSelected: boolean; isGhosted: boolean }[] = [];
+        // polyRegionFeatures removed — feature system disabled
 
         for (const plate of sortedPlates) {
             if (!plate.visible) continue;
@@ -1361,32 +1360,7 @@ export class CanvasManager {
             }
 
 
-            // Draw Features (if visible)
-            if (state.world.showFeatures) {
-                const currentTime = state.world.currentTime;
-                const showFuture = state.world.showFutureFeatures;
-
-                for (const feature of plate.features) {
-                    // Check if feature is within timeline
-                    const isBorn = feature.generatedAt === undefined || feature.generatedAt <= currentTime;
-                    const isDead = feature.deathTime !== undefined && feature.deathTime <= currentTime;
-                    const isInTimeline = isBorn && !isDead;
-
-                    // Skip if not in timeline and not showing future/past features
-                    if (!isInTimeline && !showFuture) continue;
-
-                    const isFeatureSelected = feature.id === state.world.selectedFeatureId ||
-                        (state.world.selectedFeatureIds && state.world.selectedFeatureIds.includes(feature.id));
-
-                    // Collect poly_region features to render later (on top of all plates)
-                    if (feature.type === 'poly_region') {
-                        polyRegionFeatures.push({ feature, isSelected: isFeatureSelected, isGhosted: !isInTimeline });
-                    } else {
-                        // Draw other features immediately with their plate
-                        this.drawFeature(feature, isFeatureSelected, !isInTimeline);
-                    }
-                }
-            }
+            // Features rendering DISABLED — removed feature system
 
             // Euler Pole Visualization
             const showGlobalPoles = state.world.showEulerPoles;
@@ -1468,10 +1442,7 @@ export class CanvasManager {
             this.drawLinks(state, path);
         }
 
-        // Draw poly_region features (image overlays) ABOVE all plates
-        for (const { feature, isSelected, isGhosted } of polyRegionFeatures) {
-            this.drawFeature(feature, isSelected, isGhosted);
-        }
+        // poly_region features rendering DISABLED — removed feature system
 
         // Render Motion Gizmo (On Top of Plates)
         const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
@@ -1692,6 +1663,7 @@ export class CanvasManager {
         return vectorToLatLon(normalized);
     }
 
+    // @ts-ignore - DISABLED: Feature system removed, kept for potential re-enablement
     private drawFeature(feature: Feature, isSelected: boolean, isGhosted: boolean = false): void {
         // Set reduced opacity for features outside timeline
         if (isGhosted) {

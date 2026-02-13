@@ -257,11 +257,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     <span class="tool-label">Edit</span>
                     <span class="info-icon" data-tooltip="Modify plate geometry (Hotkey: E)">(i)</span>
                   </button>
-                  <button class="tool-btn" data-tool="feature" style="flex:1;">
-                    <span class="tool-icon">🏔️</span>
-                    <span class="tool-label">Feature</span>
-                    <span class="info-icon" data-tooltip="Place mountains, volcanoes, etc (Hotkey: F)">(i)</span>
-                  </button>
+
               </div>
               <div style="display: flex; gap: 4px; flex-wrap: wrap;">
                   <button class="tool-btn" data-tool="split" style="flex:1;">
@@ -279,11 +275,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     <span class="tool-label">Fuse</span>
                     <span class="info-icon" data-tooltip="Merge two plates (Hotkey: G)">(i)</span>
                   </button>
-                  <button class="tool-btn" data-tool="flowline" style="flex:1;">
-                    <span class="tool-icon">➤</span>
-                    <span class="tool-label">Flowline</span>
-                    <span class="info-icon" data-tooltip="Drop a flowline seed to trace motion (Hotkey: T)">(i)</span>
-                  </button>
+
 
 
               </div>
@@ -294,14 +286,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                  <h3 class="tool-group-title">Tool Options</h3>
                  
                  <!-- Dynamic Controls Stack -->
-                 <div id="feature-selector" style="display: none;">
-                      <button class="feature-btn active" data-feature="mountain" title="Mountain">🏔️ Mtn</button>
-                      <button class="feature-btn" data-feature="volcano" title="Volcano">🌋 Volc</button>
-                      <button class="feature-btn" data-feature="hotspot" title="Hotspot">🔥 Hot</button>
-                      <button class="feature-btn" data-feature="rift" title="Rift">⚡ Rift</button>
-                      <button class="feature-btn" data-feature="trench" title="Trench">🌊 Trn</button>
-                      <button class="feature-btn" data-feature="weakness" title="Weakness">💔 Weak</button>
-                 </div>
+
 
                  <div id="split-controls" style="display: none; flex-direction:column; gap:4px;">
                      <div style="align-self: center; font-size: 11px; color: var(--text-secondary);">Confirm Split?</div>
@@ -418,7 +403,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
           <div class="right-sidebar" id="right-sidebar">
             <aside class="properties-panel" id="properties-panel">
-                <h3 class="panel-title">Properties</h3>
+                <h3 class="panel-title" id="properties-panel-title">Properties</h3>
                 <div id="properties-content">
                   <p class="empty-message">Select a plate to edit properties</p>
                 </div>

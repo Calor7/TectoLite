@@ -10,7 +10,7 @@ import {
     Vector3
 } from './utils/sphericalMath';
 import { BoundarySystem } from './BoundarySystem';
-import { GeologicalAutomationSystem } from './systems/GeologicalAutomation';
+// import { GeologicalAutomationSystem } from './systems/GeologicalAutomation'; // DISABLED
 import { EventEffectsProcessor } from './systems/EventEffectsProcessor';
 import { eventSystem } from './systems/EventSystem';
 
@@ -19,14 +19,14 @@ export class SimulationEngine {
     private isRunning = false;
     private lastUpdate = 0;
     private animationId: number | null = null;
-    private geologicalAutomation: GeologicalAutomationSystem;
+    // private geologicalAutomation: GeologicalAutomationSystem; // DISABLED
     private eventEffectsProcessor: EventEffectsProcessor;
 
     constructor(
         private getState: () => AppState,
         private setState: (updater: (state: AppState) => AppState) => void
     ) {
-        this.geologicalAutomation = new GeologicalAutomationSystem();
+        // this.geologicalAutomation = new GeologicalAutomationSystem(); // DISABLED
         this.eventEffectsProcessor = new EventEffectsProcessor();
     }
 
@@ -117,7 +117,7 @@ export class SimulationEngine {
                 ? BoundarySystem.detectBoundaries(newPlates, time)
                 : [];
 
-            // Phase 4: Geological Automation
+            // Phase 4: Geological Automation — DISABLED (features removed)
             const tempState = {
                 ...state,
                 world: {
@@ -127,7 +127,7 @@ export class SimulationEngine {
                     currentTime: time
                 }
             };
-            const postAutomationState = this.geologicalAutomation.update(tempState);
+            const postAutomationState = tempState; // Bypass automation
 
             // Phase 5: Event System (detect tectonic events for guided creation)
             const postEventState = eventSystem.update(postAutomationState);
@@ -224,7 +224,7 @@ export class SimulationEngine {
                 ? BoundarySystem.detectBoundaries(newPlates, newTime)
                 : [];
 
-            // Phase 3: Geological Automation (during tick)
+            // Phase 3: Geological Automation — DISABLED (features removed)
             const tempState = {
                 ...state,
                 world: {
@@ -234,7 +234,7 @@ export class SimulationEngine {
                     currentTime: newTime
                 }
             };
-            const postAutomationState = this.geologicalAutomation.update(tempState);
+            const postAutomationState = tempState; // Bypass automation
 
             // Phase 4: Event System (detect tectonic events for guided creation)
             const postEventState = eventSystem.update(postAutomationState);
@@ -249,62 +249,90 @@ export class SimulationEngine {
     private generateRiftCrust(currentPlates: TectonicPlate[], currentTime: number, interval: number): TectonicPlate[] {
 
         const newSlabs: TectonicPlate[] = [];
-        const generationTime = Math.floor(currentTime / interval) * interval;
-        // Allow generationMain interval 0
 
         // 1. Identify Rift Plates (The Generators)
-        // These are plates of type 'rift' or plates that are targets of 'connectedRiftId'?
-        // The Rift Plate has type 'rift'.
         const riftPlates = currentPlates.filter(p => p.type === 'rift');
 
         for (const rift of riftPlates) {
-            // Find the Axis Feature
-            const axisFeature = rift.features.find(f => f.type === 'rift' && f.properties?.isAxis);
-            if (!axisFeature || !axisFeature.properties?.path) continue;
+            const axisPoly = rift.polygons[0];
+            if (!axisPoly || !axisPoly.points || axisPoly.points.length < 2) continue;
 
-            const axisPoints = (axisFeature.properties.path as unknown) as Coordinate[];
+            const axisPoints = axisPoly.points;
+            const riftBirth = rift.birthTime;
 
-            // 2. Find Connected Plates (The Receivers)
-            const connectedPlates = currentPlates.filter(p => p.connectedRiftId === rift.id);
+            // Skip if rift hasn't been born yet
+            if (currentTime <= riftBirth) continue;
+
+            // 2. Find Connected Plates (The Receivers) — exclude generated oceanic slabs
+            const connectedPlates = currentPlates.filter(p => p.connectedRiftId === rift.id && p.type !== 'oceanic');
 
             for (const plate of connectedPlates) {
                 if (plate.riftGenerationMode === 'never') continue;
 
+                // 3. Only manage the CURRENT active slab
+                // Past slabs are frozen — they keep whatever geometry they had.
+                // When a motion keyframe is added, the active slab freezes and a
+                // NEW slab starts from the keyframe time (between frozen crust and continent).
+                const intervalStart = Math.floor(currentTime / interval) * interval;
+
+                // Check for motion keyframes added AFTER the rift was born
+                // These represent direction changes that should "cut" the active slab
+                const keyframeCutTimes = (plate.motionKeyframes || [])
+                    .map(kf => kf.time)
+                    .filter(t => t > riftBirth && t <= currentTime);
+
+                // The active slab starts at the LATEST cut point
+                const generationTime = keyframeCutTimes.length > 0
+                    ? Math.max(intervalStart, ...keyframeCutTimes)
+                    : intervalStart;
+
                 const slabId = `${plate.id}_slab_${generationTime}`;
 
-                // Calculate Expansion Geometry for this specific instant
-                const dt = currentTime - generationTime;
+                // --- Geometry Calculation ---
+                const nPoints = axisPoints.length;
+                let points1: Coordinate[];
 
-                // If dt is tiny, skip to avoid degenerate polygons
-                if (dt < 0.001) continue;
+                // Attempt to inherit from previous frozen slab
+                // Find latest slab for this plate/rift combo that is OLDER than current generationTime
+                // (Using connectedRiftId which we restore below)
+                const prevSlab = currentPlates
+                    .filter(p => p.connectedRiftId === rift.id && p.linkedToPlateId === plate.id && p.birthTime < generationTime && p.type === 'oceanic')
+                    .sort((a, b) => b.birthTime - a.birthTime)[0];
 
-                const points1 = axisPoints; // At Rift (Current)
+                if (prevSlab && prevSlab.polygons[0] && prevSlab.polygons[0].points.length >= 2 * nPoints) {
+                    // Inherit Far Edge from previous slab (indices N..2N-1 reversed)
+                    // Ring structure: [Near(0..N-1), FarRev(N..2N-1), Close]
+                    const farRev = prevSlab.polygons[0].points.slice(nPoints, 2 * nPoints);
+                    points1 = farRev.reverse();
+                } else {
+                    // Fallback: Compute from scratch (e.g. first slab)
+                    const nearTime = Math.max(generationTime, riftBirth);
+                    points1 = axisPoints.map(p => {
+                        if (nearTime <= riftBirth) return p;
+                        return this.applyPlateMotion(p, plate, riftBirth, nearTime, currentPlates);
+                    });
+                }
+
+                // Far edge always computed from active motion
+                const farTime = currentTime;
                 const points2 = axisPoints.map(p => {
-                    // Step 1: Un-rotate from Rift Motion (Current -> Start)
-                    const p_start = this.applyPlateMotion(p, rift, currentTime, generationTime);
-                    // Step 2: Rotate with Plate Motion (Start -> Current)
-                    return this.applyPlateMotion(p_start, plate, generationTime, currentTime);
+                    return this.applyPlateMotion(p, plate, riftBirth, farTime, currentPlates);
                 });
 
-                // Construct Polygon
+                // Construct closed polygon ring
                 const ring = [...points1, ...points2.reverse(), points1[0]];
 
-
-                // Check if Slab Already Exists (Active Slab)
+                // Check if this slab already exists
                 const existingSlab = currentPlates.find(p => p.slabId === slabId);
 
                 if (existingSlab) {
-                    // UPDATE Existing Active Slab
-                    const newCenter = calculateSphericalCentroid(ring);
+                    // UPDATE geometry directly (slab is locked)
                     existingSlab.polygons = [{ id: existingSlab.polygons[0]?.id || generateId(), points: ring, closed: true }];
-                    existingSlab.initialPolygons = [{ id: existingSlab.initialPolygons[0]?.id || generateId(), points: ring, closed: true }];
-                    existingSlab.center = newCenter;
-                    existingSlab.linkTime = currentTime;
+                    existingSlab.center = calculateSphericalCentroid(ring);
                 } else {
-                    // CREATE New Slab
-                    const newSlabId = generateId();
+                    // CREATE new slab
                     newSlabs.push({
-                        id: newSlabId,
+                        id: generateId(),
                         slabId: slabId,
                         name: `Crust ${generationTime}Ma (${plate.name})`,
                         type: 'oceanic',
@@ -314,7 +342,7 @@ export class SimulationEngine {
                         birthTime: generationTime,
                         deathTime: null,
                         visible: true,
-                        locked: false,
+                        locked: true, // Engine-managed until interval ends
                         center: calculateSphericalCentroid(ring),
                         polygons: [{ id: generateId(), points: ring, closed: true }],
                         features: [],
@@ -323,9 +351,7 @@ export class SimulationEngine {
                         motion: createDefaultMotion(),
                         motionKeyframes: [],
                         events: [],
-                        linkedToPlateId: plate.id,
-                        linkType: 'motion',
-                        linkTime: currentTime
+                        connectedRiftId: rift.id // Restored for tracking (filtered out in receiver check)
                     });
                 }
             }
@@ -335,21 +361,70 @@ export class SimulationEngine {
     }
 
     // Helper to move a point forward in time according to a plate's motion history
-    private applyPlateMotion(point: Coordinate, plate: TectonicPlate, fromTime: number, toTime: number): Coordinate {
-        // Find relevant keyframes or Euler pole for this interval
-        // Simplify: Use current motion state?
-        // If simulation is stepped, `plate.motion` is the CURRENT velocity.
-        // Assuming velocity was constant over [fromTime, toTime] (small interval).
-        // Angular distance = rate * (toTime - fromTime).
-        // Rot Axis = plate.motion.eulerPole.
+    private applyPlateMotion(point: Coordinate, plate: TectonicPlate, fromTime: number, toTime: number, allPlates: TectonicPlate[]): Coordinate {
+        let currentP = point;
+        let time = fromTime;
 
-        // Note: TectoLite speeds are deg/Ma.
-        const dt = toTime - fromTime; // e.g. 25 Ma
-        // velocity is deg/Ma.
-        const angle = plate.motion.eulerPole.rate * dt;
+        // Resolve linked motion (inherit from parent)
+        let effectivePlate = plate;
+        if (plate.linkedToPlateId) {
+            let current = plate;
+            const visited = new Set<string>();
+            while (current.linkedToPlateId && !visited.has(current.id)) {
+                visited.add(current.id);
+                const parent = allPlates.find(p => p.id === current.linkedToPlateId);
+                if (!parent) break;
+                current = parent;
+            }
+            effectivePlate = current;
+        }
 
-        // Rotate 'point' around 'plate.motion.eulerPole' by 'angle'.
-        return rotatePoint(point, plate.motion.eulerPole.position, toRad(angle));
+        const keyframes = (effectivePlate.motionKeyframes || []).sort((a, b) => a.time - b.time);
+
+        // If no keyframes, fallback to simple current motion
+        if (keyframes.length === 0) {
+            const pole = effectivePlate.motion.eulerPole;
+            const dt = toTime - fromTime;
+            if (dt > 1e-6) {
+                const angle = pole.rate * dt;
+                currentP = rotatePoint(currentP, pole.position, toRad(angle));
+            }
+            return currentP;
+        }
+
+        while (time < toTime) {
+            let pole = effectivePlate.motion.eulerPole;
+            let nextBoundary = toTime;
+
+            // Find last keyframe <= time
+            let activeKFIndex = -1;
+            for (let i = 0; i < keyframes.length; i++) {
+                if (keyframes[i].time <= time) activeKFIndex = i;
+                else break;
+            }
+
+            if (activeKFIndex !== -1) {
+                pole = keyframes[activeKFIndex].eulerPole;
+                if (activeKFIndex + 1 < keyframes.length) {
+                    nextBoundary = Math.min(toTime, keyframes[activeKFIndex + 1].time);
+                }
+            } else {
+                // Before first keyframe: use first keyframe's pole (assume constant back in time)
+                if (keyframes.length > 0) {
+                    pole = keyframes[0].eulerPole;
+                    nextBoundary = Math.min(toTime, keyframes[0].time);
+                }
+            }
+
+            const dt = nextBoundary - time;
+            if (dt > 1e-6) {
+                const angle = pole.rate * dt;
+                currentP = rotatePoint(currentP, pole.position, toRad(angle));
+            }
+            time = nextBoundary;
+        }
+
+        return currentP;
     }
 
     private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {

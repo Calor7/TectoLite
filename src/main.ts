@@ -2577,10 +2577,20 @@ class TectoLiteApp {
 
         const plate = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
 
+        // Update Panel Title
+        const titleEl = document.getElementById('properties-panel-title');
+        if (titleEl) {
+            if (!plate) titleEl.textContent = 'Properties';
+            else if (plate.type === 'rift') titleEl.textContent = 'Rift Axis';
+            else titleEl.textContent = 'Plate Properties';
+        }
+
         if (!plate) {
             content.innerHTML = '<p class="empty-message">Select a plate to edit properties</p>';
             return;
         }
+
+        const isRift = plate.type === 'rift';
 
         // Euler Pole UI
         const motion = plate.motion;
@@ -2589,12 +2599,12 @@ class TectoLiteApp {
 
         content.innerHTML = `
       <div class="property-group">
-        <label class="property-label">Name</label>
+        <label class="property-label">${isRift ? 'Axis Name' : 'Name'}</label>
         <input type="text" id="prop-name" class="property-input" value="${plate.name}">
       </div>
       <div class="property-group">
         <label class="property-label">Description</label>
-        <textarea id="prop-description" class="property-input" rows="3" placeholder="Plate description...">${description}</textarea>
+        <textarea id="prop-description" class="property-input" rows="3" placeholder="${isRift ? 'Rift description...' : 'Plate description...'}">${description}</textarea>
       </div>
       
       <div class="property-group">
@@ -2602,6 +2612,7 @@ class TectoLiteApp {
         <input type="color" id="prop-color" class="property-color" value="${plate.color}">
       </div>
       
+      ${!isRift ? `
       <div class="property-group">
         <label class="property-label">Rift Generation</label>
         <select id="prop-rift-mode" class="property-input">
@@ -2618,6 +2629,7 @@ class TectoLiteApp {
             <option value="oceanic" ${plate.crustType === 'oceanic' ? 'selected' : ''}>Oceanic</option>
         </select>
       </div>
+      ` : ''}
 
       <div class="property-group">
         <label class="property-label">Density (g/cm³)</label>

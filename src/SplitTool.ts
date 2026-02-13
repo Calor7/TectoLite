@@ -370,7 +370,7 @@ export function splitPlate(
         birthTime: state.world.currentTime,
         deathTime: null,
         visible: true,
-        locked: false,
+        locked: true, // Rift Axis is stationary — plates move away from it
         center: riftCenter,
         // Use open polygon for line representation
         polygons: [{ id: generateId(), points: riftPolyPoints, closed: false, riftEdgeIndices: [] }],
@@ -388,7 +388,7 @@ export function splitPlate(
         }],
         initialPolygons: [{ id: generateId(), points: riftPolyPoints, closed: false, riftEdgeIndices: [] }],
         initialFeatures: [],
-        motion: { ...newMotion }, // Inherit parent motion physics initially
+        motion: { eulerPole: { position: [0, 90], rate: 0, visible: false } }, // Stationary — rift does not move
         motionKeyframes: [],
         events: []
     };
