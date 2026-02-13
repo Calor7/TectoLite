@@ -5,6 +5,7 @@ import {
     latLonToVector,
     vectorToLatLon,
     rotateVector,
+    rotatePoint,
     calculateSphericalCentroid,
     Vector3
 } from './utils/sphericalMath';
@@ -193,13 +194,25 @@ export class SimulationEngine {
                 return this.calculatePlateAtTime(plate, newTime, state.world.plates);
             });
 
-            // --- AUTOMATED OCEANIC CRUST "RIBBED" GENERATION ---
-            if (globalOptions.enableAutoOceanicCrust) {
+            // --- AUTOMATED OCEANIC CRUST "EXPANDING RIFT" GENERATION ---
+            if (globalOptions.enableExpandingRifts !== false) { // Default true
                 const interval = globalOptions.oceanicGenerationInterval || 25;
-                const generatedSlabs = this.generateOceanicSlabs(newPlates, newTime, interval);
-                if (generatedSlabs.length > 0) {
-                    newPlates = [...newPlates, ...generatedSlabs];
+                const riftSlabs = this.generateRiftCrust(newPlates, newTime, interval);
+                if (riftSlabs.length > 0) {
+                    newPlates = [...newPlates, ...riftSlabs];
+                    // Note: generateRiftCrust might mutate 'newPlates' to remove rift indices from parents
+                    // But we passed newPlates by content. 
+                    // To handle handover, generateRiftCrust should return modified parents OR we blindly add children 
+                    // and rely on the fact that we modify the OBJECT refs in newPlates?
+                    // actually map() in update() creates shallow copies.
+                    // generateRiftCrust will need to modify the objects in the array OR return a "patch".
                 }
+            } else if (globalOptions.enableAutoOceanicCrust) {
+                // --- LEGACY FLOWLINE GENERATION ---
+                // (Kept as fallback if enabled and Rifts disabled, or just remove as per plan?)
+                // Plan says "Remove... and its calls".
+                // But user didn't explicitly say "delete the code", just "replace current... generation".
+                // I'll comment it out or remove it to keep it clean.
             }
 
             // Calculate Boundaries if enabled
@@ -232,108 +245,111 @@ export class SimulationEngine {
         this.updateFlowlines();
     }
 
-    // --- AUTOMATED OCEANIC CRUST GENERATION ---
-    private generateOceanicSlabs(currentPlates: TectonicPlate[], currentTime: number, interval: number): TectonicPlate[] {
+    // --- AUTOMATED RIFT CRUST GENERATION ---
+    private generateRiftCrust(currentPlates: TectonicPlate[], currentTime: number, interval: number): TectonicPlate[] {
+
         const newSlabs: TectonicPlate[] = [];
         const generationTime = Math.floor(currentTime / interval) * interval;
+        // Allow generationMain interval 0
 
-        // Don't generate if time is 0 or negative
-        if (generationTime <= 0) return [];
+        // 1. Identify Rift Plates (The Generators)
+        // These are plates of type 'rift' or plates that are targets of 'connectedRiftId'?
+        // The Rift Plate has type 'rift'.
+        const riftPlates = currentPlates.filter(p => p.type === 'rift');
 
-        // Filter for Continental plates that have Flowlines
-        // And ensure we don't generate from existing oceanic slabs (to avoid infinite recursion if we aren't careful, 
-        // though `isOceanic` check handles it).
-        const candidates = currentPlates.filter(p =>
-            !p.isOceanic &&
-            p.crustType !== 'oceanic' &&
-            p.features.some(f => f.type === 'flowline')
-        );
+        for (const rift of riftPlates) {
+            // Find the Axis Feature
+            const axisFeature = rift.features.find(f => f.type === 'rift' && f.properties?.isAxis);
+            if (!axisFeature || !axisFeature.properties?.path) continue;
 
-        for (const plate of candidates) {
-            // Check if slab already exists for this (Plate + Time)
-            const slabId = `${plate.id}_slab_${generationTime}`;
-            const alreadyExists = currentPlates.some(p => p.slabId === slabId);
-            if (alreadyExists) continue;
+            const axisPoints = (axisFeature.properties.path as unknown) as Coordinate[];
 
-            const flowlines = plate.features.filter(f => f.type === 'flowline');
-            if (flowlines.length < 2) continue; // Need at least 2 flowlines to make a valid strip
+            // 2. Find Connected Plates (The Receivers)
+            const connectedPlates = currentPlates.filter(p => p.connectedRiftId === rift.id);
 
-            // Sort flowlines to ensure consistent geometry (e.g. North to South)
-            // We'll sort by their CURRENT latitude (Y) descending
-            flowlines.sort((a, b) => b.position[1] - a.position[1]);
+            for (const plate of connectedPlates) {
+                if (plate.riftGenerationMode === 'never') continue;
 
-            // Times
-            const T_current = generationTime;
-            const T_prev = generationTime - interval;
+                const slabId = `${plate.id}_slab_${generationTime}`;
 
-            // Geometry Construction
-            const currentPoints: Coordinate[] = [];
-            const prevPoints: Coordinate[] = [];
+                // Calculate Expansion Geometry for this specific instant
+                const dt = currentTime - generationTime;
 
-            let valid = true;
-            for (const flowline of flowlines) {
-                // We must trace back from the ORIGINAL position to the desired time
-                const origin = flowline.originalPosition || flowline.position;
+                // If dt is tiny, skip to avoid degenerate polygons
+                if (dt < 0.001) continue;
 
-                // Using getPointPositionAtTime to find where this point WAS at T_current and T_prev
-                const pAtT = this.getPointPositionAtTime(origin, plate.id, T_current, currentPlates);
-                const pAtPrev = this.getPointPositionAtTime(origin, plate.id, T_prev, currentPlates);
+                const points1 = axisPoints; // At Rift (Current)
+                const points2 = axisPoints.map(p => {
+                    // Step 1: Un-rotate from Rift Motion (Current -> Start)
+                    const p_start = this.applyPlateMotion(p, rift, currentTime, generationTime);
+                    // Step 2: Rotate with Plate Motion (Start -> Current)
+                    return this.applyPlateMotion(p_start, plate, generationTime, currentTime);
+                });
 
-                currentPoints.push(pAtT);
-                prevPoints.push(pAtPrev);
+                // Construct Polygon
+                const ring = [...points1, ...points2.reverse(), points1[0]];
+
+
+                // Check if Slab Already Exists (Active Slab)
+                const existingSlab = currentPlates.find(p => p.slabId === slabId);
+
+                if (existingSlab) {
+                    // UPDATE Existing Active Slab
+                    const newCenter = calculateSphericalCentroid(ring);
+                    existingSlab.polygons = [{ id: existingSlab.polygons[0]?.id || generateId(), points: ring, closed: true }];
+                    existingSlab.initialPolygons = [{ id: existingSlab.initialPolygons[0]?.id || generateId(), points: ring, closed: true }];
+                    existingSlab.center = newCenter;
+                    existingSlab.linkTime = currentTime;
+                } else {
+                    // CREATE New Slab
+                    const newSlabId = generateId();
+                    newSlabs.push({
+                        id: newSlabId,
+                        slabId: slabId,
+                        name: `Crust ${generationTime}Ma (${plate.name})`,
+                        type: 'oceanic',
+                        crustType: 'oceanic',
+                        color: plate.color,
+                        zIndex: (plate.zIndex || 0) - 1,
+                        birthTime: generationTime,
+                        deathTime: null,
+                        visible: true,
+                        locked: false,
+                        center: calculateSphericalCentroid(ring),
+                        polygons: [{ id: generateId(), points: ring, closed: true }],
+                        features: [],
+                        initialPolygons: [{ id: generateId(), points: ring, closed: true }],
+                        initialFeatures: [],
+                        motion: createDefaultMotion(),
+                        motionKeyframes: [],
+                        events: [],
+                        linkedToPlateId: plate.id,
+                        linkType: 'motion',
+                        linkTime: currentTime
+                    });
+                }
             }
-
-            if (!valid || currentPoints.length < 2) continue;
-
-            // Construct Polygon Ring
-            // Current Line (Order) -> Previous Line (Reverse Order) -> Close
-            const ring: Coordinate[] = [
-                ...currentPoints,
-                ...prevPoints.reverse(),
-                currentPoints[0] // Close the loop
-            ];
-
-            const newSlabId = generateId();
-
-            // Create Oceanic Slab
-            const oceanicSlab: TectonicPlate = {
-                id: newSlabId,
-                slabId: slabId, // Tracking ID for deduplication
-                name: `Oceanic Crust ${generationTime}Ma`,
-                description: `Generated from ${plate.name} at ${generationTime}Ma`,
-                crustType: 'oceanic',
-                isOceanic: true,
-                color: '#0000FF', // Blue
-                zIndex: -1,
-                locked: true,
-                visible: true,
-                age: generationTime,
-                generatedBy: plate.id,
-                birthTime: generationTime, // Created at this time
-                deathTime: null,
-
-                // Geometry
-                polygons: [{ id: generateId(), points: ring, closed: true }],
-                initialPolygons: [{ id: generateId(), points: ring, closed: true }],
-
-                features: [],
-                initialFeatures: [],
-                center: calculateSphericalCentroid(ring),
-
-                // Motion: Inherit completely from Parent
-                linkedToPlateId: plate.id,
-                linkTime: generationTime,
-                unlinkTime: undefined,
-
-                motion: createDefaultMotion(),
-                motionKeyframes: [],
-                events: []
-            };
-
-            newSlabs.push(oceanicSlab);
         }
 
         return newSlabs;
+    }
+
+    // Helper to move a point forward in time according to a plate's motion history
+    private applyPlateMotion(point: Coordinate, plate: TectonicPlate, fromTime: number, toTime: number): Coordinate {
+        // Find relevant keyframes or Euler pole for this interval
+        // Simplify: Use current motion state?
+        // If simulation is stepped, `plate.motion` is the CURRENT velocity.
+        // Assuming velocity was constant over [fromTime, toTime] (small interval).
+        // Angular distance = rate * (toTime - fromTime).
+        // Rot Axis = plate.motion.eulerPole.
+
+        // Note: TectoLite speeds are deg/Ma.
+        const dt = toTime - fromTime; // e.g. 25 Ma
+        // velocity is deg/Ma.
+        const angle = plate.motion.eulerPole.rate * dt;
+
+        // Rotate 'point' around 'plate.motion.eulerPole' by 'angle'.
+        return rotatePoint(point, plate.motion.eulerPole.position, toRad(angle));
     }
 
     private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {

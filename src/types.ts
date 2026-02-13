@@ -17,6 +17,7 @@ export interface Polygon {
   id: string;
   points: Coordinate[]; // Changed to spherical coordinates
   closed: boolean;
+  riftEdgeIndices?: number[]; // Indices of points in the ring that form active rift segments
 }
 
 export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'flowline' | 'seafloor';
@@ -47,6 +48,7 @@ export interface Feature {
   properties: Record<string, unknown>;
   generatedAt?: number;   // Birth time (when feature was created)
   deathTime?: number;     // Death time (when feature ends, null/undefined = still active)
+
   // User-customizable fields
   name?: string;         // User-defined name (defaults to type name if not set)
   description?: string;  // User-defined description
@@ -321,6 +323,12 @@ export interface TectonicPlate {
   initialPolygons: Polygon[];
   initialFeatures: Feature[];
 
+  // Rift & Generation Properties
+  type?: 'lithosphere' | 'oceanic' | 'rift'; // Default 'lithosphere'
+  linkType?: 'motion' | 'generation'; // Default 'motion'
+  connectedRiftId?: string; // ID of the Rift/Oceanic plate accumulating crust from this plate
+  riftGenerationMode?: 'default' | 'always' | 'never';
+
   // Motion keyframes - sorted by time, first keyframe is at birthTime
   motionKeyframes: MotionKeyframe[];
 
@@ -391,6 +399,7 @@ export interface WorldState {
     // Oceanic Crust Generation
     enableAutoOceanicCrust?: boolean;        // Toggle for "Ribbed" generation
     oceanicGenerationInterval?: number;      // Interval in Ma (default 25)
+    enableExpandingRifts?: boolean;          // Toggle for new Expanding Rift system (default: true)
   };
 
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
@@ -511,6 +520,7 @@ export function createDefaultWorldState(): WorldState {
       // Oceanic Crust Defaults
       enableAutoOceanicCrust: true,
       oceanicGenerationInterval: 25,
+      enableExpandingRifts: true,
     },
     // Event system defaults
     tectonicEvents: [],

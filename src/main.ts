@@ -225,7 +225,8 @@ class TectoLiteApp {
                 customPlanetRadius: this.state.world.globalOptions.customPlanetRadius,
                 timelineMaxTime: this.state.world.globalOptions.timelineMaxTime,
                 enableAutoOceanicCrust: this.state.world.globalOptions.enableAutoOceanicCrust,
-                oceanicGenerationInterval: this.state.world.globalOptions.oceanicGenerationInterval
+                oceanicGenerationInterval: this.state.world.globalOptions.oceanicGenerationInterval,
+                enableExpandingRifts: this.state.world.globalOptions.enableExpandingRifts
             },
             realWorldPresetListHtml: this.generateRealWorldPresetList(),
             customPresetListHtml: this.generateCustomPresetList()
@@ -1537,6 +1538,7 @@ class TectoLiteApp {
 
 
         // Projection Select
+
         const projSelect = document.getElementById('projection-select') as HTMLSelectElement;
         if (projSelect) projSelect.value = w.projection;
 
@@ -2600,6 +2602,15 @@ class TectoLiteApp {
         <input type="color" id="prop-color" class="property-color" value="${plate.color}">
       </div>
       
+      <div class="property-group">
+        <label class="property-label">Rift Generation</label>
+        <select id="prop-rift-mode" class="property-input">
+            <option value="default" ${(!plate.riftGenerationMode || plate.riftGenerationMode === 'default') ? 'selected' : ''}>Default</option>
+            <option value="always" ${plate.riftGenerationMode === 'always' ? 'selected' : ''}>Always</option>
+            <option value="never" ${plate.riftGenerationMode === 'never' ? 'selected' : ''}>Never</option>
+        </select>
+      </div>
+
       <div class="property-group">
         <label class="property-label">Crust Type</label>
         <select id="prop-crust-type" class="property-input">

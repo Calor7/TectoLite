@@ -59,6 +59,14 @@ export function rotateVector(v: Vector3, axis: Vector3, angle: number): Vector3 
     };
 }
 
+// Rotate a point (lat/lon) around an Euler pole (lat/lon) by an angle (radians)
+export function rotatePoint(point: Coordinate, pole: Coordinate, angleRad: number): Coordinate {
+    const v = latLonToVector(point);
+    const axis = latLonToVector(pole);
+    const rotatedV = rotateVector(v, axis, angleRad);
+    return vectorToLatLon(rotatedV);
+}
+
 // Cross product of two vectors
 export function cross(a: Vector3, b: Vector3): Vector3 {
     return {

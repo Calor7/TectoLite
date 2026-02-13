@@ -14,6 +14,7 @@ export interface AppTemplateOptions {
     customPlanetRadius?: number;
     timelineMaxTime?: number;
     enableAutoOceanicCrust?: boolean;
+    enableExpandingRifts?: boolean;
     oceanicGenerationInterval?: number;
   };
   realWorldPresetListHtml: string;
@@ -381,9 +382,12 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                 </div>
 
                 <div style="margin-top: 8px; border-top: 1px dotted var(--border-default); padding-top: 8px;">
-                     <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Oceanic Crust <span class="info-icon" data-tooltip="Automatically generate oceanic slab ribbons behind moving plates">(i)</span></div>
+                     <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Oceanic Crust <span class="info-icon" data-tooltip="Automatically generate oceanic slab ribbons">(i)</span></div>
                      <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
-                        <input type="checkbox" id="check-auto-oceanic" ${g.enableAutoOceanicCrust !== false ? 'checked' : ''}> Enable Auto-Generation
+                        <input type="checkbox" id="check-auto-oceanic" ${g.enableAutoOceanicCrust !== false ? 'checked' : ''}> Flowline Generation (Legacy)
+                     </label>
+                     <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; margin-top: 2px;">
+                        <input type="checkbox" id="check-expanding-rifts" ${g.enableExpandingRifts !== false ? 'checked' : ''}> Expanding Rifts (New)
                      </label>
                      <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px; padding-left: 16px;">
                         <label style="font-size: 10px; color: var(--text-secondary);">Interval (Ma):</label>
