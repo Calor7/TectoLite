@@ -307,7 +307,6 @@ class TectoLiteApp {
         });
 
 
-
         // Close on outside click
         document.addEventListener('click', (e) => {
             if (viewMenu?.classList.contains('show') && !viewMenu.contains(e.target as Node) && e.target !== viewBtn) {
@@ -654,11 +653,30 @@ class TectoLiteApp {
             this.state.world.globalOptions.enableAutoOceanicCrust = (e.target as HTMLInputElement).checked;
         });
 
+        document.getElementById('check-expanding-rifts')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.enableExpandingRifts = (e.target as HTMLInputElement).checked;
+        });
+
         document.getElementById('input-oceanic-interval')?.addEventListener('change', (e) => {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
                 this.state.world.globalOptions.oceanicGenerationInterval = val;
             }
+        });
+
+        document.getElementById('input-oceanic-color')?.addEventListener('input', (e) => {
+            this.state.world.globalOptions.oceanicCrustColor = (e.target as HTMLInputElement).value;
+        });
+
+        document.getElementById('input-oceanic-opacity')?.addEventListener('input', (e) => {
+            const val = parseInt((e.target as HTMLInputElement).value);
+            const opacity = val / 100;
+            this.state.world.globalOptions.oceanicCrustOpacity = opacity;
+
+            const lbl = document.getElementById('lbl-oceanic-opacity');
+            if (lbl) lbl.textContent = `${val}%`;
+
+            this.canvasManager?.render();
         });
 
         // Global Options
@@ -3011,6 +3029,8 @@ class TectoLiteApp {
             })()}
     `;
     }
+
+
 
     private bindFeatureEvents(): void {
         const { selectedFeatureId, selectedFeatureIds } = this.state.world;

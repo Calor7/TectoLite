@@ -337,7 +337,7 @@ export class SimulationEngine {
                         name: `Crust ${generationTime}Ma (${plate.name})`,
                         type: 'oceanic',
                         crustType: 'oceanic',
-                        color: plate.color,
+                        color: this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6', // Use global setting or default blue
                         zIndex: (plate.zIndex || 0) - 1,
                         birthTime: generationTime,
                         deathTime: null,

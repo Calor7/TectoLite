@@ -400,6 +400,8 @@ export interface WorldState {
     enableAutoOceanicCrust?: boolean;        // Toggle for "Ribbed" generation
     oceanicGenerationInterval?: number;      // Interval in Ma (default 25)
     enableExpandingRifts?: boolean;          // Toggle for new Expanding Rift system (default: true)
+    oceanicCrustColor?: string;              // Default color for new oceanic crust
+    oceanicCrustOpacity?: number;            // Opacity for oceanic crust rendering (0-1)
   };
 
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
@@ -521,6 +523,8 @@ export function createDefaultWorldState(): WorldState {
       enableAutoOceanicCrust: true,
       oceanicGenerationInterval: 25,
       enableExpandingRifts: true,
+      oceanicCrustColor: '#3b82f6', // Default blue
+      oceanicCrustOpacity: 0.5,      // Default 50% opacity
     },
     // Event system defaults
     tectonicEvents: [],

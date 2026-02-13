@@ -1333,9 +1333,9 @@ export class CanvasManager {
                 path(geojson);
 
                 // Apply plate opacity from global options
-                // Apply plate opacity from global options
-                const plateOpacity = state.world.globalOptions.plateOpacity ?? 1.0;
-                this.ctx.globalAlpha = plateOpacity;
+                const globalOpacity = state.world.globalOptions.plateOpacity ?? 1.0;
+                const oceanicOpacity = plate.type === 'oceanic' ? (state.world.globalOptions.oceanicCrustOpacity ?? 0.5) : 1.0;
+                this.ctx.globalAlpha = globalOpacity * oceanicOpacity;
                 this.ctx.fillStyle = plate.color;
 
                 // Only fill if closed (default true)

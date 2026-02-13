@@ -16,6 +16,8 @@ export interface AppTemplateOptions {
     enableAutoOceanicCrust?: boolean;
     enableExpandingRifts?: boolean;
     oceanicGenerationInterval?: number;
+    oceanicCrustColor?: string;
+    oceanicCrustOpacity?: number;
   };
   realWorldPresetListHtml: string;
   customPresetListHtml: string;
@@ -47,8 +49,71 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                 <span id="retro-status-text">INFO LOADING...</span>
             </div>
 
+            <!-- Settings Dropdown (formerly Planet) -->
+            <div class="view-dropdown-container">
+                <button id="btn-planet" class="btn btn-secondary" title="Application Settings">
+                    <span class="icon">⚙️</span> Settings
+                </button>
+                <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
+                    <div class="dropdown-section">
+                        <div class="dropdown-header">Timeline</div>
+                        <div style="padding: 8px; display: flex; flex-direction: column; gap: 8px;">
+                            <label style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                                <span>Max Duration (Ma)</span>
+                                <input type="number" id="timeline-max-time" class="property-input" value="${g.timelineMaxTime || 500}" step="100" min="100" style="width: 70px; padding: 2px 4px;">
+                            </label>
+                        </div>
+                    </div>
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
+                        <div class="dropdown-header">Planet</div>
+                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Custom Planet Radius</span>
+                            <input type="checkbox" id="check-custom-radius">
+                        </label>
+                        <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; gap: 6px;">
+                            <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Radius (km)</label>
+                            <input type="number" id="global-planet-radius" class="property-input" value="${g.customRadiusEnabled ? (g.customPlanetRadius || 6371) : 6371}" step="100" style="width: 90px;" disabled>
+                        </div>
+                    </div>
+                    
+                    <!-- Oceanic Crust Settings -->
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
+                        <div class="dropdown-header">Oceanic Crust</div>
+                        
+                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Expanding Rifts</span>
+                            <input type="checkbox" id="check-expanding-rifts" ${g.enableExpandingRifts !== false ? 'checked' : ''}>
+                        </label>
+                        
+                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center; opacity: 0.8;">
+                            <span>Flowlines (Legacy)</span>
+                            <input type="checkbox" id="check-auto-oceanic" ${g.enableAutoOceanicCrust !== false ? 'checked' : ''}>
+                        </label>
+                        
+                        <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; justify-content: space-between;">
+                            <label style="font-size: 10px; color: var(--text-secondary);">Generation Interval (Ma)</label>
+                            <input type="number" id="input-oceanic-interval" class="property-input" value="${g.oceanicGenerationInterval || 25}" step="1" min="1" style="width: 50px;">
+                        </div>
+
+                         <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; justify-content: space-between;">
+                            <label style="font-size: 10px; color: var(--text-secondary);">Creation Color</label>
+                            <input type="color" id="input-oceanic-color" value="${g.oceanicCrustColor || '#3b82f6'}" style="width: 24px; height: 16px; border: none; padding: 0; background: none; cursor: pointer;">
+                        </div>
+
+                         <div style="padding: 2px 8px 4px 8px;">
+                             <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <label style="font-size: 10px; color: var(--text-secondary);">Opacity</label>
+                                <span id="lbl-oceanic-opacity" style="font-size: 10px;">${Math.round((g.oceanicCrustOpacity ?? 0.5) * 100)}%</span>
+                             </div>
+                             <input type="range" id="input-oceanic-opacity" min="0" max="100" value="${Math.round((g.oceanicCrustOpacity ?? 0.5) * 100)}" style="width: 100%; height: 4px; display:block; margin-top:4px;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- View Dropdown -->
             <div class="view-dropdown-container">
+
                 <button id="btn-view-panels" class="btn btn-secondary" title="View Options">
                     <span class="icon">👁️</span> View
                 </button>
@@ -153,36 +218,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                 </div>
             </div>
 
-            <!-- Settings Dropdown (formerly Planet) -->
-            <div class="view-dropdown-container">
-                <button id="btn-planet" class="btn btn-secondary" title="Application Settings">
-                    <span class="icon">⚙️</span> Settings
-                </button>
-                <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
-                    <div class="dropdown-section">
-                        <div class="dropdown-header">Timeline</div>
-                        <div style="padding: 8px; display: flex; flex-direction: column; gap: 8px;">
-                            <label style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
-                                <span>Max Duration (Ma)</span>
-                                <input type="number" id="timeline-max-time" class="property-input" value="${g.timelineMaxTime || 500}" step="100" min="100" style="width: 70px; padding: 2px 4px;">
-                            </label>
-                        </div>
-                    </div>
-                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
-                        <div class="dropdown-header">Planet</div>
-                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>Custom Planet Radius</span>
-                            <input type="checkbox" id="check-custom-radius">
-                        </label>
-                        <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; gap: 6px;">
-                            <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Radius (km)</label>
-                            <input type="number" id="global-planet-radius" class="property-input" value="${g.customRadiusEnabled ? (g.customPlanetRadius || 6371) : 6371}" step="100" style="width: 90px;" disabled>
-                        </div>
-                        
 
-                    </div>
-                </div>
-            </div>
 
             <button id="btn-reset-camera" class="btn btn-secondary" title="Reset Camera">
                 <span class="icon">⟲</span><span class="oldschool-text">RESET</span>
@@ -366,17 +402,10 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     ${opts.customPresetListHtml}
                 </div>
 
+                <!-- Oceanic Crust Settings moved to Settings Modal -->
                 <div style="margin-top: 8px; border-top: 1px dotted var(--border-default); padding-top: 8px;">
-                     <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Oceanic Crust <span class="info-icon" data-tooltip="Automatically generate oceanic slab ribbons">(i)</span></div>
-                     <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
-                        <input type="checkbox" id="check-auto-oceanic" ${g.enableAutoOceanicCrust !== false ? 'checked' : ''}> Flowline Generation (Legacy)
-                     </label>
-                     <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; margin-top: 2px;">
-                        <input type="checkbox" id="check-expanding-rifts" ${g.enableExpandingRifts !== false ? 'checked' : ''}> Expanding Rifts (New)
-                     </label>
-                     <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px; padding-left: 16px;">
-                        <label style="font-size: 10px; color: var(--text-secondary);">Interval (Ma):</label>
-                        <input type="number" id="input-oceanic-interval" class="property-input" value="${g.oceanicGenerationInterval || 25}" step="1" min="1" style="width: 50px;">
+                     <div style="font-size:11px; color:var(--text-secondary); font-style:italic;">
+                        Use <span class="icon">⚙️</span> for global settings
                      </div>
                 </div>
             </div>
