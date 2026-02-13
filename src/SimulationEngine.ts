@@ -1,4 +1,4 @@
-import { AppState, TectonicPlate, Coordinate, Feature } from './types';
+import { AppState, TectonicPlate, Coordinate, Feature, generateId, createDefaultMotion } from './types';
 
 import {
     toRad,
@@ -170,7 +170,7 @@ export class SimulationEngine {
 
             // Re-calculate ALL plates based on absolute time
             // This enables scrubbing/resetting.
-            const newPlates = state.world.plates.map(plate => {
+            let newPlates = state.world.plates.map(plate => {
                 // Check if plate exists at this time
                 const isBorn = newTime >= plate.birthTime;
                 const isDead = plate.deathTime !== null && newTime >= plate.deathTime;
@@ -192,6 +192,15 @@ export class SimulationEngine {
 
                 return this.calculatePlateAtTime(plate, newTime, state.world.plates);
             });
+
+            // --- AUTOMATED OCEANIC CRUST "RIBBED" GENERATION ---
+            if (globalOptions.enableAutoOceanicCrust) {
+                const interval = globalOptions.oceanicGenerationInterval || 25;
+                const generatedSlabs = this.generateOceanicSlabs(newPlates, newTime, interval);
+                if (generatedSlabs.length > 0) {
+                    newPlates = [...newPlates, ...generatedSlabs];
+                }
+            }
 
             // Calculate Boundaries if enabled
             // ALWAYS update boundaries if Visualization OR Guided Creation is enabled.
@@ -221,6 +230,110 @@ export class SimulationEngine {
             return finalState;
         });
         this.updateFlowlines();
+    }
+
+    // --- AUTOMATED OCEANIC CRUST GENERATION ---
+    private generateOceanicSlabs(currentPlates: TectonicPlate[], currentTime: number, interval: number): TectonicPlate[] {
+        const newSlabs: TectonicPlate[] = [];
+        const generationTime = Math.floor(currentTime / interval) * interval;
+
+        // Don't generate if time is 0 or negative
+        if (generationTime <= 0) return [];
+
+        // Filter for Continental plates that have Flowlines
+        // And ensure we don't generate from existing oceanic slabs (to avoid infinite recursion if we aren't careful, 
+        // though `isOceanic` check handles it).
+        const candidates = currentPlates.filter(p =>
+            !p.isOceanic &&
+            p.crustType !== 'oceanic' &&
+            p.features.some(f => f.type === 'flowline')
+        );
+
+        for (const plate of candidates) {
+            // Check if slab already exists for this (Plate + Time)
+            const slabId = `${plate.id}_slab_${generationTime}`;
+            const alreadyExists = currentPlates.some(p => p.slabId === slabId);
+            if (alreadyExists) continue;
+
+            const flowlines = plate.features.filter(f => f.type === 'flowline');
+            if (flowlines.length < 2) continue; // Need at least 2 flowlines to make a valid strip
+
+            // Sort flowlines to ensure consistent geometry (e.g. North to South)
+            // We'll sort by their CURRENT latitude (Y) descending
+            flowlines.sort((a, b) => b.position[1] - a.position[1]);
+
+            // Times
+            const T_current = generationTime;
+            const T_prev = generationTime - interval;
+
+            // Geometry Construction
+            const currentPoints: Coordinate[] = [];
+            const prevPoints: Coordinate[] = [];
+
+            let valid = true;
+            for (const flowline of flowlines) {
+                // We must trace back from the ORIGINAL position to the desired time
+                const origin = flowline.originalPosition || flowline.position;
+
+                // Using getPointPositionAtTime to find where this point WAS at T_current and T_prev
+                const pAtT = this.getPointPositionAtTime(origin, plate.id, T_current, currentPlates);
+                const pAtPrev = this.getPointPositionAtTime(origin, plate.id, T_prev, currentPlates);
+
+                currentPoints.push(pAtT);
+                prevPoints.push(pAtPrev);
+            }
+
+            if (!valid || currentPoints.length < 2) continue;
+
+            // Construct Polygon Ring
+            // Current Line (Order) -> Previous Line (Reverse Order) -> Close
+            const ring: Coordinate[] = [
+                ...currentPoints,
+                ...prevPoints.reverse(),
+                currentPoints[0] // Close the loop
+            ];
+
+            const newSlabId = generateId();
+
+            // Create Oceanic Slab
+            const oceanicSlab: TectonicPlate = {
+                id: newSlabId,
+                slabId: slabId, // Tracking ID for deduplication
+                name: `Oceanic Crust ${generationTime}Ma`,
+                description: `Generated from ${plate.name} at ${generationTime}Ma`,
+                crustType: 'oceanic',
+                isOceanic: true,
+                color: '#0000FF', // Blue
+                zIndex: -1,
+                locked: true,
+                visible: true,
+                age: generationTime,
+                generatedBy: plate.id,
+                birthTime: generationTime, // Created at this time
+                deathTime: null,
+
+                // Geometry
+                polygons: [{ id: generateId(), points: ring, closed: true }],
+                initialPolygons: [{ id: generateId(), points: ring, closed: true }],
+
+                features: [],
+                initialFeatures: [],
+                center: calculateSphericalCentroid(ring),
+
+                // Motion: Inherit completely from Parent
+                linkedToPlateId: plate.id,
+                linkTime: generationTime,
+                unlinkTime: undefined,
+
+                motion: createDefaultMotion(),
+                motionKeyframes: [],
+                events: []
+            };
+
+            newSlabs.push(oceanicSlab);
+        }
+
+        return newSlabs;
     }
 
     private calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {

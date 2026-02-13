@@ -4,26 +4,28 @@
  */
 
 export interface AppTemplateOptions {
-    globalOptions: {
-        showLinks?: boolean;
-        showFlowlines?: boolean;
-        gridOnTop?: boolean;
-        plateOpacity?: number;
-        showHints?: boolean;
-        customRadiusEnabled?: boolean;
-        customPlanetRadius?: number;
-        timelineMaxTime?: number;
-    };
-    realWorldPresetListHtml: string;
-    customPresetListHtml: string;
+  globalOptions: {
+    showLinks?: boolean;
+    showFlowlines?: boolean;
+    gridOnTop?: boolean;
+    plateOpacity?: number;
+    showHints?: boolean;
+    customRadiusEnabled?: boolean;
+    customPlanetRadius?: number;
+    timelineMaxTime?: number;
+    enableAutoOceanicCrust?: boolean;
+    oceanicGenerationInterval?: number;
+  };
+  realWorldPresetListHtml: string;
+  customPresetListHtml: string;
 }
 
 /**
  * Generates the full application HTML template.
  */
 export function getAppHTML(opts: AppTemplateOptions): string {
-    const g = opts.globalOptions;
-    return `
+  const g = opts.globalOptions;
+  return `
             <div class="app-container">
                 <header class="app-header">
                     <h1 class="app-title">
@@ -376,6 +378,17 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                 <!-- Custom List -->
                 <div id="preset-container-custom" style="display:none; flex-direction:column; gap:6px;">
                     ${opts.customPresetListHtml}
+                </div>
+
+                <div style="margin-top: 8px; border-top: 1px dotted var(--border-default); padding-top: 8px;">
+                     <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Oceanic Crust <span class="info-icon" data-tooltip="Automatically generate oceanic slab ribbons behind moving plates">(i)</span></div>
+                     <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
+                        <input type="checkbox" id="check-auto-oceanic" ${g.enableAutoOceanicCrust !== false ? 'checked' : ''}> Enable Auto-Generation
+                     </label>
+                     <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px; padding-left: 16px;">
+                        <label style="font-size: 10px; color: var(--text-secondary);">Interval (Ma):</label>
+                        <input type="number" id="input-oceanic-interval" class="property-input" value="${g.oceanicGenerationInterval || 25}" step="1" min="1" style="width: 50px;">
+                     </div>
                 </div>
             </div>
 

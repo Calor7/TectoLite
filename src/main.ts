@@ -223,7 +223,9 @@ class TectoLiteApp {
                 showHints: this.state.world.globalOptions.showHints,
                 customRadiusEnabled: this.state.world.globalOptions.customRadiusEnabled,
                 customPlanetRadius: this.state.world.globalOptions.customPlanetRadius,
-                timelineMaxTime: this.state.world.globalOptions.timelineMaxTime
+                timelineMaxTime: this.state.world.globalOptions.timelineMaxTime,
+                enableAutoOceanicCrust: this.state.world.globalOptions.enableAutoOceanicCrust,
+                oceanicGenerationInterval: this.state.world.globalOptions.oceanicGenerationInterval
             },
             realWorldPresetListHtml: this.generateRealWorldPresetList(),
             customPresetListHtml: this.generateCustomPresetList()
@@ -646,11 +648,17 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
+        // Automated Oceanic Crust
+        document.getElementById('check-auto-oceanic')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.enableAutoOceanicCrust = (e.target as HTMLInputElement).checked;
+        });
 
-
-
-
-
+        document.getElementById('input-oceanic-interval')?.addEventListener('change', (e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(val) && val > 0) {
+                this.state.world.globalOptions.oceanicGenerationInterval = val;
+            }
+        });
 
         // Global Options
         // Advanced Toggles

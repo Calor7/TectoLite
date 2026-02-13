@@ -300,6 +300,10 @@ export interface TectonicPlate {
 
   density?: number; // Optional custom density
   crustType?: CrustType; // Type of crust
+  isOceanic?: boolean;   // Explicit flag for oceanic crust (slab)
+  age?: number;          // Creation time (Ma) for oceanic slabs
+  generatedBy?: string;  // ID of the parent plate that generated this slab
+  slabId?: string;       // Unique ID for the slab (e.g. parentId_timeStep)
   elevation?: number; // Base elevation
 
   // Current Visual State (Calculated from keyframes)
@@ -383,6 +387,10 @@ export interface WorldState {
     showFlowlines?: boolean;                // Show flowline trails
     flowlineFadeDuration?: number;           // Duration in Ma for flowlines to fade
     flowlineAutoDelete?: boolean;            // Whether to delete flowlines after fading
+
+    // Oceanic Crust Generation
+    enableAutoOceanicCrust?: boolean;        // Toggle for "Ribbed" generation
+    oceanicGenerationInterval?: number;      // Interval in Ma (default 25)
   };
 
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
@@ -497,6 +505,12 @@ export function createDefaultWorldState(): WorldState {
 
       // Flowline defaults
       showFlowlines: true,      // Show flowlines by default
+      flowlineFadeDuration: 100,
+      flowlineAutoDelete: true,
+
+      // Oceanic Crust Defaults
+      enableAutoOceanicCrust: true,
+      oceanicGenerationInterval: 25,
     },
     // Event system defaults
     tectonicEvents: [],
