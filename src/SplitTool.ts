@@ -357,7 +357,7 @@ export function splitPlate(
         snapshotFeatures: rightFeatures
     };
 
-    const inheritedDescription = plateToSplit.inheritDescription ? plateToSplit.description : undefined;
+    const inheritedDescription = plateToSplit.description;
 
     const leftPlate: TectonicPlate = {
         ...plateToSplit,
@@ -370,7 +370,8 @@ export function splitPlate(
         motionKeyframes: [leftKeyframe],
         visible: true,
         locked: false,
-        color: plateToSplit.color, // Keep original color for A
+        color: plateToSplit.color, // Inherit color for A
+        zIndex: plateToSplit.zIndex, // Inherit z-index
         center: leftCenter,
         events: [],
         birthTime: currentTime,
@@ -392,7 +393,8 @@ export function splitPlate(
         motionKeyframes: [rightKeyframe],
         visible: true,
         locked: false,
-        color: '#D4AF37', // Gold for B
+        color: plateToSplit.color, // Inherit color for B
+        zIndex: plateToSplit.zIndex, // Inherit z-index
         center: rightCenter,
         events: [],
         birthTime: currentTime,

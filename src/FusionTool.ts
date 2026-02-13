@@ -1,6 +1,7 @@
 import { AppState, TectonicPlate, Feature, Polygon, Coordinate, generateId, MotionKeyframe } from './types';
 import { calculateSphericalCentroid, latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize } from './utils/sphericalMath';
 import polygonClipping from 'polygon-clipping';
+import { mixColors } from './utils/colorUtils';
 
 interface FuseResult {
     success: boolean;
@@ -93,6 +94,8 @@ function fallbackMerge(plate1: TectonicPlate, plate2: TectonicPlate): Polygon[] 
     return merged;
 }
 
+
+
 /**
  * Fuse two plates into one
  */
@@ -123,7 +126,18 @@ export function fusePlates(
         ...plate2.features
     ];
 
+    // Mix Colors
+    const mixedColor = mixColors(plate1.color, plate2.color);
 
+    // Concatenate Descriptions
+    const desc1 = plate1.description || "";
+    const desc2 = plate2.description || "";
+    const combinedDesc = desc1 && desc2 ? `${desc1} + ${desc2}` : (desc1 || desc2);
+
+    // Inherit Z-Index (max or primary?)
+    // Let's take the higher z-index to ensure it sits on top of whatever was below it?
+    // Or just primary. Let's start with max to avoid z-fighting with other layers.
+    const zIndex = Math.max(plate1.zIndex || 0, plate2.zIndex || 0);
 
     // Calculate new center
     const allPoints = mergedPolygons.flatMap(p => p.points);
@@ -139,7 +153,9 @@ export function fusePlates(
     const fusedPlate: TectonicPlate = {
         id: generateId(),
         name: `${plate1.name}-${plate2.name} (Fused)`,
-        color: plate1.color,
+        color: mixedColor,
+        description: combinedDesc,
+        zIndex: zIndex,
         polygons: mergedPolygons,
         features: combinedFeatures,
         center: newCenter,

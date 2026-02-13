@@ -2576,7 +2576,6 @@ class TectoLiteApp {
         const motion = plate.motion;
         const pole = motion.eulerPole;
         const description = plate.description || '';
-        const inheritDesc = plate.inheritDescription || false;
 
         content.innerHTML = `
       <div class="property-group">
@@ -2586,10 +2585,6 @@ class TectoLiteApp {
       <div class="property-group">
         <label class="property-label">Description</label>
         <textarea id="prop-description" class="property-input" rows="3" placeholder="Plate description...">${description}</textarea>
-      </div>
-      <div class="property-group" style="justify-content: flex-start;">
-        <input type="checkbox" id="prop-inherit" style="margin-right: 8px;" ${inheritDesc ? 'checked' : ''}>
-        <label for="prop-inherit" class="property-label" style="width: auto;">Children Inherit Description</label>
       </div>
       
       <div class="property-group">
@@ -2725,9 +2720,7 @@ class TectoLiteApp {
             plate.description = (e.target as HTMLTextAreaElement).value;
         });
 
-        document.getElementById('prop-inherit')?.addEventListener('change', (e) => {
-            plate.inheritDescription = (e.target as HTMLInputElement).checked;
-        });
+
 
         document.getElementById('prop-color')?.addEventListener('change', (e) => {
             plate.color = (e.target as HTMLInputElement).value;
