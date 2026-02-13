@@ -12,7 +12,7 @@ import {
     drawIslandIcon
 } from './featureIcons';
 import { MotionGizmo } from './MotionGizmo';
-import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, distance } from '../utils/sphericalMath';
+import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, distance, calculateSphericalCentroid } from '../utils/sphericalMath';
 
 export class CanvasManager {
     private canvas: HTMLCanvasElement;
@@ -68,6 +68,8 @@ export class CanvasManager {
         polyIndex?: number;
         vertexIndex?: number;
         startPoint: Coordinate;
+        startScreenPoint?: Point; // For drag threshold
+        hasMoved?: boolean; // Track if threshold passed
         startRotation?: number; // For rotate_plate (screen angle)
         startCenter?: Coordinate; // For rotate_plate
     } | null = null;
@@ -578,7 +580,16 @@ export class CanvasManager {
                             const plate = state.world.plates.find(p => p.id === plateId);
                             if (plate) {
                                 // 1. Check Rotation Gizmo Hit
-                                const projCenter = this.projectionManager.project(plate.center);
+                                // Use dynamic centroid if temp polygons exist, otherwise plate center
+                                let currentCenter = plate.center;
+                                if (this.editTempPolygons && this.editTempPolygons.plateId === plate.id) {
+                                    const allPoints = this.editTempPolygons.polygons.flatMap((p: any) => p.points);
+                                    if (allPoints.length > 0) {
+                                        currentCenter = calculateSphericalCentroid(allPoints);
+                                    }
+                                }
+
+                                const projCenter = this.projectionManager.project(currentCenter);
                                 if (projCenter) {
                                     const dist = Math.hypot(mousePos.x - projCenter[0], mousePos.y - projCenter[1]);
                                     // Ring Radius 60, Handle radius 8. Check if near ring or handle.
@@ -602,7 +613,7 @@ export class CanvasManager {
                                             operation: 'rotate_plate',
                                             plateId: plate.id,
                                             startPoint: geoPos!,
-                                            startCenter: plate.center,
+                                            startCenter: currentCenter,
                                             startRotation: angle
                                         };
                                         this.isDragging = true;
@@ -616,7 +627,8 @@ export class CanvasManager {
                                     this.editDragState = {
                                         operation: 'move_plate',
                                         plateId: plate.id,
-                                        startPoint: geoPos!
+                                        startPoint: geoPos!,
+                                        startScreenPoint: mousePos
                                     };
                                     this.isDragging = true;
                                     return; // Consumed
@@ -807,6 +819,13 @@ export class CanvasManager {
                 if (this.editDragState.operation === 'move_vertex' && geoPos) {
                     this.updateEditDrag(geoPos);
                 } else if (this.editDragState.operation === 'move_plate' && geoPos) {
+                    // Drag Threshold Check (5px)
+                    if (!this.editDragState.hasMoved && this.editDragState.startScreenPoint) {
+                        const dist = Math.hypot(mousePos.x - this.editDragState.startScreenPoint.x, mousePos.y - this.editDragState.startScreenPoint.y);
+                        if (dist < 5) return;
+                        this.editDragState.hasMoved = true;
+                    }
+
                     // Move Plate Logic: 3D Rotation from LastGeo to CurrGeo
                     // Note: updateEditDrag logic was tricky, implementing direct incremental logic here
                     if (!this.editTempPolygons || this.editTempPolygons.plateId !== this.editDragState.plateId) {
@@ -822,7 +841,12 @@ export class CanvasManager {
                     // No, `currentMouseGeo` is updated in THIS call. `lastMousePos` is previous screen pos.
                     // We need Previous Geo. 
                     // Let's re-calculate previous geo from `lastMousePos`.
-                    const prevGeo = this.projectionManager.invert(this.lastMousePos.x, this.lastMousePos.y);
+                    // Previous Geo Position (from last frame's mouse event)
+                    // We need to convert lastMousePos (screen coords) to canvas-relative coords first
+                    const rect = this.canvas.getBoundingClientRect();
+                    const prevX = this.lastMousePos.x - rect.left;
+                    const prevY = this.lastMousePos.y - rect.top;
+                    const prevGeo = this.projectionManager.invert(prevX, prevY);
 
                     if (this.editTempPolygons && geoPos && prevGeo) {
                         const vPrev = latLonToVector(prevGeo);
@@ -856,8 +880,14 @@ export class CanvasManager {
                         const projCenter = this.projectionManager.project(this.editDragState.startCenter);
                         if (projCenter) {
                             const currAngle = Math.atan2(mousePos.y - projCenter[1], mousePos.x - projCenter[0]) * 180 / Math.PI;
+
+
                             // Delta since last frame
-                            const prevAngle = Math.atan2(this.lastMousePos.y - projCenter[1], this.lastMousePos.x - projCenter[0]) * 180 / Math.PI;
+                            // Fix: Use Canvas-Relative coords for LastMousePos
+                            const rect = this.canvas.getBoundingClientRect();
+                            const prevX = this.lastMousePos.x - rect.left;
+                            const prevY = this.lastMousePos.y - rect.top;
+                            const prevAngle = Math.atan2(prevY - projCenter[1], prevX - projCenter[0]) * 180 / Math.PI;
 
                             let delta = currAngle - prevAngle;
                             // Wrap
@@ -2173,7 +2203,14 @@ export class CanvasManager {
 
         // 3. Shift Mode: Rotation Gizmo
         if (this.shiftKeyDown) {
-            this.drawRotationWidget(plate.center);
+            let currentCenter = plate.center;
+            if (this.editTempPolygons && this.editTempPolygons.plateId === plate.id) {
+                const allPoints = this.editTempPolygons.polygons.flatMap((p: any) => p.points);
+                if (allPoints.length > 0) {
+                    currentCenter = calculateSphericalCentroid(allPoints);
+                }
+            }
+            this.drawRotationWidget(currentCenter);
 
             // Also draw visual cue for "Move" capability?
             // Optional: Maybe a move arrow icon at cursor? 
