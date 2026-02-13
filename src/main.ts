@@ -29,7 +29,7 @@ import { exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialo
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { GeoPackageExporter } from './GeoPackageExporter';
 import { TimelineSystem } from './systems/TimelineSystem';
-import { geoArea } from 'd3-geo';
+import { geoArea, geoCentroid } from 'd3-geo';
 import {
     getSpeedPresetData as _getSpeedPresetData,
     generateRealWorldPresetList,
@@ -745,6 +745,14 @@ class TectoLiteApp {
                     if (p.id === result.plateId) {
                         const copy = { ...p };
                         copy.polygons = result.polygons; // Update current visual state immediately
+
+                        // Recalculate center based on new geometry
+                        const geoJson = {
+                            type: "FeatureCollection",
+                            features: copy.polygons.map(p => toGeoJSON(p))
+                        };
+                        // @ts-ignore
+                        copy.center = geoCentroid(geoJson);
 
                         if (mode === 'generation') {
                             // --- REWRITE HISTORY STRATEGY ---

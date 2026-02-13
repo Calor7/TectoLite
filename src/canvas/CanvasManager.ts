@@ -63,13 +63,18 @@ export class CanvasManager {
     private editHoveredVertex: { plateId: string; polyIndex: number; vertexIndex: number } | null = null;
     private editHoveredEdge: { plateId: string; polyIndex: number; vertexIndex: number; pointOnEdge: Coordinate } | null = null;
     private editDragState: {
-        operation: 'move_vertex' | 'insert_vertex';
+        operation: 'move_vertex' | 'insert_vertex' | 'move_plate' | 'rotate_plate';
         plateId: string;
-        polyIndex: number;
-        vertexIndex: number;
-        startPoint: Coordinate
+        polyIndex?: number;
+        vertexIndex?: number;
+        startPoint: Coordinate;
+        startRotation?: number; // For rotate_plate (screen angle)
+        startCenter?: Coordinate; // For rotate_plate
     } | null = null;
     private editTempPolygons: { plateId: string; polygons: any[] } | null = null;
+
+    // Input State
+    private shiftKeyDown = false;
 
 
     constructor(
@@ -260,9 +265,11 @@ export class CanvasManager {
         }
 
         if (this.editTempPolygons) {
-            const poly = this.editTempPolygons.polygons[this.editDragState.polyIndex];
-            if (poly) {
-                poly.points[this.editDragState.vertexIndex] = geoPos;
+            if (this.editDragState.operation === 'move_vertex' && this.editDragState.polyIndex !== undefined && this.editDragState.vertexIndex !== undefined) {
+                const poly = this.editTempPolygons.polygons[this.editDragState.polyIndex];
+                if (poly) {
+                    poly.points[this.editDragState.vertexIndex] = geoPos;
+                }
             }
         }
     }
@@ -359,6 +366,7 @@ export class CanvasManager {
         });
 
         window.addEventListener('keydown', this.handleKeyDown.bind(this));
+        window.addEventListener('keyup', this.handleKeyUp.bind(this));
     }
 
     // Helper to get [lon, lat] from mouse
@@ -420,6 +428,12 @@ export class CanvasManager {
 
     private handleKeyDown(e: KeyboardEvent): void {
         const state = this.getState();
+
+        if (e.key === 'Shift') {
+            this.shiftKeyDown = true;
+            if (state.activeTool === 'edit') this.render();
+        }
+
         if (e.key === 'Enter') {
             if (state.activeTool === 'draw' && this.isDrawing && this.currentPolygon.length >= 3) {
                 this.onDrawComplete([...this.currentPolygon]);
@@ -449,6 +463,13 @@ export class CanvasManager {
                 this.onSplitPreviewChange(false);
                 this.render();
             }
+        }
+    }
+
+    private handleKeyUp(e: KeyboardEvent): void {
+        if (e.key === 'Shift') {
+            this.shiftKeyDown = false;
+            if (this.getState().activeTool === 'edit') this.render();
         }
     }
 
@@ -550,6 +571,61 @@ export class CanvasManager {
                     break;
 
                 case 'edit':
+                    if (this.shiftKeyDown) {
+                        // Shift Mode: Move/Rotate Plate
+                        const plateId = state.world.selectedPlateId;
+                        if (plateId) {
+                            const plate = state.world.plates.find(p => p.id === plateId);
+                            if (plate) {
+                                // 1. Check Rotation Gizmo Hit
+                                const projCenter = this.projectionManager.project(plate.center);
+                                if (projCenter) {
+                                    const dist = Math.hypot(mousePos.x - projCenter[0], mousePos.y - projCenter[1]);
+                                    // Ring Radius 60, Handle radius 8. Check if near ring or handle.
+                                    // Handle is at top (0,-60) usually relative to center?
+                                    // Actually drawEditHighlights doesn't rotate the handle unless dragging.
+                                    // Let's assume Handle is at 12 o'clock relative to screen up? 
+                                    // Wait, in drawRotationWidget calculation: 
+                                    // handleAngle = (this.ghostSpin - 90) * deg... 
+                                    // Initially ghostSpin = 0 -> -90 deg -> 12 o'clock.
+
+                                    // We need to match drawRotationWidget logic mostly.
+                                    // But simplified hit test: Ring (60 +/- 5) OR Handle (8px radius at position).
+                                    // Let's assume standard rotation hit first.
+
+                                    // Let's just check standard ring for now.
+                                    const isRing = Math.abs(dist - 60) < 10;
+
+                                    if (isRing) {
+                                        const angle = Math.atan2(mousePos.y - projCenter[1], mousePos.x - projCenter[0]) * 180 / Math.PI;
+                                        this.editDragState = {
+                                            operation: 'rotate_plate',
+                                            plateId: plate.id,
+                                            startPoint: geoPos!,
+                                            startCenter: plate.center,
+                                            startRotation: angle
+                                        };
+                                        this.isDragging = true;
+                                        return; // Consumed
+                                    }
+                                }
+
+                                // 2. Check Plate Body Hit (for Move)
+                                const hit = this.hitTest(mousePos);
+                                if (hit && hit.plateId === plateId) {
+                                    this.editDragState = {
+                                        operation: 'move_plate',
+                                        plateId: plate.id,
+                                        startPoint: geoPos!
+                                    };
+                                    this.isDragging = true;
+                                    return; // Consumed
+                                }
+                            }
+                        }
+                    }
+
+                    // Default: Vertex/Edge Edit
                     if (this.editHoveredVertex) {
                         // Click on vertex - Start Move
                         this.editDragState = {
@@ -727,8 +803,95 @@ export class CanvasManager {
             const dy = e.clientY - this.lastMousePos.y;
 
             // Handle Edit Mode Dragging (plate)
-            if (this.editDragState && state.activeTool === 'edit' && geoPos) {
-                this.updateEditDrag(geoPos);
+            if (this.editDragState && state.activeTool === 'edit') {
+                if (this.editDragState.operation === 'move_vertex' && geoPos) {
+                    this.updateEditDrag(geoPos);
+                } else if (this.editDragState.operation === 'move_plate' && geoPos) {
+                    // Move Plate Logic: 3D Rotation from LastGeo to CurrGeo
+                    // Note: updateEditDrag logic was tricky, implementing direct incremental logic here
+                    if (!this.editTempPolygons || this.editTempPolygons.plateId !== this.editDragState.plateId) {
+                        // Ensure Init (should be done in Start but safety check)
+                        const plate = state.world.plates.find(p => p.id === this.editDragState!.plateId);
+                        if (plate) {
+                            this.editTempPolygons = { plateId: plate.id, polygons: JSON.parse(JSON.stringify(plate.polygons)) };
+                        }
+                    }
+
+                    // Previous Geo Position (from last frame's mouse event)
+                    // We need a robust 'lastGeo'. 'this.currentMouseGeo' is updated at start of HandleMouseMove? 
+                    // No, `currentMouseGeo` is updated in THIS call. `lastMousePos` is previous screen pos.
+                    // We need Previous Geo. 
+                    // Let's re-calculate previous geo from `lastMousePos`.
+                    const prevGeo = this.projectionManager.invert(this.lastMousePos.x, this.lastMousePos.y);
+
+                    if (this.editTempPolygons && geoPos && prevGeo) {
+                        const vPrev = latLonToVector(prevGeo);
+                        const vCurr = latLonToVector(geoPos);
+
+                        // Rotation from Prev -> Curr
+                        const axis = normalize(cross(vPrev, vCurr));
+                        let angle = Math.acos(Math.max(-1, Math.min(1, dot(vPrev, vCurr))));
+
+                        if (!isNaN(angle) && angle > 0.0001) {
+                            this.editTempPolygons.polygons.forEach((poly: any) => {
+                                poly.points = poly.points.map((pt: Coordinate) => {
+                                    const v = latLonToVector(pt);
+                                    const vNew = rotateVector(v, axis, angle);
+                                    return vectorToLatLon(vNew);
+                                });
+                            });
+                        }
+                    }
+
+                } else if (this.editDragState.operation === 'rotate_plate') {
+                    // Rotate Logic
+                    if (!this.editTempPolygons) {
+                        const plate = state.world.plates.find(p => p.id === this.editDragState!.plateId);
+                        if (plate) {
+                            this.editTempPolygons = { plateId: plate.id, polygons: JSON.parse(JSON.stringify(plate.polygons)) };
+                        }
+                    }
+
+                    if (this.editTempPolygons && this.editDragState.startCenter) {
+                        const projCenter = this.projectionManager.project(this.editDragState.startCenter);
+                        if (projCenter) {
+                            const currAngle = Math.atan2(mousePos.y - projCenter[1], mousePos.x - projCenter[0]) * 180 / Math.PI;
+                            // Delta since last frame
+                            const prevAngle = Math.atan2(this.lastMousePos.y - projCenter[1], this.lastMousePos.x - projCenter[0]) * 180 / Math.PI;
+
+                            let delta = currAngle - prevAngle;
+                            // Wrap
+                            if (delta > 180) delta -= 360;
+                            if (delta < -180) delta += 360;
+
+                            const deltaRad = delta * Math.PI / 180;
+
+                            // Rotate around Center
+                            const vCenter = latLonToVector(this.editDragState.startCenter);
+
+                            // Negative angle for screen-to-world mapping usually? 
+                            // Screen CW = +Angle. World? 
+                            // If I move mouse CW, angle increases. Reference frame?
+                            // Standard math: CCW is positive X->Y. Screen Y is down. So CW is positive.
+                            // Rotate Vector expects Right-Handed rule axis.
+                            // Center vector is 'Up'. Right-Hand thumb along center. Fingers curl CCW.
+                            // So +Angle = CCW rotation on sphere surface.
+                            // Screen CW = +Delta.
+                            // We want to rotate CW on sphere. That is -Angle around Center Axis.
+                            // Let's try -deltaRad.
+                            const rotRad = -deltaRad;
+
+                            this.editTempPolygons.polygons.forEach((poly: any) => {
+                                poly.points = poly.points.map((pt: Coordinate) => {
+                                    const v = latLonToVector(pt);
+                                    const vNew = rotateVector(v, vCenter, rotRad);
+                                    return vectorToLatLon(vNew);
+                                });
+                            });
+                        }
+                    }
+                }
+
                 this.render();
                 this.lastMousePos = { x: e.clientX, y: e.clientY };
                 return;
@@ -2006,6 +2169,15 @@ export class CanvasManager {
                 this.ctx.lineWidth = 2;
                 this.ctx.stroke();
             }
+        }
+
+        // 3. Shift Mode: Rotation Gizmo
+        if (this.shiftKeyDown) {
+            this.drawRotationWidget(plate.center);
+
+            // Also draw visual cue for "Move" capability?
+            // Optional: Maybe a move arrow icon at cursor? 
+            // For now, the gizmo implies "Edit Transformation Mode"
         }
     }
 }
