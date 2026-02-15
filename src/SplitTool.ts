@@ -606,21 +606,59 @@ export function splitPlate(
                 // Segment Right: from intersection point → split end
                 const splitSegRight: Coordinate[] = [intersectionPoint, ...splitPolyline.slice(splitSegIdx + 1)];
 
-                // --- Create L-Rift A: riftArmA + splitSegLeft ---
-                // We need a continuous line A.
-                // splitSegLeft: Start -> Intersection
-                // riftArmA: Start -> Intersection
-                // To join them at Intersection: Reverse splitSegLeft so it goes Intersection -> Start
-                // Result A: riftArmA (Start->Int) + splitSegLeft (Int->Start)
-                // This forms a V-shape centered at Intersection.
-                const lRiftAPolyline = [...riftArmA, ...splitSegLeft.slice(0, -1).reverse()];
+                // --- Determine which split segment is VALID (inside the plate) ---
+                // User Feedback: "Use the longer one". 
+                // A split line drawn across a plate will have a long segment inside and a short segment outside (overshoot).
+                // Or if drawn from outside, the long segment is the one crossing the plate.
 
-                // --- Create L-Rift B: riftArmB + splitSegRight ---
-                // riftArmB: Intersection -> End
-                // splitSegRight: Intersection -> End
-                // To join them at Intersection: Reverse riftArmB so it goes End -> Intersection
-                // Result B: riftArmB (End->Int) + splitSegRight (Int->End)
-                const lRiftBPolyline = [...riftArmB.slice(1).reverse(), intersectionPoint, ...splitSegRight.slice(1)];
+                const getPolylineLength = (coords: Coordinate[]): number => {
+                    let totalLen = 0;
+                    for (let i = 0; i < coords.length - 1; i++) {
+                        const v1 = latLonToVector(coords[i]);
+                        const v2 = latLonToVector(coords[i + 1]);
+                        // Chord length squared is faster, but we sum segments so need actual length.
+                        // Chord length: |v1 - v2|
+                        const dx = v1.x - v2.x;
+                        const dy = v1.y - v2.y;
+                        const dz = v1.z - v2.z;
+                        totalLen += Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    }
+                    return totalLen;
+                };
+
+                const lenLeft = getPolylineLength(splitSegLeft);
+                const lenRight = getPolylineLength(splitSegRight);
+
+                // Use the longer segment
+                const useLeftSeg = lenLeft >= lenRight;
+                const sharedSplitSeg = useLeftSeg ? splitSegLeft : splitSegRight;
+
+                // --- Construct L-Rifts using the Shared Split Segment ---
+
+                let lRiftAPolyline: Coordinate[];
+                let lRiftBPolyline: Coordinate[];
+
+                if (useLeftSeg) {
+                    // Shared Segment goes: Start -> Intersection
+
+                    // L-Rift A: RiftArmA (Start->Int) + Shared (Start->Int reversed -> Int->Start)
+                    lRiftAPolyline = [...riftArmA, ...sharedSplitSeg.slice(0, -1).reverse()];
+
+                    // L-Rift B: RiftArmB reversed (End->Int) + Shared reversed (Int->Start)
+                    // riftArmB is Int->End. We want End->Int.
+                    // sharedSplitSeg is Start->Int. We want Int->Start.
+                    // But sharedSplitSeg ends at Int.
+                    // So: End->Int + Int->Start.
+                    lRiftBPolyline = [...riftArmB.slice(1).reverse(), intersectionPoint, ...sharedSplitSeg.slice(0, -1).reverse()];
+                } else {
+                    // Shared Segment goes: Intersection -> End
+
+                    // L-Rift A: RiftArmA (Start->Int) + Shared (Int->End)
+                    lRiftAPolyline = [...riftArmA, ...sharedSplitSeg.slice(1)];
+
+                    // L-Rift B: RiftArmB reversed (End->Int) + Shared (Int->End)
+                    lRiftBPolyline = [...riftArmB.slice(1).reverse(), intersectionPoint, ...sharedSplitSeg.slice(1)];
+                }
 
                 // Create L-Rift plate entities
                 const lRift1Id = generateId();
