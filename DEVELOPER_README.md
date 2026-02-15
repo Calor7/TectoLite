@@ -28,7 +28,13 @@ src/
 │   └── TimeControls.ts             #   Play button, toast, time display & input
 │
 ├── canvas/                          # Canvas rendering & interaction
-│   ├── CanvasManager.ts             #   Main canvas controller (rendering, input, tools)
+│   ├── CanvasManager.ts             #   Main canvas controller (delegates to InputTools)
+│   ├── tools/                       #   Interaction logic (InputTool implementations)
+│   │   ├── InputTool.ts             #     Interface input events
+│   │   ├── PathInputTool.ts         #     Draw, Split, PolyFeature
+│   │   ├── EditTool.ts              #     Vertex manipulation, Plate Editing
+│   │   ├── SelectionTool.ts         #     Select, Box Select
+│   │   └── PlacementTool.ts         #     Feature placement
 │   ├── MotionGizmo.ts               #   Euler pole drag gizmo
 │   ├── ProjectionManager.ts         #   Map projections (orthographic, equirect, etc.)
 │   └── featureIcons.ts              #   SVG icon definitions for geological features
@@ -41,14 +47,9 @@ src/
 │   └── HeightmapGenerator.ts        #   Heightmap rasterization for export
 │
 ├── utils/                           # Pure utility functions
-│   ├── sphericalMath.ts             #   Vector/coordinate math (latLon ↔ vec3, rotations)
-│   └── geoHelpers.ts                #   GeoJSON conversion helpers
-│
 ├── SimulationEngine.ts              # Time-stepping simulation (plate motion, interpolation)
 ├── HistoryManager.ts                # Undo/Redo state stack
 ├── BoundarySystem.ts                # Plate boundary detection & classification
-├── SplitTool.ts                     # Plate splitting algorithm
-├── FusionTool.ts                    # Plate fusion/merging algorithm
 ├── GeoPackageExporter.ts            # QGIS GeoPackage export
 └── export.ts                        # JSON/PNG export, import dialog, unified export dialog
 ```
@@ -96,8 +97,9 @@ The app uses **vanilla TypeScript + Vite**. No React, no Angular, no framework. 
 2. Add the tool button HTML in `ui/AppTemplate.ts`
 3. Add the handler method in `main.ts`
 4. Wire it in `setupEventListeners()` in `main.ts`
-5. Add canvas interaction logic in `canvas/CanvasManager.ts`
-6. Add hotkey binding in the `keydown` handler in `setupEventListeners()`
+5. **Implement `InputTool`**: Create a class in `src/canvas/tools/` implementing `InputTool`
+6. **Register**: Initialize it in `CanvasManager.initializeTools()` and add to `this.tools` map
+7. Add hotkey binding in the `keydown` handler in `setupEventListeners()`
 
 ### Adding a new global option
 1. Add the field to `GlobalOptions` in `types.ts`

@@ -1,18 +1,15 @@
-import { AppState, Point, Feature, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, TectonicEvent } from '../types';
+import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, TectonicEvent, ToolType } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
-
-import {
-    drawMountainIcon,
-    drawVolcanoIcon,
-    drawHotspotIcon,
-    drawRiftIcon,
-    drawTrenchIcon,
-    drawIslandIcon
-} from './featureIcons';
 import { MotionGizmo } from './MotionGizmo';
-import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, distance, calculateSphericalCentroid } from '../utils/sphericalMath';
+import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid } from '../utils/sphericalMath';
+
+import { InputTool } from './tools/InputTool';
+import { PathInputTool } from './tools/PathInputTool';
+import { SelectionTool } from './tools/SelectionTool';
+import { PlacementTool } from './tools/PlacementTool';
+import { EditTool } from './tools/EditTool';
 
 export class CanvasManager {
     private canvas: HTMLCanvasElement;
@@ -20,64 +17,37 @@ export class CanvasManager {
     private animationId: number | null = null;
     private projectionManager: ProjectionManager;
 
+    private tools: Map<ToolType | string, InputTool> = new Map();
+    private activeInputTool: InputTool | null = null;
+    private lastActiveToolType: ToolType | null = null;
+
+    // Tools references for direct access
+    private editTool!: EditTool;
+    private splitTool!: PathInputTool;
+    private drawTool!: PathInputTool;
+
     // Drag state
     private isDragging = false;
     private lastMousePos: Point = { x: 0, y: 0 };
-    private currentMouseGeo: Coordinate | null = null; // Track current mouse for previews
+    // private currentMouseGeo: Coordinate | null = null; // Unused
     private interactionMode: 'pan' | 'modify_velocity' | 'drag_target' | 'none' = 'none';
+
+    // Motion state
     private dragStartGeo: Coordinate | null = null;
     private ghostPlateId: string | null = null;
     private ghostRotation: { plateId: string, axis: Vector3, angle: number } | null = null;
-
-    // Fine-tuning state
     private isFineTuning = false;
-    private ghostSpin = 0; // Degrees
-    private isSpinning = false;
-    private lastSpinAngle = 0;
+    private ghostSpin = 0;
+    // private isSpinning = false; // Unused
+    // private lastSpinAngle = 0; // Unused, logic moved to EditTool? No, drawRotationWidget uses ghostSpin.
+    // EditTool handles its own spinning state. CanvasManager only handles 'drag_target' spinning.
     private dragBaseQuat: Quaternion | null = null;
 
-    // Motion Control Mode
-    private motionMode: InteractionMode = 'classic';
-
-    // Drawing state
-    private currentPolygon: Coordinate[] = [];
-    private isDrawing = false;
-
-    // Split state - now supports polyline
-    private splitPoints: Coordinate[] = [];
-    private splitPreviewActive = false;
-
-    // Box Selection
-    private selectionBoxStart: Point | null = null;
-    private selectionBoxEnd: Point | null = null;
-    private isBoxSelecting = false;
-    private boxSelectPlateId: string | null = null; // Plate context for box selection
-
-    // Image Overlay cache
-    private cachedOverlayImages: Map<string, HTMLImageElement> = new Map();
-
-    // Motion gizmo
     private motionGizmo: MotionGizmo = new MotionGizmo();
-
-    // Edit Tool State
-    private editHoveredVertex: { plateId: string; polyIndex: number; vertexIndex: number } | null = null;
-    private editHoveredEdge: { plateId: string; polyIndex: number; vertexIndex: number; pointOnEdge: Coordinate } | null = null;
-    private editDragState: {
-        operation: 'move_vertex' | 'insert_vertex' | 'move_plate' | 'rotate_plate';
-        plateId: string;
-        polyIndex?: number;
-        vertexIndex?: number;
-        startPoint: Coordinate;
-        startScreenPoint?: Point; // For drag threshold
-        hasMoved?: boolean; // Track if threshold passed
-        startRotation?: number; // For rotate_plate (screen angle)
-        startCenter?: Coordinate; // For rotate_plate
-    } | null = null;
-    private editTempPolygons: { plateId: string; polygons: any[] } | null = null;
-
-    // Input State
+    private motionMode: InteractionMode = 'classic';
+    // private showLinks: boolean = true; // Unused
+    private cachedOverlayImages: Map<string, HTMLImageElement> = new Map();
     private shiftKeyDown = false;
-
 
     constructor(
         canvas: HTMLCanvasElement,
@@ -100,1827 +70,194 @@ export class CanvasManager {
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('Could not get 2D context');
         this.ctx = ctx;
-
         this.projectionManager = new ProjectionManager(ctx);
 
+        this.initializeTools();
         this.setupEventListeners();
 
-        // Use ResizeObserver for robust layout handling
         const container = canvas.parentElement;
-        if (container) {
-            const resizeObserver = new ResizeObserver(() => {
-                this.resizeCanvas();
-            });
-            resizeObserver.observe(container);
-        }
-
-        // Initial resize
+        if (container) new ResizeObserver(() => this.resizeCanvas()).observe(container);
         requestAnimationFrame(() => this.resizeCanvas());
     }
 
-    private distToSegmentSquared(p: { x: number, y: number }, v: { x: number, y: number }, w: { x: number, y: number }) {
-        const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
-        if (l2 === 0) return (p.x - v.x) ** 2 + (p.y - v.y) ** 2;
-        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
-        t = Math.max(0, Math.min(1, t));
-        return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2;
-    }
+    private initializeTools() {
+        this.drawTool = new PathInputTool(
+            this.projectionManager,
+            (c) => this.onDrawUpdate?.(c),
+            (points) => this.onDrawComplete(points),
+            () => this.cancelDrawing(),
+            3, '#ffffff'
+        );
+        this.tools.set('draw', this.drawTool);
 
-    private getT(p: { x: number, y: number }, v: { x: number, y: number }, w: { x: number, y: number }) {
-        const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
-        if (l2 === 0) return 0;
-        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
-        return Math.max(0, Math.min(1, t));
-    }
+        this.splitTool = new PathInputTool(
+            this.projectionManager,
+            (c) => {
+                this.onDrawUpdate?.(c);
+                if (c >= 1) this.onSplitPreviewChange(true);
+            },
+            (points) => {
+                this.onSplitApply(points);
+                this.onSplitPreviewChange(false);
+            },
+            () => {
+                this.onSplitPreviewChange(false);
+            },
+            2, '#ff4444'
+        );
+        this.tools.set('split', this.splitTool);
 
+        const polyTool = new PathInputTool(
+            this.projectionManager,
+            (_c) => { },
+            (points) => {
+                const colorInput = document.getElementById('poly-feature-color') as HTMLInputElement;
+                this.onPolyFeatureComplete?.(points, colorInput?.value || '#ff6b6b');
+            },
+            () => { },
+            3, '#ff6b6b'
+        );
+        this.tools.set('poly_feature', polyTool);
 
-    private findNearestBoundaryElement(mouseX: number, mouseY: number): { type: 'vertex' | 'edge', data: any } | null {
-        const state = this.getState();
-        const targetPlateId = state.world.selectedPlateId;
-        if (!targetPlateId) return null;
+        const selectionTool = new SelectionTool(
+            this.projectionManager,
+            (geo, screen, mod) => this.handleSelectionClick(geo, screen, mod),
+            (start, end, mod) => this.handleBoxSelection(start, end, mod),
+            (_geo, _screen) => { }
+        );
+        this.tools.set('select', selectionTool);
+        this.tools.set('fuse', selectionTool);
+        this.tools.set('link', selectionTool);
 
-        const plate = state.world.plates.find(p => p.id === targetPlateId);
-        if (!plate || !plate.visible) return null;
+        const placementTool = new PlacementTool(
+            () => this.getState().activeFeatureType,
+            (geo, type) => {
+                this.onFeaturePlace(geo, type);
+            },
+            () => { }
+        );
+        this.tools.set('feature', placementTool);
+        this.tools.set('flowline', placementTool);
 
-        const polygons = this.editTempPolygons && this.editTempPolygons.plateId === plate.id
-            ? this.editTempPolygons.polygons
-            : plate.polygons;
+        this.editTool = new EditTool(
+            this.projectionManager,
+            () => this.getState(),
+            (hasChanges) => { this.render(); this.onEditPending?.(hasChanges); },
+            () => { document.getElementById('btn-edit-apply')?.click(); },
+            (x, y) => this.findNearestBoundaryElement(x, y),
+            () => this.render()
+        );
+        this.tools.set('edit', this.editTool);
 
-        let closestVertex: { plateId: string; polyIndex: number; vertexIndex: number } | null = null;
-        let minVertexDist2 = 8 * 8; // px^2
-
-        let closestEdge: { plateId: string; polyIndex: number; vertexIndex: number; pointOnEdge: Coordinate } | null = null;
-        let minEdgeDist2 = 8 * 8; // px^2
-
-        // Get Mouse Geo Position for spherical calculations
-        const mouseGeo = this.projectionManager.invert(mouseX, mouseY);
-        const mouseVec = mouseGeo ? latLonToVector(mouseGeo) : null;
-
-        polygons.forEach((poly: any, polyIndex: number) => {
-            const points = poly.points as Coordinate[];
-            const screenPoints = points.map(p => this.projectionManager.project(p));
-
-            for (let i = 0; i < screenPoints.length; i++) {
-                const p = screenPoints[i];
-                if (!p) continue;
-
-                // Vertex check (Screen Space is accurate for user intention)
-                const dx = p[0] - mouseX;
-                const dy = p[1] - mouseY;
-                const d2 = dx * dx + dy * dy;
-                if (d2 < minVertexDist2) {
-                    minVertexDist2 = d2;
-                    closestVertex = { plateId: plate.id, polyIndex, vertexIndex: i };
-                }
-
-                // Edge check
-                if (!closestVertex) { // Only check edge if not hovering a vertex
-                    const nextIdx = (i + 1) % screenPoints.length;
-                    const pNext = screenPoints[nextIdx];
-                    if (!pNext) continue;
-
-                    let currentEdgeDist2 = Infinity;
-                    let currentEdgePoint: Coordinate | null = null;
-                    let isGeodesicHit = false;
-
-                    // 1. Geodesic Check (Priority for curved paths)
-                    if (mouseVec) {
-                        const vA = latLonToVector(points[i]);
-                        const vB = latLonToVector(points[nextIdx]);
-                        let N = cross(vA, vB);
-                        const lenN = Math.sqrt(N.x * N.x + N.y * N.y + N.z * N.z);
-
-                        if (lenN > 0.001) {
-                            N = { x: N.x / lenN, y: N.y / lenN, z: N.z / lenN };
-                            const distPlane = Math.abs(dot(mouseVec, N));
-
-                            // Threshold: sin(2 degrees) ~= 0.035
-                            if (distPlane < 0.035) {
-                                const dotMN = dot(mouseVec, N);
-                                let P = {
-                                    x: mouseVec.x - dotMN * N.x,
-                                    y: mouseVec.y - dotMN * N.y,
-                                    z: mouseVec.z - dotMN * N.z
-                                };
-                                const lenP = Math.sqrt(P.x * P.x + P.y * P.y + P.z * P.z);
-                                if (lenP > 0) {
-                                    P = { x: P.x / lenP, y: P.y / lenP, z: P.z / lenP };
-                                    const dA = Math.acos(Math.min(1, Math.max(-1, dot(vA, P))));
-                                    const dB = Math.acos(Math.min(1, Math.max(-1, dot(P, vB))));
-                                    const dAB = Math.acos(Math.min(1, Math.max(-1, dot(vA, vB))));
-
-                                    if (Math.abs((dA + dB) - dAB) < 0.05) {
-                                        currentEdgePoint = vectorToLatLon(P);
-                                        currentEdgeDist2 = 0; // High priority (0 screen distance equivalent)
-                                        isGeodesicHit = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 2. Screen Linear Check (Fallback & Distance metric)
-                    // If we didn't hit geodesically (or even if we did, we might want to check screen dist for very zoomed cases?),
-                    // actually if geodesic hit, we trust it.
-                    // If NO geodesic hit, we check screen chord.
-                    if (!isGeodesicHit) {
-                        const dist2 = this.distToSegmentSquared({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
-                        if (dist2 < minEdgeDist2) { // Only worth refining if better than current global best
-                            const t = this.getT({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
-                            const screenX = p[0] + t * (pNext[0] - p[0]);
-                            const screenY = p[1] + t * (pNext[1] - p[1]);
-                            const geo = this.projectionManager.invert(screenX, screenY);
-                            if (geo) {
-                                currentEdgePoint = geo;
-                                currentEdgeDist2 = dist2;
-                            }
-                        }
-                    }
-
-                    // Update Best Edge
-                    if (currentEdgePoint && currentEdgeDist2 < minEdgeDist2) {
-                        minEdgeDist2 = currentEdgeDist2;
-                        closestEdge = { plateId: plate.id, polyIndex, vertexIndex: i, pointOnEdge: currentEdgePoint };
-                    }
-                }
-            }
+        this.tools.set('pan', {
+            onMouseDown: () => { }, onMouseMove: () => { }, onMouseUp: () => { },
+            onKeyDown: () => { }, onKeyUp: () => { }, render: () => { }, cancel: () => { }
         });
-
-        if (closestVertex) return { type: 'vertex', data: closestVertex };
-        if (closestEdge) return { type: 'edge', data: closestEdge };
-        return null;
     }
 
-    private updateEditDrag(geoPos: Coordinate) {
-        if (!this.editDragState) return;
-
-        // Init temp if needed
-        if (!this.editTempPolygons || this.editTempPolygons.plateId !== this.editDragState.plateId) {
-            const state = this.getState();
-            const plate = state.world.plates.find(p => p.id === this.editDragState!.plateId);
-            if (plate) {
-                this.editTempPolygons = {
-                    plateId: plate.id,
-                    polygons: JSON.parse(JSON.stringify(plate.polygons))
-                };
-            }
-        }
-
-        if (this.editTempPolygons) {
-            if (this.editDragState.operation === 'move_vertex' && this.editDragState.polyIndex !== undefined && this.editDragState.vertexIndex !== undefined) {
-                const poly = this.editTempPolygons.polygons[this.editDragState.polyIndex];
-                if (poly) {
-                    poly.points[this.editDragState.vertexIndex] = geoPos;
-                }
-            }
-        }
-    }
-
-    private startInsertDrag(edge: { plateId: string; polyIndex: number; vertexIndex: number; pointOnEdge: Coordinate }) {
+    private handleSelectionClick(geo: Coordinate | null, screen: Point, mod: { shift: boolean, ctrl: boolean, alt: boolean }) {
+        const hit = this.hitTest(screen);
         const state = this.getState();
-        const plate = state.world.plates.find(p => p.id === edge.plateId);
+
+        if (this.motionMode === 'drag_target' && hit?.plateId && geo) {
+            this.startDragTarget(hit.plateId, geo);
+            return;
+        }
+
+        if (mod.ctrl && hit?.featureId) {
+            const currentIds = state.world.selectedFeatureIds || [];
+            if (currentIds.includes(hit.featureId)) {
+                this.onSelect(hit.plateId ?? state.world.selectedPlateId, null, currentIds.filter(id => id !== hit.featureId));
+            } else {
+                this.onSelect(hit.plateId ?? state.world.selectedPlateId, null, [...currentIds, hit.featureId]);
+            }
+        } else if (state.activeTool === 'select' && hit && 'plumeId' in hit && hit.plumeId) {
+            this.onSelect(null, null, [], hit.plumeId);
+        } else {
+            if (hit?.plateId) {
+                this.onSelect(hit.plateId, hit.featureId ?? null);
+            } else {
+                this.onSelect(null, null);
+            }
+        }
+    }
+
+    private handleBoxSelection(start: Point, end: Point, _mod: { shift: boolean }) {
+        const state = this.getState();
+        const plateId = state.world.selectedPlateId;
+        if (!plateId) return;
+
+        const plate = state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
 
-        // Always ensure temp polygons exist
-        if (!this.editTempPolygons || this.editTempPolygons.plateId !== plate.id) {
-            this.editTempPolygons = {
-                plateId: plate.id,
-                polygons: JSON.parse(JSON.stringify(plate.polygons))
-            };
+        const x1 = Math.min(start.x, end.x);
+        const x2 = Math.max(start.x, end.x);
+        const y1 = Math.min(start.y, end.y);
+        const y2 = Math.max(start.y, end.y);
+
+        const selectedFeatures: string[] = [];
+        for (const feature of plate.features) {
+            const proj = this.projectionManager.project(feature.position);
+            if (proj && proj[0] >= x1 && proj[0] <= x2 && proj[1] >= y1 && proj[1] <= y2) {
+                selectedFeatures.push(feature.id);
+            }
         }
 
-        const poly = this.editTempPolygons!.polygons[edge.polyIndex];
-        // Insert
-        let insertIdx = edge.vertexIndex + 1;
-        poly.points.splice(insertIdx, 0, edge.pointOnEdge);
-
-        this.editDragState = {
-            operation: 'insert_vertex',
-            plateId: edge.plateId,
-            polyIndex: edge.polyIndex,
-            vertexIndex: insertIdx,
-            startPoint: edge.pointOnEdge
-        };
+        if (selectedFeatures.length > 0) {
+            this.onSelect(plateId, null, selectedFeatures);
+        }
     }
 
-    public getEditResult(): { plateId: string, polygons: any[] } | null {
-        return this.editTempPolygons;
+    private updateActiveTool() {
+        const state = this.getState();
+        if (state.activeTool !== this.lastActiveToolType) {
+            const prevTool = this.activeInputTool;
+
+            // Update state FIRST to prevent recursion if prevTool.cancel() triggers render()
+            this.lastActiveToolType = state.activeTool;
+            this.activeInputTool = this.tools.get(state.activeTool) || null;
+
+            if (prevTool) prevTool.cancel();
+
+            this.activeInputTool?.activate?.();
+            this.cancelMotion();
+        }
     }
-
-    public cancelEdit() {
-        this.editTempPolygons = null;
-        this.editDragState = null;
-        this.render();
-    }
-
-
-    public setMotionMode(mode: InteractionMode): void {
-        this.motionMode = mode;
-        this.motionGizmo.setMode(mode);
-        this.render();
-    }
-
-    public resizeCanvas(): void {
-        const container = this.canvas.parentElement;
-        if (!container) return;
-
-        const rect = container.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-
-        this.canvas.width = rect.width * dpr;
-        this.canvas.height = rect.height * dpr;
-        this.canvas.style.width = `${rect.width}px`;
-        this.canvas.style.height = `${rect.height}px`;
-
-        this.ctx.scale(dpr, dpr);
-
-        // Update viewport dimensions
-        this.setState(s => ({
-            ...s,
-            viewport: {
-                ...s.viewport,
-                width: rect.width,
-                height: rect.height,
-                translate: [rect.width / 2, rect.height / 2]
-            }
-        }));
-
-        this.render();
-    }
-
-
 
     public setTheme(_theme: string): void {
         this.render();
     }
 
-    private setupEventListeners(): void {
-        this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
-        // Bind to window to catch drags outside canvas
-        window.addEventListener('mousemove', this.handleMouseMove.bind(this));
-        window.addEventListener('mouseup', this.handleMouseUp.bind(this));
+    // --- Public Methods for main.ts ---
 
-        this.canvas.addEventListener('wheel', this.handleWheel.bind(this));
-        this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
-        this.canvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            this.handleRightClick(e);
-        });
-
-        window.addEventListener('keydown', this.handleKeyDown.bind(this));
-        window.addEventListener('keyup', this.handleKeyUp.bind(this));
+    public applySplit(): void {
+        this.splitTool.forceComplete();
     }
 
-    // Helper to get [lon, lat] from mouse
-    private getGeoFromMouse(e: MouseEvent): Coordinate | null {
-        const rect = this.canvas.getBoundingClientRect();
-        return this.projectionManager.invert(e.clientX - rect.left, e.clientY - rect.top);
+    public cancelSplit(): void {
+        this.splitTool.cancel();
     }
 
-    private handleRightClick(e: MouseEvent): void {
-        const state = this.getState();
-        const mousePos = this.getMousePos(e);
-
-        if (state.activeTool === 'edit') {
-            // Plate editing - check if we clicked on a vertex
-            const nearest = this.findNearestBoundaryElement(mousePos.x, mousePos.y);
-            if (nearest && nearest.type === 'vertex') {
-                this.deleteVertex(nearest.data);
-                this.render();
-            }
-            return;
-        }
-
-        if ((state.activeTool === 'draw' || state.activeTool === 'poly_feature') && this.isDrawing) {
-            if (this.currentPolygon.length > 0) {
-                this.currentPolygon.pop();
-                if (this.currentPolygon.length === 0) this.isDrawing = false;
-                if (this.onDrawUpdate) this.onDrawUpdate(this.currentPolygon.length);
-                this.render();
-            }
-        } else if (state.activeTool === 'split' && this.splitPoints.length > 0) {
-            this.splitPoints.pop();
-            if (this.onDrawUpdate && state.activeTool === 'split') this.onDrawUpdate(this.splitPoints.length);
-            this.render();
-        }
+    public cancelDrawing(): void {
+        this.drawTool.cancel();
     }
 
-    private deleteVertex(vertexData: { plateId: string; polyIndex: number; vertexIndex: number }) {
-        const state = this.getState();
-        const plate = state.world.plates.find(p => p.id === vertexData.plateId);
-        if (!plate) return;
-
-        // Ensure Temp Polygons (Copy-on-write)
-        if (!this.editTempPolygons || this.editTempPolygons.plateId !== plate.id) {
-            this.editTempPolygons = {
-                plateId: plate.id,
-                polygons: JSON.parse(JSON.stringify(plate.polygons))
-            };
-        }
-
-        const poly = this.editTempPolygons!.polygons[vertexData.polyIndex];
-        if (poly && poly.points.length > 3) {
-            poly.points.splice(vertexData.vertexIndex, 1);
-            // Notify change
-            if (this.onEditPending) this.onEditPending(true);
-        } else {
-            console.warn("Cannot delete vertex: Polygon too small or not found");
-        }
+    public applyDraw(): void {
+        this.drawTool.forceComplete();
     }
 
-    private handleKeyDown(e: KeyboardEvent): void {
-        const state = this.getState();
-
-        if (e.key === 'Shift') {
-            this.shiftKeyDown = true;
-            if (state.activeTool === 'edit') this.render();
-        }
-
-        if (e.key === 'Enter') {
-            if (state.activeTool === 'draw' && this.isDrawing && this.currentPolygon.length >= 3) {
-                this.onDrawComplete([...this.currentPolygon]);
-                this.currentPolygon = [];
-                this.isDrawing = false;
-                this.render();
-            } else if (state.activeTool === 'split' && this.splitPoints.length >= 2) {
-                this.onSplitApply([...this.splitPoints]);
-                this.splitPoints = [];
-                this.splitPreviewActive = false;
-                this.onSplitPreviewChange(false);
-                this.render();
-            } else if (state.activeTool === 'edit' && this.editTempPolygons) {
-                // Trigger Apply
-                document.getElementById('btn-edit-apply')?.click();
-            }
-        } else if (e.key === 'Escape') {
-            // Cancel drawing/splitting
-            if (this.isDrawing) {
-                this.isDrawing = false;
-                this.currentPolygon = [];
-                this.render();
-            }
-            if (this.splitPoints.length > 0) {
-                this.splitPoints = [];
-                this.splitPreviewActive = false;
-                this.onSplitPreviewChange(false);
-                this.render();
-            }
-        }
-    }
-
-    private handleKeyUp(e: KeyboardEvent): void {
-        if (e.key === 'Shift') {
-            this.shiftKeyDown = false;
-            if (this.getState().activeTool === 'edit') this.render();
-        }
-    }
-
-    private getMousePos(e: MouseEvent): Point {
-        const rect = this.canvas.getBoundingClientRect();
-        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    }
-
-    private handleMouseDown(e: MouseEvent): void {
-        const state = this.getState();
-        const geoPos = this.getGeoFromMouse(e);
-        const mousePos = this.getMousePos(e);
-        this.lastMousePos = { x: e.clientX, y: e.clientY };
-
-        if (e.button === 1 || (e.button === 0 && state.activeTool === 'pan')) {
-            this.isDragging = true;
-            this.interactionMode = 'pan';
-            this.canvas.style.cursor = 'grabbing';
-            return;
-        }
-
-        // Shift+Click triggers box selection (requires a plate to be selected)
-        if (state.activeTool === 'select' && e.shiftKey && e.button === 0) {
-            if (!state.world.selectedPlateId) {
-                // No plate selected, cannot box select features
-                return;
-            }
-            this.isBoxSelecting = true;
-            this.selectionBoxStart = mousePos;
-            this.selectionBoxEnd = mousePos;
-            this.boxSelectPlateId = state.world.selectedPlateId; // Capture plate context
-            return;
-        }
-
-        if (e.button === 0) {
-            // Check for Fine-Tuning Ring Hit
-            if (this.isFineTuning) {
-                // If clicking anywhere on canvas, assume spinning if not hitting UI?
-                // Or robust hit test on ring.
-                // Let's assume broad interaction: dragging anywhere rotates relative to center?
-                // Typically Ring requires clicking on Ring.
-                // Let's implement robust visual ring hit test.
-                // Center is not stored? We calculate it in render. We need it here.
-                // Re-calculate transformed center.
-                const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
-                if (plate && this.ghostRotation) {
-                    const vCenter = latLonToVector(plate.center);
-                    const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
-                    const center = vectorToLatLon(vRotCenter);
-
-                    const proj = this.projectionManager.project(center);
-                    if (proj) {
-                        const dist = Math.hypot(mousePos.x - proj[0], mousePos.y - proj[1]);
-                        // Ring radius 60, handle width ~10
-                        if (Math.abs(dist - 60) < 15) {
-                            this.isSpinning = true;
-                            const angle = Math.atan2(mousePos.y - proj[1], mousePos.x - proj[0]);
-                            this.lastSpinAngle = angle * 180 / Math.PI;
-                            this.lastMousePos = { x: e.clientX, y: e.clientY };
-                            return;
-                        }
-                    }
-                }
-            }
-
-            // Check for gizmo handle hit first
-            if (this.motionGizmo.isActive() && state.activeTool === 'select') {
-                const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
-                if (selectedPlate) {
-                    const handle = this.motionGizmo.hitTest(
-                        mousePos.x, mousePos.y,
-                        this.projectionManager,
-                        selectedPlate.center
-                    );
-                    if (handle) {
-                        this.motionGizmo.startDrag(handle, mousePos.x, mousePos.y);
-                        this.isDragging = true;
-                        this.interactionMode = 'modify_velocity';
-                        this.canvas.style.cursor = 'move';
-                        return;
-                    }
-                }
-            }
-
-            if (!geoPos && state.activeTool !== 'select') return;
-
-            switch (state.activeTool) {
-                case 'draw':
-                    if (geoPos) {
-                        if (!this.isDrawing) {
-                            this.isDrawing = true;
-                            this.currentPolygon = [geoPos];
-                        } else {
-                            this.currentPolygon.push(geoPos);
-                        }
-                        if (this.onDrawUpdate) this.onDrawUpdate(this.currentPolygon.length);
-                        this.render();
-                    }
-                    break;
-
-                case 'edit':
-                    if (this.shiftKeyDown) {
-                        // Shift Mode: Move/Rotate Plate
-                        const plateId = state.world.selectedPlateId;
-                        if (plateId) {
-                            const plate = state.world.plates.find(p => p.id === plateId);
-                            if (plate) {
-                                // 1. Check Rotation Gizmo Hit
-                                // Use dynamic centroid if temp polygons exist, otherwise plate center
-                                let currentCenter = plate.center;
-                                if (this.editTempPolygons && this.editTempPolygons.plateId === plate.id) {
-                                    const allPoints = this.editTempPolygons.polygons.flatMap((p: any) => p.points);
-                                    if (allPoints.length > 0) {
-                                        currentCenter = calculateSphericalCentroid(allPoints);
-                                    }
-                                }
-
-                                const projCenter = this.projectionManager.project(currentCenter);
-                                if (projCenter) {
-                                    const dist = Math.hypot(mousePos.x - projCenter[0], mousePos.y - projCenter[1]);
-                                    // Ring Radius 60, Handle radius 8. Check if near ring or handle.
-                                    // Handle is at top (0,-60) usually relative to center?
-                                    // Actually drawEditHighlights doesn't rotate the handle unless dragging.
-                                    // Let's assume Handle is at 12 o'clock relative to screen up? 
-                                    // Wait, in drawRotationWidget calculation: 
-                                    // handleAngle = (this.ghostSpin - 90) * deg... 
-                                    // Initially ghostSpin = 0 -> -90 deg -> 12 o'clock.
-
-                                    // We need to match drawRotationWidget logic mostly.
-                                    // But simplified hit test: Ring (60 +/- 5) OR Handle (8px radius at position).
-                                    // Let's assume standard rotation hit first.
-
-                                    // Let's just check standard ring for now.
-                                    const isRing = Math.abs(dist - 60) < 10;
-
-                                    if (isRing) {
-                                        const angle = Math.atan2(mousePos.y - projCenter[1], mousePos.x - projCenter[0]) * 180 / Math.PI;
-                                        this.editDragState = {
-                                            operation: 'rotate_plate',
-                                            plateId: plate.id,
-                                            startPoint: geoPos!,
-                                            startCenter: currentCenter,
-                                            startRotation: angle
-                                        };
-                                        this.isDragging = true;
-                                        return; // Consumed
-                                    }
-                                }
-
-                                // 2. Check Plate Body Hit (for Move)
-                                const hit = this.hitTest(mousePos);
-                                if (hit && hit.plateId === plateId) {
-                                    this.editDragState = {
-                                        operation: 'move_plate',
-                                        plateId: plate.id,
-                                        startPoint: geoPos!,
-                                        startScreenPoint: mousePos
-                                    };
-                                    this.isDragging = true;
-                                    return; // Consumed
-                                }
-                            }
-                        }
-                    }
-
-                    // Default: Vertex/Edge Edit
-                    if (this.editHoveredVertex) {
-                        // Click on vertex - Start Move
-                        this.editDragState = {
-                            operation: 'move_vertex',
-                            plateId: this.editHoveredVertex.plateId,
-                            polyIndex: this.editHoveredVertex.polyIndex,
-                            vertexIndex: this.editHoveredVertex.vertexIndex,
-                            startPoint: geoPos!
-                        };
-                        this.isDragging = true;
-                    } else if (this.editHoveredEdge) {
-                        this.startInsertDrag(this.editHoveredEdge);
-                        this.isDragging = true;
-                    }
-                    break;
-
-
-
-                case 'feature':
-                    if (geoPos) this.onFeaturePlace(geoPos, state.activeFeatureType);
-                    break;
-
-                case 'flowline':
-                    if (geoPos) {
-                        const hit = this.hitTest(mousePos);
-                        if (hit?.plateId) {
-                            // First select the plate, then place the feature on it
-                            this.onSelect(hit.plateId, null);
-                            this.onFeaturePlace(geoPos, 'flowline');
-                        }
-                    }
-                    break;
-
-                case 'select':
-                    const hit = this.hitTest(mousePos);
-
-                    if (this.motionMode === 'drag_target' && hit?.plateId && geoPos) {
-                        this.onSelect(hit.plateId, hit.featureId ?? null);
-
-                        // Initialize or Capture Base Drag State
-                        if (this.ghostPlateId === hit.plateId && this.ghostRotation) {
-                            this.dragBaseQuat = quatFromAxisAngle(this.ghostRotation.axis, this.ghostRotation.angle);
-                        } else {
-                            // New plate or reset
-                            this.ghostPlateId = hit.plateId;
-                            this.ghostRotation = { plateId: hit.plateId, axis: { x: 0, y: 0, z: 1 }, angle: 0 };
-                            this.ghostSpin = 0;
-                            this.lastSpinAngle = 0;
-                            this.dragBaseQuat = { w: 1, x: 0, y: 0, z: 0 };
-                        }
-
-                        this.isDragging = true;
-                        this.interactionMode = 'drag_target';
-                        this.dragStartGeo = geoPos;
-                        this.isFineTuning = true; // Ensure Widget Visible
-                        if (this.onMotionPreviewChange) this.onMotionPreviewChange(true); // Show UI
-
-                        this.canvas.style.cursor = 'grabbing';
-                    } else if (e.ctrlKey && hit?.featureId) {
-                        // Ctrl+Click: Additive selection (toggle feature in/out of selection)
-                        const currentIds = state.world.selectedFeatureIds || [];
-                        const isAlreadySelected = currentIds.includes(hit.featureId);
-
-                        if (isAlreadySelected) {
-                            // Remove from selection
-                            const newIds = currentIds.filter(id => id !== hit.featureId);
-                            this.onSelect(hit.plateId ?? state.world.selectedPlateId, null, newIds);
-                        } else {
-                            // Add to selection
-                            const newIds = [...currentIds, hit.featureId];
-                            this.onSelect(hit.plateId ?? state.world.selectedPlateId, null, newIds);
-                        }
-                    } else {
-                        // Single click selection (clears previous selection)
-                        if (hit && 'plumeId' in hit && hit.plumeId) {
-                            this.onSelect(null, null, [], hit.plumeId);
-                        } else {
-                            this.onSelect(hit?.plateId ?? null, hit?.featureId ?? null);
-                        }
-                    }
-                    break;
-
-                case 'split':
-                    if (geoPos) {
-                        // Add point to split polyline
-                        this.splitPoints.push(geoPos);
-                        if (this.onDrawUpdate) this.onDrawUpdate(this.splitPoints.length);
-                        if (!this.splitPreviewActive && this.splitPoints.length >= 1) {
-                            this.splitPreviewActive = true;
-                            this.onSplitPreviewChange(true);
-                        }
-                        this.render();
-                    }
-                    break;
-
-                case 'poly_feature':
-                    // Poly feature uses same drawing logic as draw tool
-                    if (geoPos) {
-                        if (!this.isDrawing) {
-                            this.isDrawing = true;
-                            this.currentPolygon = [geoPos];
-                        } else {
-                            this.currentPolygon.push(geoPos);
-                        }
-                        this.render();
-                    }
-                    break;
-
-                case 'fuse':
-                    // Fuse tool: click to select plates
-                    const fuseHit = this.hitTest(mousePos);
-                    if (fuseHit?.plateId) {
-                        this.onSelect(fuseHit.plateId, null);
-                    }
-                    break;
-
-                case 'link':
-                    // Link tool: click to select plates
-                    const linkHit = this.hitTest(mousePos);
-                    if (linkHit?.plateId) {
-                        this.onSelect(linkHit.plateId, null);
-                    }
-                    break;
-
-            }
-        }
-    }
-
-    private handleMouseMove(e: MouseEvent): void {
-        const state = this.getState(); // Ensure state is available
-        const geoPos = this.getGeoFromMouse(e);
-        const mousePos = this.getMousePos(e);
-        this.currentMouseGeo = geoPos; // Store for previews
-
-        if (state.activeTool === 'draw' && this.isDrawing) {
-            this.render(); // Trigger render for dynamic distance preview
-        }
-
-        if (this.isBoxSelecting) {
-            this.selectionBoxEnd = mousePos;
-            this.render();
-            return;
-        }
-
-        if (this.isSpinning && this.isFineTuning && this.ghostPlateId) {
-            const state = this.getState();
-            const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
-            if (plate && this.ghostRotation) {
-                const vCenter = latLonToVector(plate.center);
-                const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
-                const center = vectorToLatLon(vRotCenter);
-
-                const proj = this.projectionManager.project(center);
-                if (proj) {
-                    // Calculate angle delta
-                    const angle = Math.atan2(mousePos.y - proj[1], mousePos.x - proj[0]);
-                    const angleDeg = angle * 180 / Math.PI;
-                    let delta = angleDeg - this.lastSpinAngle;
-
-                    // Handle wrap around
-                    if (delta > 180) delta -= 360;
-                    if (delta < -180) delta += 360;
-
-                    this.ghostSpin += delta;
-                    this.lastSpinAngle = angleDeg;
-                }
-            }
-            this.lastMousePos = { x: e.clientX, y: e.clientY };
-            this.render();
-            return;
-        }
-
-        if (this.isDragging) {
-            const dx = e.clientX - this.lastMousePos.x;
-            const dy = e.clientY - this.lastMousePos.y;
-
-            // Handle Edit Mode Dragging (plate)
-            if (this.editDragState && state.activeTool === 'edit') {
-                if (this.editDragState.operation === 'move_vertex' && geoPos) {
-                    this.updateEditDrag(geoPos);
-                } else if (this.editDragState.operation === 'move_plate' && geoPos) {
-                    // Drag Threshold Check (5px)
-                    if (!this.editDragState.hasMoved && this.editDragState.startScreenPoint) {
-                        const dist = Math.hypot(mousePos.x - this.editDragState.startScreenPoint.x, mousePos.y - this.editDragState.startScreenPoint.y);
-                        if (dist < 5) return;
-                        this.editDragState.hasMoved = true;
-                    }
-
-                    // Move Plate Logic: 3D Rotation from LastGeo to CurrGeo
-                    // Note: updateEditDrag logic was tricky, implementing direct incremental logic here
-                    if (!this.editTempPolygons || this.editTempPolygons.plateId !== this.editDragState.plateId) {
-                        // Ensure Init (should be done in Start but safety check)
-                        const plate = state.world.plates.find(p => p.id === this.editDragState!.plateId);
-                        if (plate) {
-                            this.editTempPolygons = { plateId: plate.id, polygons: JSON.parse(JSON.stringify(plate.polygons)) };
-                        }
-                    }
-
-                    // Previous Geo Position (from last frame's mouse event)
-                    // We need a robust 'lastGeo'. 'this.currentMouseGeo' is updated at start of HandleMouseMove? 
-                    // No, `currentMouseGeo` is updated in THIS call. `lastMousePos` is previous screen pos.
-                    // We need Previous Geo. 
-                    // Let's re-calculate previous geo from `lastMousePos`.
-                    // Previous Geo Position (from last frame's mouse event)
-                    // We need to convert lastMousePos (screen coords) to canvas-relative coords first
-                    const rect = this.canvas.getBoundingClientRect();
-                    const prevX = this.lastMousePos.x - rect.left;
-                    const prevY = this.lastMousePos.y - rect.top;
-                    const prevGeo = this.projectionManager.invert(prevX, prevY);
-
-                    if (this.editTempPolygons && geoPos && prevGeo) {
-                        const vPrev = latLonToVector(prevGeo);
-                        const vCurr = latLonToVector(geoPos);
-
-                        // Rotation from Prev -> Curr
-                        const axis = normalize(cross(vPrev, vCurr));
-                        let angle = Math.acos(Math.max(-1, Math.min(1, dot(vPrev, vCurr))));
-
-                        if (!isNaN(angle) && angle > 0.0001) {
-                            this.editTempPolygons.polygons.forEach((poly: any) => {
-                                poly.points = poly.points.map((pt: Coordinate) => {
-                                    const v = latLonToVector(pt);
-                                    const vNew = rotateVector(v, axis, angle);
-                                    return vectorToLatLon(vNew);
-                                });
-                            });
-                        }
-                    }
-
-                } else if (this.editDragState.operation === 'rotate_plate') {
-                    // Rotate Logic
-                    if (!this.editTempPolygons) {
-                        const plate = state.world.plates.find(p => p.id === this.editDragState!.plateId);
-                        if (plate) {
-                            this.editTempPolygons = { plateId: plate.id, polygons: JSON.parse(JSON.stringify(plate.polygons)) };
-                        }
-                    }
-
-                    if (this.editTempPolygons && this.editDragState.startCenter) {
-                        const projCenter = this.projectionManager.project(this.editDragState.startCenter);
-                        if (projCenter) {
-                            const currAngle = Math.atan2(mousePos.y - projCenter[1], mousePos.x - projCenter[0]) * 180 / Math.PI;
-
-
-                            // Delta since last frame
-                            // Fix: Use Canvas-Relative coords for LastMousePos
-                            const rect = this.canvas.getBoundingClientRect();
-                            const prevX = this.lastMousePos.x - rect.left;
-                            const prevY = this.lastMousePos.y - rect.top;
-                            const prevAngle = Math.atan2(prevY - projCenter[1], prevX - projCenter[0]) * 180 / Math.PI;
-
-                            let delta = currAngle - prevAngle;
-                            // Wrap
-                            if (delta > 180) delta -= 360;
-                            if (delta < -180) delta += 360;
-
-                            const deltaRad = delta * Math.PI / 180;
-
-                            // Rotate around Center
-                            const vCenter = latLonToVector(this.editDragState.startCenter);
-
-                            // Negative angle for screen-to-world mapping usually? 
-                            // Screen CW = +Angle. World? 
-                            // If I move mouse CW, angle increases. Reference frame?
-                            // Standard math: CCW is positive X->Y. Screen Y is down. So CW is positive.
-                            // Rotate Vector expects Right-Handed rule axis.
-                            // Center vector is 'Up'. Right-Hand thumb along center. Fingers curl CCW.
-                            // So +Angle = CCW rotation on sphere surface.
-                            // Screen CW = +Delta.
-                            // We want to rotate CW on sphere. That is -Angle around Center Axis.
-                            // Let's try -deltaRad.
-                            const rotRad = -deltaRad;
-
-                            this.editTempPolygons.polygons.forEach((poly: any) => {
-                                poly.points = poly.points.map((pt: Coordinate) => {
-                                    const v = latLonToVector(pt);
-                                    const vNew = rotateVector(v, vCenter, rotRad);
-                                    return vectorToLatLon(vNew);
-                                });
-                            });
-                        }
-                    }
-                }
-
-                this.render();
-                this.lastMousePos = { x: e.clientX, y: e.clientY };
-                return;
-            }
-
-
-
-            if (this.interactionMode === 'pan') {
-                this.setState(state => {
-                    // Dynamic Sensitivity based on Zoom Level
-                    // Scale corresponds to pixels per radian at the center of the projection
-                    // We want 1 pixel drag to equal ~1 pixel surface movement
-                    // degrees = pixels * (180 / (PI * scale))
-                    const sens = (180 / Math.PI) / (state.viewport.scale || 250);
-
-                    let newRotate = [...state.viewport.rotate] as [number, number, number];
-
-                    // For orthographic, we rotate the globe
-                    // Dx -> Rotate Lambda (axis 0)
-                    // Dy -> Rotate Phi (axis 1) - clamped to +-90 usually
-
-                    newRotate[0] += dx * sens;
-                    newRotate[1] -= dy * sens;
-
-                    // Clamp phi
-                    newRotate[1] = Math.max(-90, Math.min(90, newRotate[1]));
-
-                    return {
-                        ...state,
-                        viewport: {
-                            ...state.viewport,
-                            rotate: newRotate
-                        }
-                    };
-                });
-            } else if (this.interactionMode === 'modify_velocity') {
-                // Handle gizmo drag
-                const state = this.getState();
-                const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
-                if (selectedPlate) {
-                    const result = this.motionGizmo.updateDrag(
-                        mousePos.x, mousePos.y,
-                        this.projectionManager,
-                        selectedPlate.center
-                    );
-                    if (result && result.rate !== undefined && this.onGizmoUpdate) {
-                        this.onGizmoUpdate(result.rate);
-                    }
-                }
-            } else if (this.interactionMode === 'drag_target') {
-                this.updateDragTarget(e);
-            }
-
-            this.lastMousePos = { x: e.clientX, y: e.clientY };
-            this.render();
-
-            if (this.isDrawing && geoPos) {
-                const projPos = this.projectionManager.project(geoPos);
-                if (projPos) this.drawCurrentPolygonPreview(projPos);
-            }
-        } else if (this.splitPreviewActive && this.splitPoints.length > 0 && geoPos) {
-            this.render();
-            // Draw the split polyline with current mouse position as temporary end
-            this.drawSplitPolyline([...this.splitPoints, geoPos]);
-        } else if (state.activeTool === 'edit') {
-            const mousePos = this.getMousePos(e);
-            const nearest = this.findNearestBoundaryElement(mousePos.x, mousePos.y);
-            if (nearest) {
-                this.canvas.style.cursor = nearest.type === 'vertex' ? 'move' : 'copy';
-                if (nearest.type === 'vertex') {
-                    this.editHoveredVertex = nearest.data;
-                    this.editHoveredEdge = null;
-                } else {
-                    this.editHoveredEdge = nearest.data;
-                    this.editHoveredVertex = null;
-                }
-            } else {
-                this.editHoveredVertex = null;
-                this.editHoveredEdge = null;
-                this.canvas.style.cursor = 'default';
-            }
-        }
-    }
-
-    private handleMouseUp(_e: MouseEvent): void {
-        const state = this.getState();
-
-        // 1. Handle Box Selection (Explicit check, independent of dragging)
-        if (this.isBoxSelecting && this.selectionBoxStart && this.selectionBoxEnd && this.boxSelectPlateId) {
-            // Finalize box selection
-            const x1 = Math.min(this.selectionBoxStart.x, this.selectionBoxEnd.x);
-            const x2 = Math.max(this.selectionBoxStart.x, this.selectionBoxEnd.x);
-            const y1 = Math.min(this.selectionBoxStart.y, this.selectionBoxEnd.y);
-            const y2 = Math.max(this.selectionBoxStart.y, this.selectionBoxEnd.y);
-
-            const selectedFeatures: string[] = [];
-
-            // Only iterate the captured plate's features
-            const targetPlate = state.world.plates.find(p => p.id === this.boxSelectPlateId);
-            if (targetPlate && targetPlate.visible) {
-                for (const feature of targetPlate.features) {
-                    const proj = this.projectionManager.project(feature.position);
-                    if (proj) {
-                        if (proj[0] >= x1 && proj[0] <= x2 && proj[1] >= y1 && proj[1] <= y2) {
-                            selectedFeatures.push(feature.id);
-                        }
-                    }
-                }
-            }
-
-            if (selectedFeatures.length > 0) {
-                this.onSelect(this.boxSelectPlateId, null, selectedFeatures);
-            }
-
-            this.isBoxSelecting = false;
-            this.selectionBoxStart = null;
-            this.selectionBoxEnd = null;
-            this.boxSelectPlateId = null;
-            this.render();
-            return;
-        }
-
-        // 2. Handle Dragging
-        if (this.isDragging) {
-            if (this.editDragState) {
-                if (this.onEditPending) this.onEditPending(true);
-                this.editDragState = null;
-                this.isDragging = false;
-                this.render();
-                return;
-            }
-            // Apply gizmo changes if we were modifying velocity
-            if (this.interactionMode === 'modify_velocity') {
-                const result = this.motionGizmo.endDrag();
-                const plateId = this.motionGizmo.getPlateId();
-                if (result && plateId) {
-                    this.onMotionChange(plateId, result.polePosition, result.rate);
-                }
-            } else if (this.interactionMode === 'drag_target') {
-                if (this.ghostRotation) {
-                    // Don't apply immediately. Enter fine-tuning mode.
-                    this.isFineTuning = true;
-                    this.ghostSpin = 0;
-                    if (this.onMotionPreviewChange) this.onMotionPreviewChange(true);
-                }
-            }
-
-        }
-
-        this.isDragging = false;
-        this.interactionMode = 'none';
-        this.canvas.style.cursor = 'default';
-        this.dragStartGeo = null;
-
-
-        if (!this.isFineTuning) {
-            this.ghostPlateId = null;
-            this.ghostRotation = null;
-        }
-
-        if (this.isSpinning) {
-            this.isSpinning = false;
-        }
-    }
-
-    private handleDoubleClick(e: MouseEvent): void {
-        const state = this.getState();
-        if (state.activeTool === 'draw' && this.isDrawing && this.currentPolygon.length >= 3) {
-            this.onDrawComplete([...this.currentPolygon]);
-            this.currentPolygon = [];
-            this.isDrawing = false;
-            this.render();
-        } else if (state.activeTool === 'poly_feature' && this.isDrawing && this.currentPolygon.length >= 3) {
-            // Get the current poly color from the color picker
-            const colorInput = document.getElementById('poly-feature-color') as HTMLInputElement;
-            const fillColor = colorInput?.value || '#ff6b6b';
-            if (this.onPolyFeatureComplete) {
-                this.onPolyFeatureComplete([...this.currentPolygon], fillColor);
-            }
-            this.currentPolygon = [];
-            this.isDrawing = false;
-            this.render();
-        } else if (state.activeTool === 'split' && this.splitPoints.length >= 2) {
-            this.onSplitApply([...this.splitPoints]);
-            this.splitPoints = [];
-            this.splitPreviewActive = false;
-            this.onSplitPreviewChange(false);
-            this.render();
-        } else if (state.activeTool === 'select') {
-            // Handle Feature Multi-Select via Double-Click
-            // Use the currently selected plate (don't require direct hit on feature)
-            const selectedPlateId = state.world.selectedPlateId;
-            if (!selectedPlateId) return; // No plate selected, nothing to do
-
-            const mousePos = this.getMousePos(e);
-            const hit = this.hitTest(mousePos);
-
-            // Get the selected plate
-            const plate = state.world.plates.find(p => p.id === selectedPlateId);
-            if (!plate) return;
-
-            // If we hit a feature, select all features of that type on this plate
-            if (hit?.featureId) {
-                const targetFeature = plate.features.find(f => f.id === hit.featureId);
-                if (targetFeature) {
-                    const featuresOfType = plate.features
-                        .filter(f => f.type === targetFeature.type)
-                        .map(f => f.id);
-
-                    this.onSelect(selectedPlateId, hit.featureId, featuresOfType);
-                }
-            }
-        }
-    }
-
-    private handleWheel(e: WheelEvent): void {
-        e.preventDefault();
-        const state = this.getState();
-
-        // Zoom (Scale)
-        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-        const newScale = Math.max(50, Math.min(10000, state.viewport.scale * zoomFactor));
-
-        this.setState(s => ({
-            ...s,
-            viewport: {
-                ...s.viewport,
-                scale: newScale
-            }
-        }));
-        this.render();
-    }
-
-    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string } | null {
-        const state = this.getState();
-        // Naive hit test using Project -> Distance for features
-
-        // 0. Check Plumes (Global features) - highest priority
-        if (state.world.mantlePlumes) {
-            for (const plume of state.world.mantlePlumes) {
-                // if (!plume.active) continue; // Allow selecting inactive plumes
-                const proj = this.projectionManager.project(plume.position);
-                if (proj) {
-                    const dist = Math.hypot(proj[0] - mousePos.x, proj[1] - mousePos.y);
-                    // Plumes are large targets
-                    if (dist < 20) return { plumeId: plume.id };
-                }
-            }
-        }
-
-        // Check features first
-        for (const plate of state.world.plates) {
-            if (!plate.visible) continue;
-            // Lifecycle check: Only hit test valid plates for current time
-            if (state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
-            for (const feature of plate.features) {
-                const proj = this.projectionManager.project(feature.position);
-                if (proj) {
-                    const dist = Math.hypot(proj[0] - mousePos.x, proj[1] - mousePos.y);
-                    if (dist < 20) return { plateId: plate.id, featureId: feature.id };
-                }
-            }
-        }
-
-
-
-        // Check Plates centroids? Or screen polygon
-        // Checking screen polygon is risky with clipping.
-        // Let's iterate plates, converting to GeoJSON and projecting.
-        // Actually rendering using .isPointInPath() is the standard canvas way!
-
-        // We can use the path generator to test!
-        const path = this.projectionManager.getPathGenerator();
-
-        // Iterate in reverse render order (top first)
-        for (let i = state.world.plates.length - 1; i >= 0; i--) {
-            const plate = state.world.plates[i];
-            if (!plate.visible) continue;
-            // Lifecycle check
-            if (state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
-
-            for (const poly of plate.polygons) {
-                const geojson = toGeoJSON(poly);
-
-                // Fix Winding for Hit Test
-                if (geoArea(geojson) > 2 * Math.PI) {
-                    geojson.geometry.coordinates[0].reverse();
-                }
-
-                this.ctx.beginPath();
-                path(geojson);
-                if (this.ctx.isPointInPath(mousePos.x, mousePos.y)) {
-                    return { plateId: plate.id };
-                }
-            }
-        }
-
-        return null;
-    }
-
-    public render(): void {
-        const state = this.getState();
-        const width = this.canvas.width / (window.devicePixelRatio || 1);
-        const height = this.canvas.height / (window.devicePixelRatio || 1);
-
-        this.projectionManager.update(state.world.projection, state.viewport);
-        const path = this.projectionManager.getPathGenerator();
-
-        // Clear
-        this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-        const dpr = window.devicePixelRatio || 1;
-        this.ctx.scale(dpr, dpr);
-
-        // Dynamic Theme Colors
-        const computedStyle = getComputedStyle(document.body);
-        const clearColor = computedStyle.getPropertyValue('--bg-canvas-clear').trim() || '#1a3a4a';
-        const oceanColor = computedStyle.getPropertyValue('--bg-globe-ocean').trim() || '#0f2634';
-
-        this.ctx.fillStyle = clearColor;
-        this.ctx.fillRect(0, 0, width, height);
-
-        // Draw Globe Background (for orthographic)
-        if (state.world.projection === 'orthographic') {
-            this.ctx.beginPath();
-            path({ type: 'Sphere' } as any);
-            this.ctx.fillStyle = oceanColor;
-            this.ctx.fill();
-        }
-
-        // Graticule (draw below plates unless gridOnTop is enabled)
-        const gridOnTop = state.world.globalOptions.gridOnTop;
-        if (state.world.showGrid && !gridOnTop) {
-            const gridColor = computedStyle.getPropertyValue('--grid-color').trim() || 'rgba(255, 255, 255, 0.1)';
-            this.ctx.strokeStyle = gridColor;
-            this.ctx.lineWidth = state.world.globalOptions.gridThickness || 1;
-            this.ctx.beginPath();
-            path(geoGraticule()());
-            this.ctx.stroke();
-        }
-
-        // Draw Image Overlay (fixed screen mode only - simple overlay above all elements except UI)
-        if (state.world.imageOverlay && state.world.imageOverlay.visible && state.world.imageOverlay.mode === 'fixed') {
-            this.drawImageOverlay(state);
-        }
-
-        // Draw Plates
-        // Sort plates by zIndex (default to 0 if undefined) WITH Continental Modifier (+1)
-        const sortedPlates = [...state.world.plates].sort((a, b) => {
-            let zA = a.zIndex ?? 0;
-            let zB = b.zIndex ?? 0;
-
-            // Continental plates get visually bumped up by 1 layer relative to oceanic if not manually overridden heavily
-            if (a.crustType === 'continental') zA += 1;
-            if (b.crustType === 'continental') zB += 1;
-
-            return zA - zB;
-        });
-
-        // polyRegionFeatures removed — feature system disabled
-
-        for (const plate of sortedPlates) {
-            if (!plate.visible) continue;
-
-            // Lifecycle check: Only render valid plates for current time
-            if (state.world.currentTime < plate.birthTime) continue;
-            if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
-
-            const isSelected = plate.id === state.world.selectedPlateId;
-
-            let polygonsToDraw = plate.polygons;
-            if (state.activeTool === 'edit' && this.editTempPolygons && this.editTempPolygons.plateId === plate.id) {
-                polygonsToDraw = this.editTempPolygons.polygons;
-            }
-            let transformedCenter = plate.center;
-
-            if (this.ghostRotation?.plateId === plate.id) {
-                const { axis, angle } = this.ghostRotation;
-                const spinRad = -this.ghostSpin * Math.PI / 180; // Negative for CW alignment
-
-                // Calculate transformed center for spin axis and widget
-                const vCenter = latLonToVector(plate.center);
-                const vRotCenter = rotateVector(vCenter, axis, angle);
-                transformedCenter = vectorToLatLon(vRotCenter);
-
-                polygonsToDraw = plate.polygons.map(poly => {
-                    const newPoints = poly.points.map(pt => {
-                        const v = latLonToVector(pt);
-                        // 1. Drag Rotation
-                        const v1 = rotateVector(v, axis, angle);
-                        // 2. Spin Rotation (around transformed center)
-                        const v2 = rotateVector(v1, vRotCenter, spinRad);
-                        return vectorToLatLon(v2);
-                    });
-                    return { ...poly, points: newPoints };
-                });
-            }
-
-            // Draw Polygons
-            for (const poly of polygonsToDraw) {
-                const geojson = toGeoJSON(poly);
-
-                // Fix Winding: If area > Hemisphere, invert winding
-                // This fixes pole-enclosure inversion issues.
-                if (geoArea(geojson) > 2 * Math.PI) {
-                    geojson.geometry.coordinates[0].reverse();
-                }
-
-                this.ctx.beginPath();
-                path(geojson);
-
-                // Apply plate opacity from global options
-                const globalOpacity = state.world.globalOptions.plateOpacity ?? 1.0;
-                const oceanicOpacity = plate.type === 'oceanic' ? (state.world.globalOptions.oceanicCrustOpacity ?? 0.5) : 1.0;
-                this.ctx.globalAlpha = globalOpacity * oceanicOpacity;
-                this.ctx.fillStyle = plate.color;
-
-                // Only fill if closed (default true)
-                if (poly.closed !== false) {
-                    this.ctx.fill();
-                }
-
-                this.ctx.globalAlpha = 1.0;
-
-                // Stroke style
-                if (plate.type === 'rift') {
-                    // Special styling for Rift Axis
-                    this.ctx.strokeStyle = isSelected ? '#ff3333' : '#ff0000'; // Red for Rift
-                    this.ctx.lineWidth = isSelected ? 4 : 2;
-                    // Ensure dashed line for specific look? keeping solid for now as "axis"
-                } else {
-                    this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
-                    this.ctx.lineWidth = isSelected ? 2 : 1;
-                }
-
-                this.ctx.stroke();
-            }
-
-
-            // Features rendering DISABLED — removed feature system
-
-            // Euler Pole Visualization
-            const showGlobalPoles = state.world.showEulerPoles;
-            const gizmoActive = isSelected && state.activeTool === 'select';
-            if (plate.motion.eulerPole.visible || (showGlobalPoles && !gizmoActive)) {
-                this.drawEulerPole(plate.motion.eulerPole);
-            }
-
-            // Update/render motion gizmo for selected plate
-            // MOVED OUTSIDE LOOP to render on top of all plates
-            // if (isSelected && state.activeTool === 'select') { ... }
-
-            // Draw Fine-Tuning Rotation Widget
-            if (this.isFineTuning && this.ghostPlateId === plate.id) {
-                this.drawRotationWidget(transformedCenter);
-            }
-        }
-
-        // Draw Boundaries
-        if (state.world.globalOptions.enableBoundaryVisualization && state.world.boundaries) {
-            this.drawBoundaries(state.world.boundaries, path);
-        }
-
-
-
-        // Render selected vertex highlight
-
-
-        // Draw Event Icons (Guided Creation)
-        this.drawEventIcons(state);
-
-        // Draw Mantle Plumes (Global Features)
-        if (state.world.mantlePlumes) {
-            for (const plume of state.world.mantlePlumes) {
-                const proj = this.projectionManager.project(plume.position);
-                if (proj) {
-                    const isSelected = plume.id === state.world.selectedFeatureId; // Using featureID slot for plumes
-
-                    this.ctx.save();
-                    this.ctx.translate(proj[0], proj[1]);
-
-                    // Draw Plume Icon (Star/Diamond)
-                    this.ctx.beginPath();
-                    this.ctx.arc(0, 0, 8, 0, Math.PI * 2);
-
-                    // Visual state: Inactive = Grey, Active = Magenta
-                    if (plume.active) {
-                        this.ctx.fillStyle = '#ff00aa'; // Magenta/Hot Pink
-                    } else {
-                        this.ctx.fillStyle = '#888888'; // Grey
-                    }
-                    this.ctx.fill();
-
-                    this.ctx.strokeStyle = isSelected ? '#ffffff' : (plume.active ? '#550033' : '#333333');
-                    this.ctx.lineWidth = isSelected ? 3 : 2;
-                    this.ctx.stroke();
-
-                    // Inner dot
-                    this.ctx.beginPath();
-                    this.ctx.arc(0, 0, 3, 0, Math.PI * 2);
-                    this.ctx.fillStyle = '#ffffff';
-                    this.ctx.fill();
-
-                    // Label
-                    if (isSelected) {
-                        this.ctx.fillStyle = 'white';
-                        this.ctx.font = '12px sans-serif';
-                        this.ctx.fillText(plume.active ? 'Plume' : 'Plume (Inactive)', 12, 4);
-                    }
-
-                    this.ctx.restore();
-                }
-            }
-        }
-
-        // Draw Links (if enabled via showLinks option OR if Link tool is active)
-        const showLinks = state.world.globalOptions.showLinks !== false; // Default true
-        if (showLinks || state.activeTool === 'link') {
-            this.drawLinks(state, path);
-        }
-
-        // poly_region features rendering DISABLED — removed feature system
-
-        // Render Motion Gizmo (On Top of Plates)
-        const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
-        if (selectedPlate && state.activeTool === 'select' && selectedPlate.visible) {
-            this.motionGizmo.setPlate(selectedPlate.id, selectedPlate.motion.eulerPole);
-            const radiusKm = state.world.globalOptions.planetRadius || 6371;
-            this.motionGizmo.render(this.ctx, this.projectionManager, selectedPlate.center, radiusKm);
-        } else {
-            this.motionGizmo.clear();
-        }
-
-        // Current Drawing
-        if (this.isDrawing && this.currentPolygon.length > 0) {
-            this.ctx.beginPath();
-            // LineString
-            path({
-                type: 'LineString',
-                coordinates: this.currentPolygon
-            } as any);
-            this.ctx.strokeStyle = '#ffffff';
-            this.ctx.lineWidth = 2;
-            this.ctx.setLineDash([5, 5]);
-            this.ctx.stroke();
-            this.ctx.setLineDash([]);
-
-            // Draw distances for established segments
-            for (let i = 0; i < this.currentPolygon.length - 1; i++) {
-                this.drawDistanceLabel(this.currentPolygon[i], this.currentPolygon[i + 1]);
-            }
-
-            // Draw preview line + distance to cursor
-            if (this.currentMouseGeo) {
-                const lastPoint = this.currentPolygon[this.currentPolygon.length - 1];
-
-                this.ctx.beginPath();
-                path({
-                    type: 'LineString',
-                    coordinates: [lastPoint, this.currentMouseGeo]
-                } as any);
-                this.ctx.strokeStyle = '#ffff00'; // Yellow for preview
-                this.ctx.lineWidth = 1;
-                this.ctx.setLineDash([2, 4]);
-                this.ctx.stroke();
-                this.ctx.setLineDash([]);
-
-                this.drawDistanceLabel(lastPoint, this.currentMouseGeo, '#ffff00');
-            }
-        }
-
-        if (state.activeTool === 'edit') {
-            this.drawEditHighlights();
-        }
-
-        // Split polyline preview
-        if (this.splitPreviewActive && this.splitPoints.length > 0) {
-            this.drawSplitPolyline(this.splitPoints);
-        }
-
-        // Render Selection Box
-        if (this.isBoxSelecting && this.selectionBoxStart && this.selectionBoxEnd) {
-            const x = Math.min(this.selectionBoxStart.x, this.selectionBoxEnd.x);
-            const y = Math.min(this.selectionBoxStart.y, this.selectionBoxEnd.y);
-            const w = Math.abs(this.selectionBoxEnd.x - this.selectionBoxStart.x);
-            const h = Math.abs(this.selectionBoxEnd.y - this.selectionBoxStart.y);
-
-            this.ctx.save();
-            this.ctx.strokeStyle = '#00a8ff';
-            this.ctx.lineWidth = 1;
-            this.ctx.setLineDash([5, 3]);
-            this.ctx.fillStyle = 'rgba(0, 168, 255, 0.1)';
-            this.ctx.fillRect(x, y, w, h);
-            this.ctx.strokeRect(x, y, w, h);
-            this.ctx.restore();
-        }
-
-
-
-
-        // Draw grid on top if gridOnTop option is enabled
-        if (state.world.showGrid && state.world.globalOptions.gridOnTop) {
-            const computedStyle = getComputedStyle(document.body);
-            const gridColor = computedStyle.getPropertyValue('--grid-color').trim() || 'rgba(255, 255, 255, 0.1)';
-            this.ctx.strokeStyle = gridColor;
-            this.ctx.lineWidth = state.world.globalOptions.gridThickness || 1;
-            this.ctx.beginPath();
-            path(geoGraticule()());
-            this.ctx.stroke();
-        }
-    }
-
-    private drawLinks(state: AppState, path: any): void {
-        this.ctx.save();
-        this.ctx.strokeStyle = '#00ffcc'; // Cyan/Teal for links
-        this.ctx.lineWidth = 2;
-        this.ctx.setLineDash([8, 4]);
-
-        for (const plate of state.world.plates) {
-            // Draw plate-to-plate links
-            if (plate.linkedToPlateId) {
-                const parent = state.world.plates.find(p => p.id === plate.linkedToPlateId);
-                if (parent) {
-                    // Draw arrow from child to parent
-                    this.ctx.beginPath();
-                    path({
-                        type: 'LineString',
-                        coordinates: [plate.center, parent.center]
-                    } as any);
-                    this.ctx.stroke();
-
-                    // Draw arrowhead pointing to parent (indicating direction of inheritance)
-                    const midpoint: Coordinate = [(plate.center[0] + parent.center[0]) / 2, (plate.center[1] + parent.center[1]) / 2];
-                    this.ctx.fillStyle = '#00ffcc';
-                    this.ctx.beginPath();
-                    const proj = this.projectionManager.project(midpoint);
-                    if (proj) {
-                        this.ctx.arc(proj[0], proj[1], 4, 0, 2 * Math.PI);
-                        this.ctx.fill();
-                    }
-                }
-            }
-
-        }
-        this.ctx.restore();
-    }
-
-    private drawBoundaries(boundaries: Boundary[], path: any): void {
-        this.ctx.save();
-        for (const b of boundaries) {
-            // Determine color based on type
-            if (b.type === 'convergent') {
-                this.ctx.strokeStyle = '#ff3333'; // Red
-                this.ctx.lineWidth = 3;
-            } else if (b.type === 'divergent') {
-                this.ctx.strokeStyle = '#3333ff'; // Blue
-                this.ctx.lineWidth = 2;
-            } else {
-                this.ctx.strokeStyle = '#33ff33'; // Green
-                this.ctx.lineWidth = 2;
-            }
-
-            // Draw points as a line?
-            // Usually boundaries from collision are polygons (areas).
-            // We can draw the outline
-            if (b.points.length > 0) {
-                const geojson = {
-                    type: 'MultiLineString',
-                    coordinates: b.points
-                };
-                this.ctx.beginPath();
-                path(geojson as any);
-                this.ctx.stroke();
-            }
-        }
-        this.ctx.restore();
-    }
-
-    private drawEventIcons(state: AppState): void {
-        if (!state.world.globalOptions.showEventIcons) return;
-
-        const events = state.world.tectonicEvents || [];
-        if (events.length === 0) return;
-
-        const currentTime = state.world.currentTime;
-        const showFuture = state.world.showFutureFeatures;
-
-        for (const event of events) {
-            const isInTimeline = event.time <= currentTime;
-            if (!isInTimeline && !showFuture) continue;
-
-            const anchor = this.getEventAnchor(event);
-            if (!anchor) continue;
-
-            const proj = this.projectionManager.project(anchor);
-            if (!proj) continue;
-
-            const isPending = state.world.pendingEventId === event.id;
-            const isCommitted = event.committed;
-            const color = event.eventType === 'collision' ? '#ef4444' : '#3b82f6';
-            const fill = isCommitted ? color : '#f59e0b';
-
-            this.ctx.save();
-            this.ctx.translate(proj[0], proj[1]);
-
-            const radius = isPending ? 9 : 7;
-            this.ctx.beginPath();
-            this.ctx.arc(0, 0, radius, 0, Math.PI * 2);
-            this.ctx.fillStyle = fill;
-            this.ctx.fill();
-
-            this.ctx.strokeStyle = isPending ? '#ffffff' : 'rgba(0,0,0,0.6)';
-            this.ctx.lineWidth = isPending ? 2 : 1;
-            this.ctx.stroke();
-
-            this.ctx.fillStyle = '#ffffff';
-            this.ctx.font = '10px sans-serif';
-            this.ctx.textAlign = 'center';
-            this.ctx.textBaseline = 'middle';
-            this.ctx.fillText(event.eventType === 'collision' ? '💥' : '🔀', 0, 1);
-
-            this.ctx.restore();
-        }
-    }
-
-    private getEventAnchor(event: TectonicEvent): Coordinate | null {
-        const points = event.boundarySegment.flat();
-        if (points.length === 0) return null;
-
-        let sum: Vector3 = { x: 0, y: 0, z: 0 };
-        for (const p of points) {
-            const v = latLonToVector(p);
-            sum = { x: sum.x + v.x, y: sum.y + v.y, z: sum.z + v.z };
-        }
-
-        const len = Math.sqrt(sum.x * sum.x + sum.y * sum.y + sum.z * sum.z);
-        if (len === 0) return points[0];
-
-        const normalized: Vector3 = { x: sum.x / len, y: sum.y / len, z: sum.z / len };
-        return vectorToLatLon(normalized);
-    }
-
-    // @ts-ignore - DISABLED: Feature system removed, kept for potential re-enablement
-    private drawFeature(feature: Feature, isSelected: boolean, isGhosted: boolean = false): void {
-        // Set reduced opacity for features outside timeline
-        if (isGhosted) {
-            this.ctx.globalAlpha = 0.3;
-        }
-
-        // Handle flowline feature
-        if (feature.type === 'flowline' && feature.trail && feature.trail.length > 1) {
-            const state = this.getState();
-
-            // Check if flowlines should be shown
-            if (state.world.globalOptions.showFlowlines === false) {
-                return;
-            }
-
-            const path = this.projectionManager.getPathGenerator();
-
-            // Calculate opacity based on age and fade duration
-            const currentTime = state.world.currentTime;
-            const birthTime = feature.generatedAt || 0;
-            const age = currentTime - birthTime;
-            const fadeDuration = state.world.globalOptions.flowlineFadeDuration || 100;
-
-            // Calculate opacity: starts at 1.0, fades to 0.0 over fadeDuration
-            let opacity = 1.0;
-            if (fadeDuration > 0) {
-                opacity = Math.max(0, 1 - (age / fadeDuration));
-            }
-
-            // Skip rendering if completely transparent
-            if (opacity <= 0) {
-                return;
-            }
-
-            this.ctx.globalAlpha = opacity;
-
-            this.ctx.beginPath();
-            path({
-                type: 'LineString',
-                coordinates: feature.trail
-            } as any);
-            this.ctx.strokeStyle = isSelected ? '#ffffff' : '#aaaaaa';
-            this.ctx.lineWidth = isSelected ? 2 : 1;
-            this.ctx.setLineDash([4, 4]);
-            this.ctx.stroke();
-            this.ctx.setLineDash([]);
-
-            // Draw seed point
-            const proj = this.projectionManager.project(feature.position);
-            if (proj) {
-                this.ctx.beginPath();
-                this.ctx.arc(proj[0], proj[1], 3, 0, Math.PI * 2);
-                this.ctx.fillStyle = '#ffffff';
-                this.ctx.fill();
-            }
-
-            this.ctx.globalAlpha = 1.0;
-
-            if (isGhosted) this.ctx.globalAlpha = 1.0;
-            return;
-        }
-
-        // Handle poly_region features specially - they have their own polygon
-        if (feature.type === 'poly_region' && feature.polygon && feature.polygon.length >= 3) {
-            const path = this.projectionManager.getPathGenerator();
-            const geojson = {
-                type: 'Polygon' as const,
-                coordinates: [[...feature.polygon, feature.polygon[0]]] // Close the polygon
-            };
-
-            // Fix Winding for Poly Features
-            if (geoArea(geojson as any) > 2 * Math.PI) {
-                geojson.coordinates[0].reverse();
-            }
-
-            this.ctx.beginPath();
-            path(geojson as any);
-            this.ctx.fillStyle = feature.fillColor || '#ff6b6b';
-            this.ctx.globalAlpha = isGhosted ? 0.2 : 0.7; // Semi-transparent
-            this.ctx.fill();
-            this.ctx.globalAlpha = 1.0;
-
-            if (isSelected) {
-                this.ctx.strokeStyle = '#ffffff';
-                this.ctx.lineWidth = 2;
-                this.ctx.stroke();
-            }
-
-            if (isGhosted) this.ctx.globalAlpha = 1.0;
-            return;
-        }
-
-        // Handle weakness feature
-        if (feature.type === 'weakness') {
-            const proj = this.projectionManager.project(feature.position);
-            if (!proj) {
-                if (isGhosted) this.ctx.globalAlpha = 1.0;
-                return;
-            }
-
-            this.ctx.save();
-            this.ctx.translate(proj[0], proj[1]);
-
-            // Draw a jagged crack pattern
-            this.ctx.strokeStyle = isSelected ? '#ffffff' : '#8b4513';
-            this.ctx.lineWidth = isSelected ? 3 : 2;
-            this.ctx.beginPath();
-            this.ctx.moveTo(-8, -4);
-            this.ctx.lineTo(-3, 2);
-            this.ctx.lineTo(0, -2);
-            this.ctx.lineTo(4, 4);
-            this.ctx.lineTo(8, 0);
-            this.ctx.stroke();
-
-            this.ctx.restore();
-            if (isGhosted) this.ctx.globalAlpha = 1.0;
-            return;
-        }
-
-        const proj = this.projectionManager.project(feature.position);
-        if (!proj) {
-            if (isGhosted) this.ctx.globalAlpha = 1.0;
-            return; // Behind globe or invalid
-        }
-
-        const size = 12 * feature.scale;
-        this.ctx.save();
-        this.ctx.translate(proj[0], proj[1]);
-        this.ctx.rotate(feature.rotation * Math.PI / 180);
-
-        const options = { isSelected };
-        switch (feature.type) {
-            case 'mountain': drawMountainIcon(this.ctx, size, options); break;
-            case 'volcano': drawVolcanoIcon(this.ctx, size, options); break;
-            case 'hotspot': drawHotspotIcon(this.ctx, size, options); break;
-            case 'rift': drawRiftIcon(this.ctx, size, options); break;
-            case 'trench': drawTrenchIcon(this.ctx, size, options); break;
-            case 'island': drawIslandIcon(this.ctx, size, options); break;
-        }
-        this.ctx.restore();
-
-        if (isGhosted) this.ctx.globalAlpha = 1.0;
-    }
-
-
-
-    private drawEulerPole(pole: EulerPole): void {
-        const proj = this.projectionManager.project(pole.position);
-        if (!proj) return;
-
-        this.ctx.save();
-        this.ctx.translate(proj[0], proj[1]);
-        this.ctx.fillStyle = 'red';
-        this.ctx.beginPath();
-        this.ctx.arc(0, 0, 5, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.ctx.fillStyle = 'white';
-        this.ctx.font = '10px Sans-Serif';
-        this.ctx.fillText("EP", 8, 4);
-
-        // Draw little rotation arrows?
-        this.ctx.strokeStyle = 'white';
-        this.ctx.beginPath();
-        this.ctx.arc(0, 0, 8, 0, Math.PI * 1.5);
-        this.ctx.stroke();
-
-        this.ctx.restore();
-    }
-
-    private drawSplitPolyline(points: Coordinate[]): void {
-        if (points.length < 2) return;
-
-        this.ctx.beginPath();
-        for (let i = 0; i < points.length; i++) {
-            const proj = this.projectionManager.project(points[i]);
-            if (!proj) continue;
-
-            if (i === 0) {
-                this.ctx.moveTo(proj[0], proj[1]);
-            } else {
-                this.ctx.lineTo(proj[0], proj[1]);
-            }
-        }
-
-        this.ctx.strokeStyle = '#ff4444';
-        this.ctx.lineWidth = 3;
-        this.ctx.setLineDash([8, 4]);
-        this.ctx.stroke();
-        this.ctx.setLineDash([]);
-
-        // Draw points as circles
-        for (const point of points) {
-            const proj = this.projectionManager.project(point);
-            if (proj) {
-                this.ctx.beginPath();
-                this.ctx.arc(proj[0], proj[1], 5, 0, Math.PI * 2);
-                this.ctx.fillStyle = '#ff4444';
-                this.ctx.fill();
-                this.ctx.strokeStyle = '#fff';
-                this.ctx.lineWidth = 2;
-                this.ctx.stroke();
-            }
-        }
-    }
-
-    private drawRotationWidget(center: Coordinate): void {
-        const proj = this.projectionManager.project(center);
-        if (!proj) return;
-
-        const [cx, cy] = proj;
-        const radius = 60; // Pixels
-
-        this.ctx.save();
-
-        // Draw Ring
-        this.ctx.beginPath();
-        this.ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-        this.ctx.strokeStyle = '#ffff00';
-        this.ctx.lineWidth = 2;
-        this.ctx.stroke();
-
-        // Handle position logic
-        const handleAngle = (this.ghostSpin - 90) * Math.PI / 180;
-        const hx = cx + Math.cos(handleAngle) * radius;
-        const hy = cy + Math.sin(handleAngle) * radius;
-
-        this.ctx.beginPath();
-        this.ctx.arc(hx, hy, 8, 0, Math.PI * 2);
-        this.ctx.fillStyle = this.isSpinning ? '#ffffff' : '#ffff00';
-        this.ctx.fill();
-        this.ctx.stroke();
-
-        this.ctx.restore();
-    }
-
-    // Public methods for motion apply/cancel
     public applyMotion(): void {
-        const state = this.getState();
         if (this.isFineTuning && this.ghostRotation && this.onDragTargetRequest) {
+            const state = this.getState();
             const plate = state.world.plates.find(p => p.id === this.ghostRotation!.plateId);
             if (plate) {
-                // Calculate Transformed Center (after drag)
                 const vCenter = latLonToVector(plate.center);
-                const vCenterRot = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
-
-                // Q_drag
+                const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
                 const qDrag = quatFromAxisAngle(this.ghostRotation.axis, this.ghostRotation.angle);
-
-                // Q_spin (around transformed center)
                 const spinRad = -this.ghostSpin * Math.PI / 180;
-                const qSpin = quatFromAxisAngle(vCenterRot, spinRad);
-
-                // Q_total = Q_spin * Q_drag
+                const qSpin = quatFromAxisAngle(vRotCenter, spinRad);
                 const qTotal = quatMultiply(qSpin, qDrag);
-
                 const { axis, angle } = axisAngleFromQuat(qTotal);
-
                 this.onDragTargetRequest(this.ghostRotation.plateId, axis, angle);
             }
         }
@@ -1936,38 +273,41 @@ export class CanvasManager {
         this.render();
     }
 
-    public applySplit(): void {
-        if (this.splitPoints.length >= 2) {
-            this.onSplitApply([...this.splitPoints]);
-        }
-        this.cancelSplit();
+    public getEditResult() {
+        return this.editTool.getTempPolygons();
     }
 
-    public cancelSplit(): void {
-        this.splitPoints = [];
-        this.splitPreviewActive = false;
-        this.onSplitPreviewChange(false);
+    public cancelEdit() {
+        this.editTool.cancel();
+    }
+
+    public setMotionMode(mode: InteractionMode): void {
+        this.motionMode = mode;
+        this.motionGizmo.setMode(mode);
         this.render();
     }
 
-    public isSplitPreviewActive(): boolean {
-        return this.splitPreviewActive;
+    public resizeCanvas(): void {
+        const container = this.canvas.parentElement;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        this.canvas.width = rect.width * dpr;
+        this.canvas.height = rect.height * dpr;
+        this.canvas.style.width = `${rect.width}px`;
+        this.canvas.style.height = `${rect.height}px`;
+        this.ctx.scale(dpr, dpr);
+        this.setState(s => ({
+            ...s,
+            viewport: {
+                ...s.viewport,
+                width: rect.width,
+                height: rect.height,
+                translate: [rect.width / 2, rect.height / 2]
+            }
+        }));
+        this.render();
     }
-
-    private drawCurrentPolygonPreview(projPos: [number, number]): void {
-        const lastGeo = this.currentPolygon[this.currentPolygon.length - 1];
-        const lastProj = this.projectionManager.project(lastGeo);
-        if (lastProj) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(lastProj[0], lastProj[1]);
-            this.ctx.lineTo(projPos[0], projPos[1]);
-            this.ctx.strokeStyle = 'white';
-            this.ctx.setLineDash([2, 2]);
-            this.ctx.stroke();
-            this.ctx.setLineDash([]);
-        }
-    }
-
 
     public startRenderLoop(): void {
         const loop = () => {
@@ -1984,23 +324,133 @@ export class CanvasManager {
         }
     }
 
-    public cancelDrawing(): void {
-        this.currentPolygon = [];
-        this.isDrawing = false;
-        if (this.onDrawUpdate) this.onDrawUpdate(0);
-        this.render();
+    public getViewportCenter(): Coordinate | null {
+        const rect = this.canvas.getBoundingClientRect();
+        return this.projectionManager.invert(rect.width / 2, rect.height / 2);
     }
 
-    public applyDraw(): void {
-        if (this.isDrawing && this.currentPolygon.length >= 3) {
-            this.onDrawComplete([...this.currentPolygon]);
-            this.currentPolygon = [];
-            this.isDrawing = false;
-            this.render();
+    public destroy(): void {
+        this.stopRenderLoop();
+    }
+
+    // --- Interaction ---
+
+    private getGeoFromMouse(e: MouseEvent): Coordinate | null {
+        const rect = this.canvas.getBoundingClientRect();
+        return this.projectionManager.invert(e.clientX - rect.left, e.clientY - rect.top);
+    }
+
+    private getMousePos(e: MouseEvent): Point {
+        const rect = this.canvas.getBoundingClientRect();
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+
+    private handleMouseDown(e: MouseEvent): void {
+        const state = this.getState();
+        const geo = this.getGeoFromMouse(e);
+        const screen = this.getMousePos(e);
+        this.lastMousePos = { x: e.clientX, y: e.clientY };
+
+        if (e.button === 1 || (e.button === 0 && state.activeTool === 'pan')) {
+            this.isDragging = true;
+            this.interactionMode = 'pan';
+            this.canvas.style.cursor = 'grabbing';
+            return;
+        }
+
+        if (this.motionGizmo.isActive() && state.activeTool === 'select') {
+            const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
+            if (selectedPlate) {
+                const handle = this.motionGizmo.hitTest(screen.x, screen.y, this.projectionManager, selectedPlate.center);
+                if (handle) {
+                    this.motionGizmo.startDrag(handle, screen.x, screen.y);
+                    this.isDragging = true;
+                    this.interactionMode = 'modify_velocity';
+                    this.canvas.style.cursor = 'move';
+                    return;
+                }
+            }
+        }
+
+        if (this.activeInputTool) {
+            this.activeInputTool.onMouseDown(e, geo, screen);
         }
     }
 
-    private updateDragTarget(e: MouseEvent): void {
+    private handleMouseMove(e: MouseEvent): void {
+        const geo = this.getGeoFromMouse(e);
+        const screen = this.getMousePos(e);
+        // this.currentMouseGeo = geo; // Unused
+
+        if (this.isDragging) {
+            const dx = e.clientX - this.lastMousePos.x;
+            const dy = e.clientY - this.lastMousePos.y;
+            if (this.interactionMode === 'pan') {
+                this.pan(dx, dy);
+            } else if (this.interactionMode === 'modify_velocity') {
+                const res = this.motionGizmo.updateDrag(screen.x, screen.y, this.projectionManager, this.getState().world.plates.find(p => p.id === this.getState().world.selectedPlateId)?.center || [0, 0]);
+                if (res && this.onGizmoUpdate && res.rate !== undefined) this.onGizmoUpdate(res.rate);
+            } else if (this.interactionMode === 'drag_target') {
+                this.updateDragTarget(e);
+            }
+        }
+
+        if (this.activeInputTool) {
+            this.activeInputTool.onMouseMove(e, geo, screen);
+        }
+        this.lastMousePos = { x: e.clientX, y: e.clientY };
+    }
+
+    private handleMouseUp(e: MouseEvent): void {
+        const geo = this.getGeoFromMouse(e);
+        const screen = this.getMousePos(e);
+
+        if (this.isDragging) {
+            this.isDragging = false;
+            if (this.interactionMode === 'modify_velocity') {
+                const res = this.motionGizmo.endDrag();
+                if (res) this.onMotionChange(this.motionGizmo.getPlateId()!, res.polePosition, res.rate);
+            } else if (this.interactionMode === 'drag_target') {
+                if (this.ghostRotation) {
+                    this.isFineTuning = true;
+                    this.ghostSpin = 0;
+                    if (this.onMotionPreviewChange) this.onMotionPreviewChange(true);
+                }
+            }
+            this.interactionMode = 'none';
+            this.canvas.style.cursor = 'default';
+        }
+
+        if (this.activeInputTool) {
+            this.activeInputTool.onMouseUp(e, geo, screen);
+        }
+    }
+
+    private handleDoubleClick(e: MouseEvent) {
+        if (this.activeInputTool?.onDoubleClick) this.activeInputTool.onDoubleClick(e, this.getGeoFromMouse(e), this.getMousePos(e));
+    }
+
+    private handleKeyDown(e: KeyboardEvent) {
+        if (e.key === 'Shift') this.shiftKeyDown = true;
+        if (this.activeInputTool) this.activeInputTool.onKeyDown(e);
+    }
+
+    private handleKeyUp(e: KeyboardEvent) {
+        if (e.key === 'Shift') this.shiftKeyDown = false;
+        if (this.activeInputTool) this.activeInputTool.onKeyUp(e);
+    }
+
+    private pan(dx: number, dy: number) {
+        const state = this.getState();
+        const sens = (180 / Math.PI) / (state.viewport.scale || 250);
+        let newRotate = [...state.viewport.rotate] as [number, number, number];
+        newRotate[0] += dx * sens;
+        newRotate[1] -= dy * sens;
+        newRotate[1] = Math.max(-90, Math.min(90, newRotate[1]));
+        this.setState(s => ({ ...s, viewport: { ...s.viewport, rotate: newRotate } }));
+    }
+
+    private updateDragTarget(e: MouseEvent) {
         const geoPos = this.getGeoFromMouse(e);
         if (!geoPos || !this.dragStartGeo || !this.ghostPlateId) return;
 
@@ -2008,7 +458,6 @@ export class CanvasManager {
         const p = state.world.plates.find(pl => pl.id === this.ghostPlateId);
         if (!p) return;
 
-        // 1. Calculate Drag Rotation Axis & Angle (StartMouse -> CurrMouse)
         const startMouseVec = latLonToVector(this.dragStartGeo);
         const currMouseVec = latLonToVector(geoPos);
 
@@ -2022,57 +471,202 @@ export class CanvasManager {
         dotVal = Math.max(-1, Math.min(1, dotVal));
         const angleRad = Math.acos(dotVal);
 
-        // Calculate Delta Quaternion
         const qDelta = quatFromAxisAngle(axis, angleRad);
         const qBase = this.dragBaseQuat || { w: 1, x: 0, y: 0, z: 0 };
-
-        // Combine: Q_final = Q_delta * Q_base
         const qFinal = quatMultiply(qDelta, qBase);
-
         const res = axisAngleFromQuat(qFinal);
 
-        // 2. Set Ghost Rotation
         this.ghostRotation = { plateId: p.id, axis: res.axis, angle: res.angle };
         this.render();
+    }
+
+    private startDragTarget(plateId: string, geo: Coordinate) {
+        this.ghostPlateId = plateId;
+        this.ghostRotation = { plateId, axis: { x: 0, y: 0, z: 1 }, angle: 0 };
+        this.dragStartGeo = geo;
+        this.dragBaseQuat = { w: 1, x: 0, y: 0, z: 0 };
+        this.isDragging = true;
+        this.interactionMode = 'drag_target';
+        this.canvas.style.cursor = 'grabbing';
+    }
+
+    public render(): void {
+        this.updateActiveTool();
+
+        const state = this.getState();
+        const width = this.canvas.width / (window.devicePixelRatio || 1);
+        const height = this.canvas.height / (window.devicePixelRatio || 1);
+
+        this.projectionManager.update(state.world.projection, state.viewport);
+        const path = this.projectionManager.getPathGenerator();
+
+        this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+        this.ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+
+        const computedStyle = getComputedStyle(document.body);
+        const clearColor = computedStyle.getPropertyValue('--bg-canvas-clear').trim() || '#1a3a4a';
+        this.ctx.fillStyle = clearColor;
+        this.ctx.fillRect(0, 0, width, height);
+
+        if (state.world.projection === 'orthographic') {
+            this.ctx.beginPath();
+            path({ type: 'Sphere' } as any);
+            this.ctx.fillStyle = computedStyle.getPropertyValue('--bg-globe-ocean').trim() || '#0f2634';
+            this.ctx.fill();
+        }
+
+        if (state.world.showGrid && !state.world.globalOptions.gridOnTop) {
+            this.drawGraticule(path, computedStyle);
+        }
+
+        if (state.world.imageOverlay?.visible && state.world.imageOverlay.mode === 'fixed') {
+            this.drawImageOverlay(state);
+        }
+
+        this.drawPlates(state, path);
+        this.drawEventIcons(state);
+        this.drawPlumes(state);
+
+        if (state.world.globalOptions.showLinks !== false || state.activeTool === 'link') {
+            this.drawLinks(state, path);
+        }
+
+        const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
+        if (selectedPlate && state.activeTool === 'select' && selectedPlate.visible) {
+            this.motionGizmo.setPlate(selectedPlate.id, selectedPlate.motion.eulerPole);
+            this.motionGizmo.render(this.ctx, this.projectionManager, selectedPlate.center, state.world.globalOptions.planetRadius || 6371);
+        } else {
+            this.motionGizmo.clear();
+        }
+
+        if (this.activeInputTool) {
+            this.activeInputTool.render(this.ctx, width, height);
+        }
+
+        if (state.activeTool === 'edit') {
+            this.drawEditHighlights();
+        }
+
+        if (this.isFineTuning && this.ghostPlateId) {
+            const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
+            if (plate && this.ghostRotation) {
+                const vCenter = latLonToVector(plate.center);
+                const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
+                this.drawRotationWidget(vectorToLatLon(vRotCenter));
+            }
+        }
+
+        if (state.world.showGrid && state.world.globalOptions.gridOnTop) {
+            this.drawGraticule(path, computedStyle);
+        }
+    }
+
+    private drawGraticule(path: any, style: CSSStyleDeclaration) {
+        const gridColor = style.getPropertyValue('--grid-color').trim() || 'rgba(255, 255, 255, 0.1)';
+        this.ctx.strokeStyle = gridColor;
+        this.ctx.lineWidth = this.getState().world.globalOptions.gridThickness || 1;
+        this.ctx.beginPath();
+        path(geoGraticule()());
+        this.ctx.stroke();
+    }
+
+    private drawPlates(state: AppState, path: any) {
+        const sortedPlates = [...state.world.plates].sort((a, b) => {
+            let zA = a.zIndex ?? 0;
+            let zB = b.zIndex ?? 0;
+            if (a.crustType === 'continental') zA += 1;
+            if (b.crustType === 'continental') zB += 1;
+            return zA - zB;
+        });
+
+        for (const plate of sortedPlates) {
+            if (!plate.visible) continue;
+            if (state.world.currentTime < plate.birthTime) continue;
+            if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
+
+            const isSelected = plate.id === state.world.selectedPlateId;
+
+            let polygonsToDraw = plate.polygons;
+            if (state.activeTool === 'edit' && this.editTool.getTempPolygons()?.plateId === plate.id) {
+                polygonsToDraw = this.editTool.getTempPolygons()!.polygons;
+            }
+
+            if (this.ghostRotation?.plateId === plate.id) {
+                const { axis, angle } = this.ghostRotation;
+                const spinRad = -this.ghostSpin * Math.PI / 180;
+                const vCenter = latLonToVector(plate.center);
+                const vRotCenter = rotateVector(vCenter, axis, angle);
+
+                polygonsToDraw = polygonsToDraw.map(poly => ({
+                    ...poly,
+                    points: poly.points.map(pt => {
+                        const v = latLonToVector(pt);
+                        const v1 = rotateVector(v, axis, angle);
+                        const v2 = rotateVector(v1, vRotCenter, spinRad);
+                        return vectorToLatLon(v2);
+                    })
+                }));
+            }
+
+            for (const poly of polygonsToDraw) {
+                const geojson = toGeoJSON(poly);
+                if (geoArea(geojson) > 2 * Math.PI) geojson.geometry.coordinates[0].reverse();
+
+                this.ctx.beginPath();
+                path(geojson);
+
+                const globalOpacity = state.world.globalOptions.plateOpacity ?? 1.0;
+                const oceanicOpacity = plate.type === 'oceanic' ? (state.world.globalOptions.oceanicCrustOpacity ?? 0.5) : 1.0;
+                this.ctx.globalAlpha = globalOpacity * oceanicOpacity;
+                this.ctx.fillStyle = plate.color;
+                if (poly.closed !== false) this.ctx.fill();
+                this.ctx.globalAlpha = 1.0;
+
+                this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
+                this.ctx.lineWidth = isSelected ? 2 : 1;
+                if (plate.type === 'rift') {
+                    this.ctx.strokeStyle = isSelected ? '#ff3333' : '#ff0000';
+                    this.ctx.lineWidth = isSelected ? 4 : 2;
+                }
+                this.ctx.stroke();
+            }
+
+            const showGlobalPoles = state.world.showEulerPoles;
+            const gizmoActive = isSelected && state.activeTool === 'select';
+            if (plate.motion.eulerPole.visible || (showGlobalPoles && !gizmoActive)) {
+                this.drawEulerPole(plate.motion.eulerPole);
+            }
+        }
+
+        if (state.world.globalOptions.enableBoundaryVisualization && state.world.boundaries) {
+            this.drawBoundaries(state.world.boundaries, path);
+        }
     }
 
     private drawImageOverlay(state: AppState): void {
         const overlay = state.world.imageOverlay;
         if (!overlay || !overlay.imageData) return;
 
-        // Check if image is already cached
         let img = this.cachedOverlayImages.get(overlay.imageData);
-
         if (!img) {
-            // Create and cache the image
             img = new Image();
-            img.onload = () => {
-                // Trigger a re-render when image loads
-                this.render();
-            };
+            img.onload = () => { this.render(); };
             img.src = overlay.imageData;
             this.cachedOverlayImages.set(overlay.imageData, img);
-            // If image not loaded yet, skip rendering this frame
             return;
         }
 
-        // Only draw if image is loaded
         if (!img.complete) return;
 
         this.ctx.save();
         this.ctx.globalAlpha = overlay.opacity;
-
-        // For fixed mode: draw as overlay on screen space
         const canvasWidth = this.canvas.width;
         const canvasHeight = this.canvas.height;
-
-        // Scale and position overlay
         const scaledWidth = img.width * overlay.scale;
         const scaledHeight = img.height * overlay.scale;
         const x = (canvasWidth - scaledWidth) / 2 + overlay.offsetX;
         const y = (canvasHeight - scaledHeight) / 2 + overlay.offsetY;
 
-        // Apply rotation if needed
         if (overlay.rotation !== 0) {
             this.ctx.translate(canvasWidth / 2, canvasHeight / 2);
             this.ctx.rotate((overlay.rotation * Math.PI) / 180);
@@ -2083,64 +677,155 @@ export class CanvasManager {
         this.ctx.restore();
     }
 
-
-    public getViewportCenter(): Coordinate | null {
-        // Return screen center projected to Lon/Lat
-        const rect = this.canvas.getBoundingClientRect();
-        return this.projectionManager.invert(rect.width / 2, rect.height / 2);
+    private drawEulerPole(pole: EulerPole): void {
+        const proj = this.projectionManager.project(pole.position);
+        if (!proj) return;
+        this.ctx.save();
+        this.ctx.translate(proj[0], proj[1]);
+        this.ctx.fillStyle = 'red';
+        this.ctx.beginPath();
+        this.ctx.arc(0, 0, 5, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = '10px Sans-Serif';
+        this.ctx.fillText("EP", 8, 4);
+        this.ctx.restore();
     }
 
-    public destroy(): void {
-        this.stopRenderLoop();
-        window.removeEventListener('resize', () => this.resizeCanvas());
-    }
-
-    private drawDistanceLabel(p1: Coordinate, p2: Coordinate, color: string = '#ffffff'): void {
-        const rad = distance(p1, p2);
-        const km = rad * 6371;
-
-        // Midpoint for label
-        // Simple linear avg is ok for short segments, but use slerp/great circle mid for accuracy?
-        // Let's use simple avg of projected points to ensure screen placement is correct
-        const proj1 = this.projectionManager.project(p1);
-        const proj2 = this.projectionManager.project(p2);
-
-        if (!proj1 || !proj2) return; // Clipped
-
-        const mx = (proj1[0] + proj2[0]) / 2;
-        const my = (proj1[1] + proj2[1]) / 2;
-
-        let label = '';
-        if (km < 1000) {
-            label = `${Math.round(km)} km`;
-        } else {
-            label = `${(km / 1000).toFixed(1)}k km`; // 1.2k km
+    private drawBoundaries(boundaries: Boundary[], path: any): void {
+        this.ctx.save();
+        for (const b of boundaries) {
+            if (b.type === 'convergent') {
+                this.ctx.strokeStyle = '#ff3333'; this.ctx.lineWidth = 3;
+            } else if (b.type === 'divergent') {
+                this.ctx.strokeStyle = '#3333ff'; this.ctx.lineWidth = 2;
+            } else {
+                this.ctx.strokeStyle = '#33ff33'; this.ctx.lineWidth = 2;
+            }
+            if (b.points.length > 0) {
+                const geojson = { type: 'MultiLineString', coordinates: b.points };
+                this.ctx.beginPath(); path(geojson as any); this.ctx.stroke();
+            }
         }
+        this.ctx.restore();
+    }
 
-        this.ctx.font = '11px monospace';
-        this.ctx.textAlign = 'center';
-        this.ctx.textBaseline = 'middle';
+    private drawEventIcons(state: AppState): void {
+        if (!state.world.globalOptions.showEventIcons) return;
+        const events = state.world.tectonicEvents || [];
+        if (events.length === 0) return;
+        const currentTime = state.world.currentTime;
+        const showFuture = state.world.showFutureFeatures;
 
-        // Shadow/Stroke for readability
-        this.ctx.lineWidth = 3;
-        this.ctx.strokeStyle = 'rgba(0,0,0,0.8)';
-        this.ctx.strokeText(label, mx, my);
+        for (const event of events) {
+            const isInTimeline = event.time <= currentTime;
+            if (!isInTimeline && !showFuture) continue;
+            const anchor = this.getEventAnchor(event);
+            if (!anchor) continue;
+            const proj = this.projectionManager.project(anchor);
+            if (!proj) continue;
 
-        this.ctx.fillStyle = color;
-        this.ctx.fillText(label, mx, my);
+            const isPending = state.world.pendingEventId === event.id;
+            const isCommitted = event.committed;
+            const color = event.eventType === 'collision' ? '#ef4444' : '#3b82f6';
+            const fill = isCommitted ? color : '#f59e0b';
+
+            this.ctx.save();
+            this.ctx.translate(proj[0], proj[1]);
+            const radius = isPending ? 9 : 7;
+            this.ctx.beginPath();
+            this.ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            this.ctx.fillStyle = fill;
+            this.ctx.fill();
+            this.ctx.strokeStyle = isPending ? '#ffffff' : 'rgba(0,0,0,0.6)';
+            this.ctx.lineWidth = isPending ? 2 : 1;
+            this.ctx.stroke();
+            this.ctx.restore();
+        }
+    }
+
+    private getEventAnchor(event: TectonicEvent): Coordinate | null {
+        const points = event.boundarySegment.flat();
+        if (points.length === 0) return null;
+        let sum = { x: 0, y: 0, z: 0 };
+        for (const p of points) { const v = latLonToVector(p); sum.x += v.x; sum.y += v.y; sum.z += v.z; }
+        const len = Math.sqrt(sum.x * sum.x + sum.y * sum.y + sum.z * sum.z);
+        if (len === 0) return points[0];
+        return vectorToLatLon({ x: sum.x / len, y: sum.y / len, z: sum.z / len });
+    }
+
+    private drawPlumes(state: AppState) {
+        if (state.world.mantlePlumes) {
+            for (const plume of state.world.mantlePlumes) {
+                const proj = this.projectionManager.project(plume.position);
+                if (proj) {
+                    const isSelected = plume.id === state.world.selectedFeatureId; // plumeId check
+                    this.ctx.save();
+                    this.ctx.translate(proj[0], proj[1]);
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, 8, 0, Math.PI * 2);
+                    this.ctx.fillStyle = plume.active ? '#ff00aa' : '#888888';
+                    this.ctx.fill();
+                    this.ctx.strokeStyle = isSelected ? '#ffffff' : (plume.active ? '#550033' : '#333333');
+                    this.ctx.lineWidth = isSelected ? 3 : 2;
+                    this.ctx.stroke();
+                    this.ctx.restore();
+                }
+            }
+        }
+    }
+
+    private drawLinks(state: AppState, path: any): void {
+        this.ctx.save();
+        this.ctx.strokeStyle = '#00ffcc';
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash([8, 4]);
+
+        for (const plate of state.world.plates) {
+            if (plate.linkedToPlateId) {
+                const parent = state.world.plates.find(p => p.id === plate.linkedToPlateId);
+                if (parent) {
+                    this.ctx.beginPath();
+                    path({ type: 'LineString', coordinates: [plate.center, parent.center] } as any);
+                    this.ctx.stroke();
+                }
+            }
+        }
+        this.ctx.restore();
+    }
+
+    private drawRotationWidget(center: Coordinate): void {
+        const proj = this.projectionManager.project(center);
+        if (!proj) return;
+        const [cx, cy] = proj;
+        const radius = 60;
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        this.ctx.strokeStyle = '#ffff00';
+        this.ctx.lineWidth = 2;
+        this.ctx.stroke();
+        const handleAngle = (this.ghostSpin - 90) * Math.PI / 180;
+        const hx = cx + Math.cos(handleAngle) * radius;
+        const hy = cy + Math.sin(handleAngle) * radius;
+        this.ctx.beginPath();
+        this.ctx.arc(hx, hy, 8, 0, Math.PI * 2);
+        // Use isFineTuning or ghostRotation existence to determine highlight
+        this.ctx.fillStyle = this.isFineTuning ? '#ffffff' : '#ffff00';
+        this.ctx.fill();
+        this.ctx.stroke();
+        this.ctx.restore();
     }
 
     private drawEditHighlights() {
         const state = this.getState();
         const plateId = state.world.selectedPlateId;
-        if (!plateId) return;
-
+        if (!plateId || !this.editTool) return;
         const plate = state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
 
-        const polygons = (this.editTempPolygons && this.editTempPolygons.plateId === plate.id) ? this.editTempPolygons.polygons : plate.polygons;
+        const polygons = this.editTool.getTempPolygons()?.polygons || plate.polygons;
 
-        // 1. Draw all vertices as small gizmos
         this.ctx.fillStyle = '#ffffff';
         this.ctx.strokeStyle = '#000000';
         this.ctx.lineWidth = 1;
@@ -2151,57 +836,144 @@ export class CanvasManager {
                 if (proj) {
                     this.ctx.beginPath();
                     this.ctx.arc(proj[0], proj[1], 3, 0, Math.PI * 2);
-                    this.ctx.fill();
-                    this.ctx.stroke();
+                    this.ctx.fill(); this.ctx.stroke();
                 }
             }
         }
 
-        // 2. Highlights for Hover
-        if (this.editHoveredVertex && this.editHoveredVertex.plateId === plateId) {
-            const poly = polygons[this.editHoveredVertex.polyIndex];
+        const hoveredVertex = this.editTool.getHoveredVertex();
+        if (hoveredVertex && hoveredVertex.plateId === plateId) {
+            const poly = polygons[hoveredVertex.polyIndex];
             if (poly) {
-                const pt = poly.points[this.editHoveredVertex.vertexIndex];
+                const pt = poly.points[hoveredVertex.vertexIndex];
                 const proj = this.projectionManager.project(pt);
                 if (proj) {
                     this.ctx.beginPath();
                     this.ctx.arc(proj[0], proj[1], 6, 0, Math.PI * 2);
-                    this.ctx.fillStyle = '#ff4444'; // Red for Vertex
-                    this.ctx.fill();
-                    this.ctx.strokeStyle = 'white';
-                    this.ctx.lineWidth = 2;
-                    this.ctx.stroke();
+                    this.ctx.fillStyle = '#ff4444';
+                    this.ctx.fill(); this.ctx.stroke();
                 }
             }
         }
 
-        if (this.editHoveredEdge && this.editHoveredEdge.plateId === plateId) {
-            const proj = this.projectionManager.project(this.editHoveredEdge.pointOnEdge);
-            if (proj) {
-                this.ctx.beginPath();
-                this.ctx.arc(proj[0], proj[1], 5, 0, Math.PI * 2);
-                this.ctx.fillStyle = '#44ff44'; // Green for Insert
-                this.ctx.fill();
-                this.ctx.strokeStyle = 'white';
-                this.ctx.lineWidth = 2;
-                this.ctx.stroke();
-            }
-        }
-
-        // 3. Shift Mode: Rotation Gizmo
         if (this.shiftKeyDown) {
             let currentCenter = plate.center;
-            if (this.editTempPolygons && this.editTempPolygons.plateId === plate.id) {
-                const allPoints = this.editTempPolygons.polygons.flatMap((p: any) => p.points);
-                if (allPoints.length > 0) {
-                    currentCenter = calculateSphericalCentroid(allPoints);
-                }
+            if (this.editTool.getTempPolygons()?.plateId === plate.id) {
+                const all = this.editTool.getTempPolygons()!.polygons.flatMap((p: any) => p.points);
+                if (all.length > 0) currentCenter = calculateSphericalCentroid(all);
             }
             this.drawRotationWidget(currentCenter);
-
-            // Also draw visual cue for "Move" capability?
-            // Optional: Maybe a move arrow icon at cursor? 
-            // For now, the gizmo implies "Edit Transformation Mode"
         }
+    }
+
+    private setupEventListeners(): void {
+        this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
+        window.addEventListener('mousemove', this.handleMouseMove.bind(this));
+        window.addEventListener('mouseup', this.handleMouseUp.bind(this));
+        this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
+        window.addEventListener('keydown', this.handleKeyDown.bind(this));
+        window.addEventListener('keyup', this.handleKeyUp.bind(this));
+        this.canvas.addEventListener('contextmenu', (e) => {
+            if (this.activeInputTool instanceof PathInputTool || this.activeInputTool instanceof EditTool) {
+                e.preventDefault();
+            }
+        });
+        this.canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const state = this.getState();
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            const newScale = Math.max(50, Math.min(10000, state.viewport.scale * zoomFactor));
+            this.setState(s => ({ ...s, viewport: { ...s.viewport, scale: newScale } }));
+            this.render();
+        });
+    }
+
+    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string } | null {
+        const state = this.getState();
+        if (state.world.mantlePlumes) {
+            for (const plume of state.world.mantlePlumes) {
+                const proj = this.projectionManager.project(plume.position);
+                if (proj && Math.hypot(proj[0] - mousePos.x, proj[1] - mousePos.y) < 20) return { plumeId: plume.id };
+            }
+        }
+
+        for (const plate of state.world.plates) {
+            if (!plate.visible || state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
+            for (const feature of plate.features) {
+                const proj = this.projectionManager.project(feature.position);
+                if (proj && Math.hypot(proj[0] - mousePos.x, proj[1] - mousePos.y) < 20) return { plateId: plate.id, featureId: feature.id };
+            }
+        }
+
+        const path = this.projectionManager.getPathGenerator();
+        for (let i = state.world.plates.length - 1; i >= 0; i--) {
+            const plate = state.world.plates[i];
+            if (!plate.visible || state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
+            for (const poly of plate.polygons) {
+                const geojson = toGeoJSON(poly);
+                if (geoArea(geojson) > 2 * Math.PI) geojson.geometry.coordinates[0].reverse();
+                this.ctx.beginPath();
+                path(geojson);
+                if (this.ctx.isPointInPath(mousePos.x, mousePos.y)) return { plateId: plate.id };
+            }
+        }
+        return null;
+    }
+
+    private findNearestBoundaryElement(mouseX: number, mouseY: number): { type: 'vertex' | 'edge', data: any } | null {
+        const state = this.getState();
+        const targetPlateId = state.world.selectedPlateId;
+        if (!targetPlateId) return null;
+        const plate = state.world.plates.find(p => p.id === targetPlateId);
+        if (!plate || !plate.visible) return null;
+
+        const polygons = this.editTool.getTempPolygons()?.plateId === plate.id ? this.editTool.getTempPolygons()!.polygons : plate.polygons;
+
+        let closestVertex: any = null, minVertexDist2 = 64;
+        let closestEdge: any = null, minEdgeDist2 = 64;
+        // const mouseVec = this.projectionManager.invert(mouseX, mouseY) ? latLonToVector(this.projectionManager.invert(mouseX, mouseY)!) : null; // Unused
+
+        polygons.forEach((poly: any, polyIndex: number) => {
+            const points = poly.points as Coordinate[];
+            const screenPoints = points.map(p => this.projectionManager.project(p));
+            for (let i = 0; i < screenPoints.length; i++) {
+                const p = screenPoints[i];
+                if (!p) continue;
+                const d2 = (p[0] - mouseX) ** 2 + (p[1] - mouseY) ** 2;
+                if (d2 < minVertexDist2) { minVertexDist2 = d2; closestVertex = { plateId: plate.id, polyIndex, vertexIndex: i }; }
+                if (!closestVertex) {
+                    const nextIdx = (i + 1) % screenPoints.length;
+                    const pNext = screenPoints[nextIdx];
+                    if (!pNext) continue;
+                    // Simplified edge check
+                    const dist2 = this.distToSegmentSquared({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
+                    if (dist2 < minEdgeDist2) {
+                        const t = this.getT({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
+                        const screenX = p[0] + t * (pNext[0] - p[0]);
+                        const screenY = p[1] + t * (pNext[1] - p[1]);
+                        const geo = this.projectionManager.invert(screenX, screenY);
+                        if (geo) { minEdgeDist2 = dist2; closestEdge = { plateId: plate.id, polyIndex, vertexIndex: i, pointOnEdge: geo }; }
+                    }
+                }
+            }
+        });
+        if (closestVertex) return { type: 'vertex', data: closestVertex };
+        if (closestEdge) return { type: 'edge', data: closestEdge };
+        return null;
+    }
+
+    private distToSegmentSquared(p: { x: number, y: number }, v: { x: number, y: number }, w: { x: number, y: number }) {
+        const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
+        if (l2 === 0) return (p.x - v.x) ** 2 + (p.y - v.y) ** 2;
+        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+        t = Math.max(0, Math.min(1, t));
+        return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2;
+    }
+
+    private getT(p: { x: number, y: number }, v: { x: number, y: number }, w: { x: number, y: number }) {
+        const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
+        if (l2 === 0) return 0;
+        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+        return Math.max(0, Math.min(1, t));
     }
 }
