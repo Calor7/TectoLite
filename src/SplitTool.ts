@@ -539,57 +539,236 @@ export function splitPlate(
     let currentState = state;
     const currentTime = state.world.currentTime;
 
-    // --- 0. PRE-PROCESS CONNECTED RIFTS (Triple Junction Logic) ---
-    // If we are splitting a continent, check if the split line ALSO intersects any connected rifts.
-    // If so, split them first so we can link the new continent halves to the new rift halves.
+    // --- 0. PRE-PROCESS CONNECTED RIFTS (L-Shaped Junction Logic) ---
+    // When the split line intersects a connected rift:
+    // - The ORIGINAL rift stays unchanged (needed by the OTHER plate not being split).
+    // - 2 NEW L-shaped rifts are created from: (arm of original rift) + (segment of split line).
+    // - The plate being split is DISCONNECTED from the original rift and connected to its L-rift.
+
+    interface LRiftResult {
+        leftLRiftId: string;
+        rightLRiftId: string;
+        leftLRift: TectonicPlate;
+        rightLRift: TectonicPlate;
+        originalRiftId: string;
+    }
+    const lRiftResults: LRiftResult[] = [];
+
     if (!onlySelected) {
-        // We need to look up the plate in the CURRENT state (as it might update in the loop)
         const plateToCheck = currentState.world.plates.find(p => p.id === plateId);
 
-        if (plateToCheck && plateToCheck.connectedRiftIds && plateToCheck.connectedRiftIds.length > 0) {
+        // Convert split line to polyline format early for intersection checks
+        const splitPolyline: Coordinate[] = 'points' in splitLine
+            ? splitLine.points
+            : [splitLine.start, splitLine.end];
+
+        if (plateToCheck && plateToCheck.connectedRiftIds && plateToCheck.connectedRiftIds.length > 0 && splitPolyline.length >= 2) {
             const riftsToCheck = plateToCheck.connectedRiftIds
                 .map(id => currentState.world.plates.find(p => p.id === id))
-                .filter((r): r is TectonicPlate => !!r && (r.deathTime === null || r.deathTime > currentTime));
+                .filter((r): r is TectonicPlate => !!r && r.type === 'rift' && (r.deathTime === null || r.deathTime > currentTime));
 
             for (const rift of riftsToCheck) {
-                // Attempt to split the rift using the same line
-                // Recursive call! But focused on the Rift.
-                // We pass 'onlySelected: true' to the rift split to prevent infinite recursion 
-                // (though rifts usually don't have connectedRiftIds pointing back to the continent in a loop, safe to be sure).
-                // Actually, rifts don't have children usually.
+                // Get the rift's polyline (first polygon's points, which is an open polyline)
+                if (!rift.polygons || rift.polygons.length === 0 || rift.polygons[0].points.length < 2) continue;
+                const riftPolyline = rift.polygons[0].points;
 
-                const stateAfterRiftSplit = splitPlate(currentState, rift.id, splitLine, inheritMomentum, true);
+                // Find intersection between split line and rift polyline
+                let intersectionPoint: Coordinate | null = null;
+                let riftSegIdx = -1;
+                let splitSegIdx = -1;
 
-                // If state changed, it means the rift was split
-                if (stateAfterRiftSplit !== currentState) {
-                    currentState = stateAfterRiftSplit;
-
-                    // Identify the new rift fragments
-                    const newRiftFragments = currentState.world.plates.filter(p =>
-                        p.parentPlateId === rift.id &&
-                        p.birthTime === currentTime &&
-                        (p.deathTime === null || p.deathTime > currentTime)
-                    );
-
-                    if (newRiftFragments.length > 0) {
-                        // Update ALL plates that were connected to the old rift (Continent AND Children)
-                        // to point to the new fragments instead.
-                        currentState = {
-                            ...currentState,
-                            world: {
-                                ...currentState.world,
-                                plates: currentState.world.plates.map(p => {
-                                    if (p.connectedRiftIds && p.connectedRiftIds.includes(rift.id)) {
-                                        const newIds = p.connectedRiftIds.filter(id => id !== rift.id);
-                                        newIds.push(...newRiftFragments.map(f => f.id));
-                                        return { ...p, connectedRiftIds: newIds };
-                                    }
-                                    return p;
-                                })
-                            }
-                        };
+                for (let si = 0; si < splitPolyline.length - 1 && !intersectionPoint; si++) {
+                    for (let ri = 0; ri < riftPolyline.length - 1; ri++) {
+                        const ix = findSegmentIntersection(
+                            splitPolyline[si], splitPolyline[si + 1],
+                            riftPolyline[ri], riftPolyline[ri + 1]
+                        );
+                        if (ix) {
+                            intersectionPoint = ix;
+                            riftSegIdx = ri;
+                            splitSegIdx = si;
+                            break;
+                        }
                     }
                 }
+
+                if (!intersectionPoint || riftSegIdx < 0 || splitSegIdx < 0) continue;
+
+                // --- Split rift polyline into 2 arms at intersection ---
+                // Arm A: from rift start → intersection point
+                const riftArmA: Coordinate[] = [...riftPolyline.slice(0, riftSegIdx + 1), intersectionPoint];
+                // Arm B: from intersection point → rift end
+                const riftArmB: Coordinate[] = [intersectionPoint, ...riftPolyline.slice(riftSegIdx + 1)];
+
+                // --- Split the SPLIT LINE into 2 segments at intersection ---
+                // Segment Left: from split start → intersection point
+                const splitSegLeft: Coordinate[] = [...splitPolyline.slice(0, splitSegIdx + 1), intersectionPoint];
+                // Segment Right: from intersection point → split end
+                const splitSegRight: Coordinate[] = [intersectionPoint, ...splitPolyline.slice(splitSegIdx + 1)];
+
+                // --- Create L-Rift A: riftArmA + splitSegLeft ---
+                // We need a continuous line A.
+                // splitSegLeft: Start -> Intersection
+                // riftArmA: Start -> Intersection
+                // To join them at Intersection: Reverse splitSegLeft so it goes Intersection -> Start
+                // Result A: riftArmA (Start->Int) + splitSegLeft (Int->Start)
+                // This forms a V-shape centered at Intersection.
+                const lRiftAPolyline = [...riftArmA, ...splitSegLeft.slice(0, -1).reverse()];
+
+                // --- Create L-Rift B: riftArmB + splitSegRight ---
+                // riftArmB: Intersection -> End
+                // splitSegRight: Intersection -> End
+                // To join them at Intersection: Reverse riftArmB so it goes End -> Intersection
+                // Result B: riftArmB (End->Int) + splitSegRight (Int->End)
+                const lRiftBPolyline = [...riftArmB.slice(1).reverse(), intersectionPoint, ...splitSegRight.slice(1)];
+
+                // Create L-Rift plate entities
+                const lRift1Id = generateId();
+                const lRift2Id = generateId();
+
+                const createLRift = (id: string, polyline: Coordinate[], suffix: string): TectonicPlate => {
+                    const center = calculateSphericalCentroid(polyline);
+                    return {
+                        id,
+                        slabId: id,
+                        name: `Rift ${rift.name || 'Axis'} ${suffix}`,
+                        description: `L-shaped rift from ${rift.name || 'Axis'} + split of ${plateToCheck!.name}`,
+                        type: 'rift',
+                        crustType: 'oceanic',
+                        color: rift.color || '#FF0000',
+                        zIndex: -1,
+                        birthTime: currentTime,
+                        deathTime: null,
+                        visible: true,
+                        locked: true,
+                        center,
+                        polygons: [{ id: generateId(), points: polyline, closed: false, riftEdgeIndices: [] }],
+                        features: [{
+                            id: generateId(),
+                            type: 'rift',
+                            position: center,
+                            rotation: 0,
+                            scale: 1,
+                            properties: { isAxis: true, path: polyline }
+                        }],
+                        initialPolygons: [{ id: generateId(), points: polyline, closed: false, riftEdgeIndices: [] }],
+                        initialFeatures: [],
+                        motion: { eulerPole: { position: [0, 90], rate: 0, visible: false } },
+                        motionKeyframes: [],
+                        events: [],
+                        connectedRiftIds: []
+                    };
+                };
+
+                // Helper to determine if a point is "left" of a directed polyline on a sphere
+                function getSideOfSplitLine(point: Coordinate, polyline: Coordinate[]): 'left' | 'right' {
+                    // Find the closest segment on the polyline to the point
+                    // Then use cross product to determine side
+                    // Simplified: Use the first segment to define orientation near the start?
+                    // Better: Iterate segments, find closest.
+
+                    // We enforce the convention: Side is determined by the cross product of the FIRST segment of the split line.
+                    // This assumes the split line doesn't self-intersect or wrap around in a way that invalidates "Left" globally for the rift endpoints.
+
+                    for (let i = 0; i < polyline.length - 1; i++) {
+                        const p1 = latLonToVector(polyline[i]);
+                        const p2 = latLonToVector(polyline[i + 1]);
+                        const p = latLonToVector(point);
+
+                        // Approximate distance to great circle arc?
+                        // Let's just use the segment that is "closest" in some sense.
+                        // Or simpler: The split polygon logic defines Left as the side of the Normal (cross product).
+                        // n = normalize(cross(p1, p2))
+                        // side = dot(n, p) > 0 ? Left : Right (or vice versa depending on convention)
+
+                        const n = normalize(cross(p1, p2));
+                        const d = dot(n, p);
+
+                        // Check if point projects onto this segment? 
+                        // If the polyline is complex, simple cross product might be ambiguous.
+                        // But for a split, we usually assume the point is "near" the cut.
+
+                        // Let's rely on the first segment for consistent "Left/Right" definition if the point is far?
+                        // But for L-Rifts, the point is the end of the rift arm, which intersects the split line.
+                        // So the arm starts somewhere away from the split line.
+
+                        // We need CONSISTENCY with splitPolygonWithPolyline.
+                        // splitPolygonWithPolyline typically walks the cut.
+
+                        // Let's enforce the convention: Side is determined by the cross product of the FIRST segment of the split line.
+                        if (i === 0) {
+                            return d > 0 ? 'left' : 'right';
+                        }
+                    }
+                    return 'left';
+                }
+
+                let lRift1 = createLRift(lRift1Id, lRiftAPolyline, '(1)');
+                let lRift2 = createLRift(lRift2Id, lRiftBPolyline, '(2)');
+
+                // --- Determine which L-Rift is Left/Right relative to the SPLIT LINE ---
+                // Check the start point of each L-Rift's "arm" (which is the far end from the intersection)
+                // lRiftA arm starts at riftArmA[0]
+                // lRiftB arm starts at riftArmB[riftArmB.length-1] (since we reversed it for polyline construction, wait)
+                // riftArmB was: Intersection -> End. 
+                // lRiftBPolyline is: End -> Intersection -> Split.
+                // So lRiftBPolyline[0] is the far end of the rift arm B.
+
+                const p1 = lRiftAPolyline[0];
+                const p2 = lRiftBPolyline[0];
+
+                const side1 = getSideOfSplitLine(p1, splitPolyline);
+                const side2 = getSideOfSplitLine(p2, splitPolyline);
+
+                // Assign Left/Right based on calculated side
+                let leftLRiftId: string, rightLRiftId: string;
+                let leftLRift: TectonicPlate, rightLRift: TectonicPlate;
+
+                if (side1 === 'left') {
+                    leftLRift = lRift1; leftLRiftId = lRift1Id;
+                    rightLRift = lRift2; rightLRiftId = lRift2Id;
+                } else {
+                    leftLRift = lRift2; leftLRiftId = lRift2Id;
+                    rightLRift = lRift1; rightLRiftId = lRift1Id;
+
+                    if (side1 === side2) {
+                        // Fallback logic
+                        leftLRift = lRift2; leftLRiftId = lRift2Id;
+                    }
+                }
+
+                // Rename for clarity
+                leftLRift.name = leftLRift.name.replace('(1)', '(L)').replace('(2)', '(L)');
+                rightLRift.name = rightLRift.name.replace('(1)', '(R)').replace('(2)', '(R)');
+
+                lRiftResults.push({
+                    leftLRiftId,
+                    rightLRiftId,
+                    leftLRift,
+                    rightLRift,
+                    originalRiftId: rift.id
+                });
+
+                // Add the new L-rifts to state and DISCONNECT the plate being split from the original rift
+                currentState = {
+                    ...currentState,
+                    world: {
+                        ...currentState.world,
+                        plates: [
+                            ...currentState.world.plates.map(p => {
+                                if (p.id === plateId) {
+                                    // Remove original rift, add L-rift IDs
+                                    const newIds = (p.connectedRiftIds || []).filter(id => id !== rift.id);
+                                    newIds.push(leftLRiftId, rightLRiftId);
+                                    return { ...p, connectedRiftIds: newIds };
+                                }
+                                return p;
+                            }),
+                            leftLRift,
+                            rightLRift
+                        ]
+                    }
+                };
             }
         }
     }
@@ -721,44 +900,47 @@ export function splitPlate(
 
     const newMotion = inheritMomentum ? { ...plateToSplit.motion } : createDefaultMotion();
 
-    // --- Create RIFT PLATE Entity ---
-    const riftPlateId = generateId();
-    const riftPolyPoints = riftAxisPath.length >= 2 ? riftAxisPath : polylinePoints;
-    const riftCenter = calculateSphericalCentroid(riftPolyPoints);
+    // --- Create RIFT PLATE Entity (only if no L-rifts were created) ---
+    const hasLRifts = lRiftResults.length > 0;
+    let riftPlate: TectonicPlate | null = null;
+    let riftPlateId: string | null = null;
 
-    const riftPlate: TectonicPlate = {
-        id: riftPlateId,
-        slabId: riftPlateId,
-        name: `Rift Axis ${plateToSplit.name}`,
-        description: `Rift Axis formed from ${plateToSplit.name}`,
-        type: 'rift', // Explicit Rift Type
-        crustType: 'oceanic',
-        color: '#FF0000', // Red for Axis by default
-        zIndex: -1,
-        birthTime: state.world.currentTime,
-        deathTime: null,
-        visible: true,
-        locked: true, // Rift Axis is stationary
-        center: riftCenter,
-        polygons: [{ id: generateId(), points: riftPolyPoints, closed: false, riftEdgeIndices: [] }],
-        features: [{
-            id: generateId(),
+    if (!hasLRifts) {
+        riftPlateId = generateId();
+        const riftPolyPoints = riftAxisPath.length >= 2 ? riftAxisPath : polylinePoints;
+        const riftCenter = calculateSphericalCentroid(riftPolyPoints);
+
+        riftPlate = {
+            id: riftPlateId,
+            slabId: riftPlateId,
+            name: `Rift Axis ${plateToSplit.name}`,
+            description: `Rift Axis formed from ${plateToSplit.name}`,
             type: 'rift',
-            position: riftCenter,
-            rotation: 0,
-            scale: 1,
-            properties: {
-                isAxis: true,
-                path: riftAxisPath
-            }
-        }],
-        initialPolygons: [{ id: generateId(), points: riftPolyPoints, closed: false, riftEdgeIndices: [] }],
-        initialFeatures: [],
-        motion: { eulerPole: { position: [0, 90], rate: 0, visible: false } },
-        motionKeyframes: [],
-        events: [],
-        connectedRiftIds: []
-    };
+            crustType: 'oceanic',
+            color: '#FF0000',
+            zIndex: -1,
+            birthTime: state.world.currentTime,
+            deathTime: null,
+            visible: true,
+            locked: true,
+            center: riftCenter,
+            polygons: [{ id: generateId(), points: riftPolyPoints, closed: false, riftEdgeIndices: [] }],
+            features: [{
+                id: generateId(),
+                type: 'rift',
+                position: riftCenter,
+                rotation: 0,
+                scale: 1,
+                properties: { isAxis: true, path: riftAxisPath }
+            }],
+            initialPolygons: [{ id: generateId(), points: riftPolyPoints, closed: false, riftEdgeIndices: [] }],
+            initialFeatures: [],
+            motion: { eulerPole: { position: [0, 90], rate: 0, visible: false } },
+            motionKeyframes: [],
+            events: [],
+            connectedRiftIds: []
+        };
+    }
 
     // --- BAKE MOTION INTO FEATURES BEFORE SPLITTING ---
     const bakedFeatures = applyTransformToFeatures(plateToSplit, currentState.world.currentTime, currentState.world.plates);
@@ -791,25 +973,36 @@ export function splitPlate(
     const inheritedDescription = `Split from ${plateToSplit.name}`;
 
     // --- Distribute Connected Rifts ---
+    // For L-rift case: each plate half gets its matching L-rift.
+    // For normal case: distribute based on side + add the new straight rift.
     const getDistributedRifts = (p: TectonicPlate, mySide: 'left' | 'right') => {
         if (!p.connectedRiftIds) return [];
         return p.connectedRiftIds.filter(rId => {
+            // Skip L-rift IDs (handled separately below)
+            if (lRiftResults.some(lr => lr.leftLRiftId === rId || lr.rightLRiftId === rId)) return false;
+            // Skip the straight rift ID (handled separately)
+            if (riftPlateId && rId === riftPlateId) return false;
+
             const rPlate = currentState.world.plates.find(rp => rp.id === rId);
             if (!rPlate) return false;
-            // If the rift is the NEWLY created rift (riftPlateId), it connects to both, handled separately
-            if (rId === riftPlateId) return true;
-
-            // Otherwise check side
             return getSide(rPlate.polygons) === mySide;
         });
     };
 
-    // Note: plateToSplit.connectedRiftIds ALREADY contains the new rifts from the pre-process step!
-    // So getDistributedRifts will see the new Rift fragments and assign them correctly.
-    // We add riftPlateId manually as well.
+    let leftRiftIds = getDistributedRifts(plateToSplit, 'left');
+    let rightRiftIds = getDistributedRifts(plateToSplit, 'right');
 
-    const leftRiftIds = getDistributedRifts(plateToSplit, 'left');
-    const rightRiftIds = getDistributedRifts(plateToSplit, 'right');
+    if (hasLRifts) {
+        // Each plate half gets its corresponding L-rift
+        for (const lr of lRiftResults) {
+            leftRiftIds.push(lr.leftLRiftId);
+            rightRiftIds.push(lr.rightLRiftId);
+        }
+    } else if (riftPlateId) {
+        // Both halves connect to the new straight-line rift
+        leftRiftIds.push(riftPlateId);
+        rightRiftIds.push(riftPlateId);
+    }
 
     const leftPlate: TectonicPlate = {
         ...plateToSplit,
@@ -831,8 +1024,8 @@ export function splitPlate(
         initialPolygons: leftPolygons,
         initialFeatures: leftFeatures,
         riftGenerationMode: plateToSplit.riftGenerationMode || 'default',
-        connectedRiftIds: [...leftRiftIds, riftPlateId],
-        connectedRiftId: riftPlateId
+        connectedRiftIds: leftRiftIds,
+        connectedRiftId: riftPlateId || undefined
     };
 
     const rightPlate: TectonicPlate = {
@@ -857,8 +1050,8 @@ export function splitPlate(
         initialPolygons: rightPolygons,
         initialFeatures: rightFeatures,
         riftGenerationMode: plateToSplit.riftGenerationMode || 'default',
-        connectedRiftIds: [...rightRiftIds, riftPlateId],
-        connectedRiftId: riftPlateId
+        connectedRiftIds: rightRiftIds,
+        connectedRiftId: riftPlateId || undefined
     };
 
     // --- RECURSIVE SPLIT OF CHILD PLATES (Oceanic Strips) ---
@@ -997,7 +1190,12 @@ export function splitPlate(
         }
     }
 
-    const newPlates = [riftPlate, leftPlate, rightPlate, ...processedChildren];
+    const newPlates: TectonicPlate[] = [
+        ...(riftPlate ? [riftPlate] : []),
+        leftPlate,
+        rightPlate,
+        ...processedChildren
+    ];
 
     // Update World State
     return {
