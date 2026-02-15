@@ -1716,6 +1716,7 @@ class TectoLiteApp {
             events: [],
             birthTime: currentTime,
             deathTime: null,
+            connectedRiftIds: [],
             initialPolygons: [polygon],
             initialFeatures: []
         };
@@ -1944,6 +1945,107 @@ class TectoLiteApp {
             this.activeLinkSourceId = null;
             return;
         }
+
+        // --- NEW: Rift Connection Logic ---
+        // Check if either the "Parent" (Source) or "Child" (Target) is a Rift
+        // Case A: Source is Rift, Target is Plate -> Connect Plate to Rift
+        // Case B: Source is Plate, Target is Rift -> Connect Plate to Rift
+
+        const isParentRift = parentPlate.type === 'rift';
+        const isChildRift = plate.type === 'rift';
+
+        if (isParentRift || isChildRift) {
+            // Validate: One must be rift, one must be plate (not rift-rift or plate-plate)
+            if (isParentRift && isChildRift) {
+                this.showToast("Cannot link two Rifts directly.");
+                this.activeLinkSourceId = null;
+                this.updateHint("Select parent (anchor) plate");
+                return;
+            }
+
+            // Identify which is the Rift and which is the Plate
+            const rift = isParentRift ? parentPlate : plate;
+            const tectonicPlate = isParentRift ? plate : parentPlate; // The non-rift one
+
+            // Check if already connected
+            const currentConnections = tectonicPlate.connectedRiftIds || [];
+            const isConnected = currentConnections.includes(rift.id);
+
+            if (isConnected) {
+                // Disconnect
+                this.showModal({
+                    title: `Disconnect Rift`,
+                    content: `Disconnect <strong>${tectonicPlate.name}</strong> from Rift <strong>${rift.name}</strong>?<br><br>
+                    <small>Oceanic crust generation will stop for this plate at this rift.</small>`,
+                    buttons: [
+                        {
+                            text: "Disconnect",
+                            onClick: () => {
+                                this.pushState();
+                                const newConnections = currentConnections.filter(id => id !== rift.id);
+                                this.state.world.plates = this.state.world.plates.map(p =>
+                                    p.id === tectonicPlate.id
+                                        ? { ...p, connectedRiftIds: newConnections }
+                                        : p
+                                );
+                                this.updateHint(`Disconnected ${tectonicPlate.name} from ${rift.name}`);
+                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+                                this.activeLinkSourceId = null;
+                                this.state.world.selectedPlateId = tectonicPlate.id; // Select the plate
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
+                        },
+                        {
+                            text: 'Cancel',
+                            isSecondary: true,
+                            onClick: () => {
+                                this.activeLinkSourceId = null;
+                                this.updateHint("Select first plate/rift");
+                            }
+                        }
+                    ]
+                });
+            } else {
+                // Connect
+                this.showModal({
+                    title: `Connect to Rift`,
+                    content: `Connect <strong>${tectonicPlate.name}</strong> to Rift <strong>${rift.name}</strong>?<br><br>
+                    <small>This enables <strong>Oceanic Crust Generation</strong> between them. Motion is NOT inherited.</small>`,
+                    buttons: [
+                        {
+                            text: "Connect",
+                            onClick: () => {
+                                this.pushState();
+                                const newConnections = [...currentConnections, rift.id];
+                                this.state.world.plates = this.state.world.plates.map(p =>
+                                    p.id === tectonicPlate.id
+                                        ? { ...p, connectedRiftIds: newConnections }
+                                        : p
+                                );
+                                this.updateHint(`Connected ${tectonicPlate.name} to ${rift.name}`);
+                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
+                                this.activeLinkSourceId = null;
+                                this.state.world.selectedPlateId = tectonicPlate.id;
+                                this.updateUI();
+                                this.canvasManager?.render();
+                            }
+                        },
+                        {
+                            text: 'Cancel',
+                            isSecondary: true,
+                            onClick: () => {
+                                this.activeLinkSourceId = null;
+                                this.updateHint("Select first plate/rift");
+                            }
+                        }
+                    ]
+                });
+            }
+            return;
+        }
+
+        // --- END NEW LOGIC (Standard Plate Linking continues below) ---
 
         // Check if already linked
         const isLinked = plate.linkedToPlateId === parentId;
@@ -2202,14 +2304,23 @@ class TectoLiteApp {
         if (plateToSplit) {
             this.showModal({
                 title: 'Split Plate Configuration',
-                content: `You are about to split <strong>${plateToSplit.name}</strong> along the drawn boundary. How should the new plates behave?`,
+                content: `
+                    <p>You are about to split <strong>${plateToSplit.name}</strong> along the drawn boundary. How should the new plates behave?</p>
+                    <div style="margin-top:15px; padding:10px; background:var(--bg-elevated); border-radius:4px;">
+                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                            <input type="checkbox" id="chk-split-selected-only"> 
+                            <span><strong>Split Only Selected Plate</strong><br><span style="font-size:0.9em; opacity:0.8;">Do not split intersecting features or children</span></span>
+                        </label>
+                    </div>
+                `,
                 buttons: [
                     {
                         text: 'Inherit Momentum',
                         subtext: 'New plates will keep the parent\'s current velocity and rotation.',
                         onClick: () => {
+                            const onlySelected = (document.getElementById('chk-split-selected-only') as HTMLInputElement)?.checked || false;
                             this.pushState();
-                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, true);
+                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, true, onlySelected);
                             this.updateUI();
                             this.simulation?.setTime(this.state.world.currentTime);
                             this.canvasManager?.render();
@@ -2219,8 +2330,9 @@ class TectoLiteApp {
                         text: 'Reset Momentum',
                         subtext: 'New plates will start stationary (0 velocity).',
                         onClick: () => {
+                            const onlySelected = (document.getElementById('chk-split-selected-only') as HTMLInputElement)?.checked || false;
                             this.pushState();
-                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, false);
+                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, false, onlySelected);
                             this.updateUI();
                             this.simulation?.setTime(this.state.world.currentTime);
                             this.canvasManager?.render();

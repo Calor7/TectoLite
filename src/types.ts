@@ -326,7 +326,8 @@ export interface TectonicPlate {
   // Rift & Generation Properties
   type?: 'lithosphere' | 'oceanic' | 'rift'; // Default 'lithosphere'
   linkType?: 'motion' | 'generation'; // Default 'motion'
-  connectedRiftId?: string; // ID of the Rift/Oceanic plate accumulating crust from this plate
+  connectedRiftIds: string[]; // IDs of Rifts accumulating crust from this plate
+  connectedRiftId?: string; // Deprecated: Kept for backward compatibility
   riftGenerationMode?: 'default' | 'always' | 'never';
 
   // Motion keyframes - sorted by time, first keyframe is at birthTime

@@ -169,7 +169,8 @@ export function fusePlates(
         initialFeatures: combinedFeatures,
         crustType: plate1.crustType === 'oceanic' && plate2.crustType === 'oceanic' ? 'oceanic' : 'continental',
         visible: true,
-        locked: false
+        locked: false,
+        connectedRiftIds: [...new Set([...(plate1.connectedRiftIds || []), ...(plate2.connectedRiftIds || [])])]
     };
 
     // Mark original plates as dead at current time
