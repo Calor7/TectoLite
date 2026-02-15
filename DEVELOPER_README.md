@@ -154,6 +154,7 @@ Use this for fast verification during refactoring.
 | `CanvasManager.ts` | ~2,300 | All canvas rendering, mouse/touch input, tool modes |
 | `SimulationEngine.ts` | ~800 | Time-step simulation, plate motion, keyframe interpolation |
 | `types.ts` | ~550 | Every interface and type in the app |
+| `SplitTool.ts` | ~1,270 | Complex polygon splitting, Rift Triple Junctions, L-Rift logic |
 | `export.ts` | ~900 | JSON/PNG import/export, dialogs |
 | `AppTemplate.ts` | ~490 | Full HTML template string |
 
@@ -165,3 +166,29 @@ Use this for fast verification during refactoring.
 - **Keep `types.ts` as the single type source** — don't define interfaces in random files
 - **Extracted modules are pure functions** — they don't hold state or reference the class
 - **Update this README** when you add, move, or remove files
+
+---
+
+## Technical Appendix: Triple Junction Logic (Split Tool)
+
+The `SplitTool.ts` implements advanced logic for creating geological triple junctions.
+
+### 1. L-Shaped Rifts
+When a User splits a plate connected to a Rift, the tool detects the intersection and splits the Rift itself into two "arms".
+- **Old Rift** becomes two new L-shaped rifts.
+- **Each L-Rift** consists of:
+    - One arm of the original Rift.
+    - A segment of the new Split Line (shared boundary).
+
+### 2. Heuristics
+Because valid geometry input can be varied (drawing lines from outside, crossing borders), the tool uses robust heuristics:
+- **"First Tangent" Trimming**: If a split line starts outside the plate, the tool trims the segment to start exactly at the plate boundary (First Tangent).
+- **"Longest Segment" Selection**: When a split line crosses a plate, it creates an "inside" segment and an "overshoot" segment. The tool automatically detects and uses the **longer** segment as the valid boundary for the new rift.
+- **Side Determination**: `getSideOfSplitLine` uses cross-product logic relative to the first segment of the split line to correctly assign L-Rifts to the new plate halves.
+
+### 3. Conveyor Belt Crust
+The new Oceanic Crust system (`oceanic-strip` type plates) works by "accretion":
+- **Trigger**: Every X million years (configurable).
+- **Action**: New strip is created at the Rift Axis.
+- **Motion**: Strip is linked to the diverging continent, moving with it.
+- **Result**: Old strips naturally move away, creating a conveyor belt effect without complex gap-filling logic.
