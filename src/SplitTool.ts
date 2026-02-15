@@ -631,7 +631,109 @@ export function splitPlate(
 
                 // Use the longer segment
                 const useLeftSeg = lenLeft >= lenRight;
-                const sharedSplitSeg = useLeftSeg ? splitSegLeft : splitSegRight;
+                let sharedSplitSeg = useLeftSeg ? splitSegLeft : splitSegRight;
+
+                // --- TRIM "Overarching" Segment ---
+                // User Feedback: "The split should also end at the end of the split plate"
+                // The split segment might extend outside the plate (from Start to Plate Boundary).
+                // We need to trim it so it starts at the Plate Boundary (First Tangent).
+
+                // Identify the "Outer" point (the one far from the rift intersection)
+                // Left Seg: Start -> Int. Outer is [0].
+                // Right Seg: Int -> End. Outer is [length-1].
+                const outerIndex = useLeftSeg ? 0 : sharedSplitSeg.length - 1;
+                const outerPoint = sharedSplitSeg[outerIndex];
+
+                // Check if Outer Point is OUTSIDE the plate
+                // If it's inside, we don't trim (split started inside).
+                // Note: isPointInPolygon might return false for points ON edge, but usually okay.
+                const isOuterInside = plateToCheck.polygons.some(poly => isPointInPolygon(outerPoint, poly.points));
+
+                if (!isOuterInside) {
+                    // It's outside. Find intersection with Plate Boundary.
+                    // We walk the segment from Intersection TOWARDS Outer Point to find the exit?
+                    // Or from Outer Point TOWARDS Intersection to find entry?
+                    // User said: "earliest point is the first tangent of plate and split line"
+                    // So we want the point where the line ENTERS the plate.
+                    // This is the intersection closest to the Outer Point that is NOT the Rift Intersection itself.
+
+                    let bestIntersection: Coordinate | null = null;
+                    let minDistToOuter = Infinity;
+
+                    // Flatten plate polygons into edge list
+                    // Warning: optimization needed if complex.
+                    for (const poly of plateToCheck.polygons) {
+                        for (let i = 0; i < poly.points.length; i++) {
+                            const p1 = poly.points[i];
+                            const p2 = poly.points[(i + 1) % poly.points.length];
+
+                            // Check intersection with sharedSplitSeg
+                            // sharedSplitSeg is a polyline.
+                            for (let j = 0; j < sharedSplitSeg.length - 1; j++) {
+                                const s1 = sharedSplitSeg[j];
+                                const s2 = sharedSplitSeg[j + 1];
+
+                                const hit = findSegmentIntersection(p1, p2, s1, s2);
+                                if (hit) {
+                                    // Ignore if hit is exactly the Rift Intersection (we are trimming the other end)
+                                    // Dist to Rift Int
+                                    const dRift = Math.abs(hit[0] - intersectionPoint[0]) + Math.abs(hit[1] - intersectionPoint[1]);
+                                    if (dRift < 1e-6) continue;
+
+                                    // Check distance to Outer Point
+                                    const dOuter = Math.abs(hit[0] - outerPoint[0]) + Math.abs(hit[1] - outerPoint[1]);
+
+                                    // We want the intersection CLOSEST to the Outer Point (First Tangent from outside)
+                                    // Wait, if line goes Outside -> Plate -> Outside -> Plate -> Int
+                                    // We want the one closest to Int? Or furthest?
+                                    // "Split should end at the end of the split plate". 
+                                    // We want the segment CONNECTED to the Rift Intersection.
+                                    // So we want the intersection furthest from Int (closest to Outer) that is still connected to Int via Inside path?
+                                    // Actually, if we assume convex-ish or simple crossing:
+                                    // There is one entry point.
+                                    // We want the intersection closest to Outer Point.
+                                    if (dOuter < minDistToOuter) {
+                                        minDistToOuter = dOuter;
+                                        bestIntersection = hit;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (bestIntersection) {
+                        // Trim sharedSplitSeg
+
+                        // Find which segment index contained the intersection
+                        for (let j = 0; j < sharedSplitSeg.length - 1; j++) {
+                            const s1 = sharedSplitSeg[j];
+                            const s2 = sharedSplitSeg[j + 1];
+
+                            // Check if bestIntersection is on this segment via distance check
+                            // Dist(start, hit) + Dist(hit, end) == Dist(start, end)
+                            const d1 = Math.sqrt(Math.pow(bestIntersection[0] - s1[0], 2) + Math.pow(bestIntersection[1] - s1[1], 2));
+                            const d2 = Math.sqrt(Math.pow(bestIntersection[0] - s2[0], 2) + Math.pow(bestIntersection[1] - s2[1], 2));
+                            const segLen = Math.sqrt(Math.pow(s1[0] - s2[0], 2) + Math.pow(s1[1] - s2[1], 2));
+
+                            if (Math.abs((d1 + d2) - segLen) < 1e-5) {
+                                // Found the segment containing the intersection.
+
+                                if (useLeftSeg) {
+                                    // Left Seg Order: Start(0) -> ... -> End(Int).
+                                    // Outer is 0. We want to discard 0..j and start from bestIntersection.
+                                    // The new segment should be: [bestIntersection, ...points from j+1 to end]
+                                    sharedSplitSeg = [bestIntersection, ...sharedSplitSeg.slice(j + 1)];
+                                } else {
+                                    // Right Seg Order: Start(Int) -> ... -> End(length-1).
+                                    // Outer is End. We want to discard j+1..end and end at bestIntersection.
+                                    // The new segment should be: [...points from 0 to j, bestIntersection]
+                                    sharedSplitSeg = [...sharedSplitSeg.slice(0, j + 1), bestIntersection];
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
 
                 // --- Construct L-Rifts using the Shared Split Segment ---
 
