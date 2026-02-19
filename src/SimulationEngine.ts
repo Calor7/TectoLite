@@ -468,7 +468,7 @@ export class SimulationEngine {
                         motionKeyframes: [],
                         events: [],
                         linkedToPlateId: plate.id,
-                        linkTime: generationTime,
+                        linkTime: currentTime,
                         connectedRiftIds: [rift.id],
                         connectedRiftId: rift.id
                     });
