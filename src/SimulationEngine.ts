@@ -343,30 +343,9 @@ export class SimulationEngine {
             for (const plate of connectedPlates) {
                 if (plate.riftGenerationMode === 'never') continue;
                 if (plate.deathTime !== null && currentTime > plate.deathTime) continue;
-                // Note: The caller (update loop) handles removing the old 'growing' strips
-                // by filtering out any strip with ID ending in '_growing' before this frame.
-                // This ensures the gap is always filled dynamically
-                // We do this by filtering them out of CANDIDATES for "lastStrip", 
-                // but we also need to know they exist to delete/ignore them in the main update loop?
-                // Actually, if we generate a new one with the SAME ID, it might conflict or duplicate if we don't manage it.
-                // Strategy: "Growing" strips have a specific ID suffix. 
-                // We should probably filter them out of 'currentPlates' consideration for "lastStrip" finding
-                // AND rely on the fact that we return new strips here. 
-                // But wait, 'currentPlates' comes from State. 
-                // If we don't delete the old "growing" strip from the State, it will persist!
-                // The logical place to delete "temporary" strips is in the Update loop or here by returning a "Delete" instruction?
-                // Since we can't delete from here easily without complex return types,
-                // Let's use a standard ID for the growing strip: `${plate.id}_${rift.id}_growing`
-                // And in `update`, we can filtering them out? 
-                // Or easier: Just treat them as normal strips but with a definition that allows `generateRiftCrust` to overwrite them?
-                // Actually, if we use a stable ID, and `newPlates` in `update` merges by ID... 
-                // `main.ts` or `SimulationEngine.update` usually REPLACES the array.
-                // If the old one is in `newPlates` (from State), we have duplicates.
 
-                // FIX: In `update()`, we should filter out old growing strips before calling this.
-                // BUT, since we are here, let's assume `update()` handles cleanup or we use a unique trick.
-                // Let's assume the "Growing" strip is just a strip with `birthTime = infinity` or marked `isGrowing`.
-                // For now, let's calculate the "Permanent" strips first.
+                // Growing strips (_growing suffix) are cleaned up by update() each frame.
+                // We only consider permanent strips for backfill scheduling.
 
                 const getLatestPermanentStrip = () => {
                     const candidates = [...currentPlates, ...newStrips]
