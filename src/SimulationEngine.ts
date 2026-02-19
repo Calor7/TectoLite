@@ -678,7 +678,7 @@ export class SimulationEngine {
                                 const angle = toRad(pole.rate * duration);
                                 transforms.push({ axis, angle });
                             }
-                            prevTime = segmentEnd;
+                            prevTime = Math.max(prevTime, segmentEnd);
                         }
                     }
                 }
