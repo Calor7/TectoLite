@@ -196,6 +196,10 @@ export class SimulationEngine {
 
             // --- AUTOMATED OCEANIC CRUST "EXPANDING RIFT" GENERATION ---
             if (globalOptions.enableExpandingRifts !== false) { // Default true
+                // CLEANUP: Remove old "growing" strips (active gap fillers) so they can be regenerated fresh
+                // This prevents duplicates and ensures the active strip always matches current rift position
+                newPlates = newPlates.filter(p => !p.slabId?.endsWith('_growing'));
+
                 const interval = globalOptions.oceanicGenerationInterval || 25;
                 const riftSlabs = this.generateRiftCrust(newPlates, newTime, interval);
                 if (riftSlabs.length > 0) {
@@ -316,7 +320,9 @@ export class SimulationEngine {
 
         for (const rift of riftPlates) {
             const axisPoly = rift.polygons[0];
-            if (!axisPoly || !axisPoly.points || axisPoly.points.length < 2) continue;
+            if (!axisPoly || !axisPoly.points || axisPoly.points.length < 2) {
+                continue;
+            }
 
             const axisPoints = this.interpolatePoints(axisPoly.points, RIFT_GRID_RESOLUTION);
             const riftBirth = rift.birthTime;
@@ -333,150 +339,243 @@ export class SimulationEngine {
                 p.type !== 'oceanic' // Only attach to the main lithosphere/continent parent
             );
 
+
             for (const plate of connectedPlates) {
                 if (plate.riftGenerationMode === 'never') continue;
                 if (plate.deathTime !== null && currentTime > plate.deathTime) continue;
+                // Note: The caller (update loop) handles removing the old 'growing' strips
+                // by filtering out any strip with ID ending in '_growing' before this frame.
+                // This ensures the gap is always filled dynamically
+                // We do this by filtering them out of CANDIDATES for "lastStrip", 
+                // but we also need to know they exist to delete/ignore them in the main update loop?
+                // Actually, if we generate a new one with the SAME ID, it might conflict or duplicate if we don't manage it.
+                // Strategy: "Growing" strips have a specific ID suffix. 
+                // We should probably filter them out of 'currentPlates' consideration for "lastStrip" finding
+                // AND rely on the fact that we return new strips here. 
+                // But wait, 'currentPlates' comes from State. 
+                // If we don't delete the old "growing" strip from the State, it will persist!
+                // The logical place to delete "temporary" strips is in the Update loop or here by returning a "Delete" instruction?
+                // Since we can't delete from here easily without complex return types,
+                // Let's use a standard ID for the growing strip: `${plate.id}_${rift.id}_growing`
+                // And in `update`, we can filtering them out? 
+                // Or easier: Just treat them as normal strips but with a definition that allows `generateRiftCrust` to overwrite them?
+                // Actually, if we use a stable ID, and `newPlates` in `update` merges by ID... 
+                // `main.ts` or `SimulationEngine.update` usually REPLACES the array.
+                // If the old one is in `newPlates` (from State), we have duplicates.
 
-                // 3. Determine Generation Timing
-                const step = Math.floor(currentTime / interval);
-                const generationTime = step * interval;
+                // FIX: In `update()`, we should filter out old growing strips before calling this.
+                // BUT, since we are here, let's assume `update()` handles cleanup or we use a unique trick.
+                // Let's assume the "Growing" strip is just a strip with `birthTime = infinity` or marked `isGrowing`.
+                // For now, let's calculate the "Permanent" strips first.
 
-                // Don't generate before rift birth (or AT birth - wait for first interval)
-                if (generationTime <= riftBirth) continue;
+                const getLatestPermanentStrip = () => {
+                    const candidates = [...currentPlates, ...newStrips]
+                        .filter(p =>
+                            p.type === 'oceanic' &&
+                            p.linkedToPlateId === plate.id &&
+                            p.connectedRiftIds.includes(rift.id) &&
+                            !p.slabId?.endsWith('_growing') // Ignore growing strips
+                        )
+                        .sort((a, b) => b.birthTime - a.birthTime);
+                    return candidates[0];
+                };
 
-                // Unique ID for this specific strip
-                const stripId = `${plate.id}_strip_${generationTime}`;
+                let lastStrip = getLatestPermanentStrip();
+                let nextGenerationTime = lastStrip
+                    ? lastStrip.birthTime + interval
+                    : (Math.floor(riftBirth / interval) + 1) * interval;
 
-                // Check if this strip already exists (in currentPlates or newStrips)
-                const alreadyExists = currentPlates.some(p => p.slabId === stripId) || newStrips.some(p => p.slabId === stripId);
+                // Loop to backfill Permanent Strips
+                while (nextGenerationTime <= currentTime) {
+                    const generationTime = nextGenerationTime;
+                    nextGenerationTime += interval; // Advance for next loop
 
-                if (alreadyExists) continue;
+                    if (generationTime <= riftBirth) continue;
+                    const stripId = `${plate.id}_strip_${generationTime}`;
 
-                // --- Generate Geometry ---
-                // Stitching Logic: Connect Current Rift Axis to Previous Strip's Rift-Facing Edge
+                    // Double check existence
+                    const alreadyExists = currentPlates.some(p => p.slabId === stripId) || newStrips.some(p => p.slabId === stripId);
+                    if (alreadyExists) continue;
 
-                // 1. Find the Last Generated Strip for this Plate and Rift
-                const lastStrip = currentPlates
-                    .filter(p =>
-                        p.type === 'oceanic' &&
-                        p.linkedToPlateId === plate.id &&
-                        p.connectedRiftIds.includes(rift.id) &&
-                        p.birthTime < generationTime // Must be older
-                    )
-                    .sort((a, b) => b.birthTime - a.birthTime)[0];
+                    // --- Generate Geometry (Permanent) ---
+                    // 1. Get History of Rift at Generation Time
+                    const riftAtBirth = this.calculatePlateAtTime(rift, generationTime, currentPlates);
+                    const birthAxisPoly = riftAtBirth.polygons[0];
+                    if (!birthAxisPoly || !birthAxisPoly.points) continue;
 
-                let oldEdge: Coordinate[] = [];
-                let isStitched = false;
+                    const birthAxisPoints = this.interpolatePoints(birthAxisPoly.points, RIFT_GRID_RESOLUTION);
 
-                if (lastStrip && lastStrip.polygons.length > 0) {
-                    // Extract the rift-facing edge from the last strip
-                    // We rely on 'riftEdgeIndices' being preserved
-                    const lastPoly = lastStrip.polygons[0];
-                    if (lastPoly.riftEdgeIndices && lastPoly.riftEdgeIndices.length > 0) {
-                        // Get the points corresponding to the indices
-                        // Note: The indices might not be contiguous if the polygon wrapped, but usually they are for strips.
-                        // We need them in order.
-                        const edgePoints = lastPoly.riftEdgeIndices.map(i => lastPoly.points[i]);
+                    // Stitching
+                    lastStrip = getLatestPermanentStrip(); // Update reference
 
-                        // Verification: Are strictly 2 points? If so, might need more for curve?
-                        // If it's a split strip, it might have few points.
-                        // We trust the geometry.
+                    let oldEdge: Coordinate[] = [];
+                    let isStitched = false;
 
-                        // Directionality Check:
-                        // The 'Young Edge' (Rift) and 'Old Edge' (Previous Strip) must be ordered correctly to form a ring.
-                        // Standard: Young Edge (CW) -> Old Edge (CW reversed).
-                        // If we take the 'Last Strip Rift Edge', it was the 'Young' edge of that strip.
-                        // It was oriented CW. 
-                        // To be the 'Old' edge of the NEW strip, it effectively needs to be the "outer" boundary.
-                        // We can use it directly? 
+                    if (lastStrip && lastStrip.polygons.length > 0) {
+                        const lastPoly = lastStrip.polygons[0];
+                        if (lastPoly.riftEdgeIndices && lastPoly.riftEdgeIndices.length > 0) {
+                            const edgePoints = lastPoly.riftEdgeIndices.map(i => lastPoly.points[i]);
+                            oldEdge = edgePoints;
+                            isStitched = true;
+                        }
+                    }
 
-                        // Let's use the 'oldEdge' variable.
-                        // The 'lastStrip' edge is WHERE the new strip should START (on the ocean side).
-                        // Wait. The 'New Strip' fills the gap between 'Rift' and 'Last Strip'.
-                        // So 'Old Edge' of New Strip = 'Rift Edge' of Last Strip.
+                    // Fallback Projection from Historical Rift
+                    if (!isStitched) {
+                        const effectiveOldBirth = Math.max(riftBirth, generationTime - interval);
+                        const riftAtOldBirth = this.calculatePlateAtTime(rift, effectiveOldBirth, currentPlates);
+                        const oldBirthAxisPoly = riftAtOldBirth.polygons[0];
 
-                        oldEdge = edgePoints;
-                        isStitched = true;
+                        if (oldBirthAxisPoly && oldBirthAxisPoly.points) {
+                            const oldBirthAxisPoints = this.interpolatePoints(oldBirthAxisPoly.points, RIFT_GRID_RESOLUTION);
+                            oldEdge = oldBirthAxisPoints.map(p => {
+                                return this.applyPlateMotion(p, plate, effectiveOldBirth, currentTime, currentPlates);
+                            });
+                        }
+                    }
+
+                    // Young Edge: Historical Rift -> Current Time
+                    const youngEdge = birthAxisPoints.map(p => {
+                        return this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates);
+                    });
+
+                    if (youngEdge.length < 2 || oldEdge.length < 2) continue;
+
+                    const ring = [...youngEdge, ...[...oldEdge].reverse(), youngEdge[0]];
+                    const newRiftEdgeIndices = Array.from({ length: youngEdge.length }, (_, i) => i);
+
+                    const gridFeatures: Feature[] = [];
+                    // Add isochron feature (visual line)
+                    gridFeatures.push({
+                        id: generateId(),
+                        type: 'flowline',
+                        position: oldEdge[0],
+                        rotation: 0,
+                        scale: 1,
+                        properties: { kind: 'isochron', age: generationTime },
+                        trail: [...oldEdge],
+                        generatedAt: generationTime,
+                        originalPosition: oldEdge[0]
+                    });
+
+                    newStrips.push({
+                        id: generateId(),
+                        slabId: stripId,
+                        name: `${plate.name} Crust ${generationTime}Ma`,
+                        type: 'oceanic',
+                        crustType: 'oceanic',
+                        color: this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6',
+                        zIndex: (plate.zIndex || 0) - 1,
+                        birthTime: generationTime,
+                        deathTime: null,
+                        visible: true,
+                        locked: false,
+                        center: calculateSphericalCentroid(ring),
+                        polygons: [{
+                            id: generateId(),
+                            points: ring,
+                            closed: true,
+                            riftEdgeIndices: newRiftEdgeIndices
+                        }],
+                        features: gridFeatures,
+                        initialPolygons: [{
+                            id: generateId(),
+                            points: ring,
+                            closed: true,
+                            riftEdgeIndices: newRiftEdgeIndices
+                        }],
+                        initialFeatures: gridFeatures,
+                        motion: createDefaultMotion(),
+                        motionKeyframes: [],
+                        events: [],
+                        linkedToPlateId: plate.id,
+                        linkTime: generationTime,
+                        connectedRiftIds: [rift.id],
+                        connectedRiftId: rift.id
+                    });
+                } // End Backfill Loop
+
+                // --- 4. Generate "Growing" Strip (Gap Filler) ---
+                // Fills the space from lastPermanentStrip to Current Rift
+                // Always regenerated.
+
+                lastStrip = getLatestPermanentStrip();
+                // If we have a last strip, and there is a gap > epsilon
+                // Or if we have NO last strip but we are past rift birth (first growth)
+
+                const lastStripTime = lastStrip ? lastStrip.birthTime : riftBirth;
+
+                if (currentTime > lastStripTime + 0.1) {
+                    const growingId = `${plate.id}_${rift.id}_growing`;
+
+                    // Old Edge: From Last Strip (or Rift Start)
+                    let oldEdge: Coordinate[] = [];
+                    let isStitched = false;
+
+                    if (lastStrip && lastStrip.polygons.length > 0) {
+                        const lastPoly = lastStrip.polygons[0];
+                        if (lastPoly.riftEdgeIndices && lastPoly.riftEdgeIndices.length > 0) {
+                            oldEdge = lastPoly.riftEdgeIndices.map(i => lastPoly.points[i]);
+                            isStitched = true;
+                        }
+                    }
+
+                    if (!isStitched) {
+                        // Project from Rift Birth (if first strip) or Last Strip Time
+                        const effectiveOldBirth = lastStripTime;
+                        const riftAtOld = this.calculatePlateAtTime(rift, effectiveOldBirth, currentPlates);
+                        const oldAxisPoly = riftAtOld.polygons[0];
+                        if (oldAxisPoly && oldAxisPoly.points) {
+                            const oldPoints = this.interpolatePoints(oldAxisPoly.points, RIFT_GRID_RESOLUTION);
+                            oldEdge = oldPoints.map(p => this.applyPlateMotion(p, plate, effectiveOldBirth, currentTime, currentPlates));
+                        }
+                    }
+
+                    // Young Edge: The Current Rift (No motion projection needed as it's "Now")
+                    // Actually, Rift might be moving, so we just take current axisPoints (which are at currentTime)
+                    const youngEdge = axisPoints.map(p => [...p] as Coordinate);
+
+                    if (youngEdge.length >= 2 && oldEdge.length >= 2) {
+                        const ring = [...youngEdge, ...[...oldEdge].reverse(), youngEdge[0]];
+                        const newRiftEdgeIndices = Array.from({ length: youngEdge.length }, (_, i) => i);
+
+                        newStrips.push({
+                            id: generateId(),
+                            slabId: growingId,
+                            name: `${plate.name} Active Crust`,
+                            type: 'oceanic',
+                            crustType: 'oceanic',
+                            color: '#60a5fa', // Slight lighter blue for active?
+                            zIndex: (plate.zIndex || 0) - 1,
+                            birthTime: currentTime, // Functionally "Now"
+                            deathTime: null,
+                            visible: true,
+                            locked: false,
+                            center: calculateSphericalCentroid(ring),
+                            polygons: [{
+                                id: generateId(),
+                                points: ring,
+                                closed: true,
+                                riftEdgeIndices: newRiftEdgeIndices
+                            }],
+                            features: [], // No isochrons on active strip
+                            initialPolygons: [{
+                                id: generateId(),
+                                points: ring,
+                                closed: true,
+                                riftEdgeIndices: newRiftEdgeIndices
+                            }],
+                            initialFeatures: [],
+                            motion: createDefaultMotion(),
+                            motionKeyframes: [],
+                            events: [],
+                            linkedToPlateId: plate.id,
+                            linkTime: currentTime,
+                            connectedRiftIds: [rift.id],
+                            connectedRiftId: rift.id
+                        });
                     }
                 }
-
-                // Fallback: If no last strip or stitching failed, Project form Rift (Standard Accretion)
-                if (!isStitched) {
-                    // Edge 2 (Old): Projected towards the plate
-                    oldEdge = axisPoints.map(p => {
-                        return this.applyPlateMotion(p, plate, currentTime, currentTime + interval, currentPlates);
-                    });
-                }
-
-                // Edge 1 (Young): The Rift Axis (Current)
-                // We clone the points to avoid reference issues
-                const youngEdge = axisPoints.map(p => [...p] as Coordinate);
-
-                // Validate Geometry:
-                // Ensure we have enough points and no zero-area polygons
-                if (youngEdge.length < 2 || oldEdge.length < 2) continue;
-
-                // Construct Polygon
-                // Ring: Young Edge (Start->End) -> Old Edge (End->Start) -> Close
-                // We need to reverse oldEdge to maintain winding order (assuming generic ring construction)
-                const ring = [...youngEdge, ...[...oldEdge].reverse(), youngEdge[0]];
-
-                // Define Rift Edge Indices for the NEW strip (so it can be stitched to next time)
-                // It corresponds to the 'youngEdge' part: indices 0 to youngEdge.length - 1
-                const newRiftEdgeIndices = Array.from({ length: youngEdge.length }, (_, i) => i);
-
-                // Create Features (Isochron / Grid)
-                // We draw the isochron on the 'Old Edge' (the edge touching the previous crust/continent)
-                // or 'Young Edge'? Isochron usually marks the age. 
-                // If this strip represents 10Ma-0Ma, the 10Ma line is the Old Edge.
-                const gridFeatures: Feature[] = [];
-                gridFeatures.push({
-                    id: generateId(),
-                    type: 'flowline',
-                    position: oldEdge[0],
-                    rotation: 0,
-                    scale: 1,
-                    properties: { kind: 'isochron', age: generationTime },
-                    trail: [...oldEdge],
-                    generatedAt: generationTime,
-                    originalPosition: oldEdge[0]
-                });
-
-                newStrips.push({
-                    id: generateId(),
-                    slabId: stripId,
-                    name: `${plate.name} Crust ${generationTime}Ma`,
-                    type: 'oceanic',
-                    crustType: 'oceanic',
-                    color: this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6',
-                    zIndex: (plate.zIndex || 0) - 1,
-                    birthTime: generationTime,
-                    deathTime: null,
-                    visible: true,
-                    locked: false, // Strips move with parent
-                    center: calculateSphericalCentroid(ring),
-                    polygons: [{
-                        id: generateId(),
-                        points: ring,
-                        closed: true,
-                        riftEdgeIndices: newRiftEdgeIndices // STORE INDICES FOR NEXT STITCH
-                    }],
-                    features: gridFeatures,
-                    initialPolygons: [{
-                        id: generateId(),
-                        points: ring,
-                        closed: true,
-                        riftEdgeIndices: newRiftEdgeIndices
-                    }],
-                    initialFeatures: gridFeatures,
-                    motion: createDefaultMotion(), // Motion is inherited!
-                    motionKeyframes: [],
-                    events: [],
-                    linkedToPlateId: plate.id, // THE KEY: Attach to continent
-                    linkTime: generationTime,  // Attach NOW
-                    connectedRiftIds: [rift.id],   // Keep track of origin
-                    connectedRiftId: rift.id
-                });
             }
         }
         return newStrips;
@@ -595,6 +694,7 @@ export class SimulationEngine {
                             }
 
                             const duration = segmentEnd - Math.max(kf.time, prevTime);
+
                             if (duration > 0) {
                                 const angle = toRad(pole.rate * duration);
                                 transforms.push({ axis, angle });
@@ -608,6 +708,9 @@ export class SimulationEngine {
         };
 
         const parentTransform = getAccumulatedParentTransform(plate, time, new Set());
+
+
+
 
         // Inheritance of Features
         let inheritedFeatures: Feature[] = [];

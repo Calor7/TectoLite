@@ -1456,12 +1456,26 @@ class TectoLiteApp {
     }
 
     private applySpeedToSelected(rate: number): void {
-        _applySpeed(rate, this.state.world.selectedPlateId, this.state.world.plates, {
-            updatePropertiesPanel: () => this.updatePropertiesPanel(),
-            updateSpeedInputs: () => this.updateSpeedInputsFromSelected(),
-            render: () => this.canvasManager?.render(),
-            pushState: () => this.pushState()
-        });
+        // Fix: Use addMotionKeyframe to ensure history preservation and oceanic crust pruning
+        // instead of effectively bypassing it with helper utilities that mutate state directly.
+        const plateId = this.state.world.selectedPlateId;
+        if (!plateId) {
+            alert('Please select a plate first.');
+            return;
+        }
+
+        const plate = this.state.world.plates.find(p => p.id === plateId);
+        if (plate) {
+            this.pushState(); // Save state for undo
+            const currentPole = plate.motion.eulerPole;
+            // Apply new rate
+            this.addMotionKeyframe(plate.id, { ...currentPole, rate: rate });
+
+            // Update UI
+            this.updatePropertiesPanel();
+            this.updateSpeedInputsFromSelected();
+            this.canvasManager?.render();
+        }
     }
 
     private convertCmYrToDegMa(cmPerYr: number): number {
@@ -3311,13 +3325,21 @@ class TectoLiteApp {
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
 
-        // If keyframe exists at exactly currentTime, update it.
-        // Otherwise insert new one.
-        // Simplifying assumption: We usually work with the single active keyframe for MVP
-        // checking if we have keyframes...
+        // --- 1. Identify Affected Plates (Current & Children) ---
+        // We need to know which plates are downstream of this motion change
+        // so we can invalidate their generated crust.
+        const getDescendants = (pid: string, allPlates: TectonicPlate[]): string[] => {
+            const children = allPlates.filter(p => p.linkedToPlateId === pid);
+            let descendants = children.map(c => c.id);
+            children.forEach(c => {
+                descendants = [...descendants, ...getDescendants(c.id, allPlates)];
+            });
+            return descendants;
+        };
 
-        // For now, simple update of 'motion' property (which mimics having a keyframe)
-        // AND adding to keyframes array if we support it.
+        const descendantIds = getDescendants(plateId, this.state.world.plates);
+        const affectedPlateIds = new Set([plateId, ...descendantIds]);
+
 
         const plates = this.state.world.plates.map(p => {
             let processedPlate = p;
@@ -3325,8 +3347,9 @@ class TectoLiteApp {
             // 1. Apply Motion Change if this is the target plate
             if (p.id === plateId) {
                 const updated = { ...p };
+                const oldMotion = { ...p.motion }; // Capture old motion
 
-                // Update Motion
+                // Update Motion to NEW values
                 updated.motion = {
                     ...p.motion,
                     eulerPole: {
@@ -3338,18 +3361,36 @@ class TectoLiteApp {
                 };
 
                 // Add/Update Keyframe
-                // Creating a keyframe at modification time ensures that if a linked child's
-                // motion parameters change, the snapshot captures the current position,
-                // preventing teleportation when the new parameters take effect
+                const currentKeyframes = p.motionKeyframes || [];
+
+                // HISTORICAL INTEGRITY:
+                // If we are adding a keyframe at T > Birth, and there are NO prior keyframes,
+                // we must "bake" the old motion as the base motion from Birth -> T.
+                // Otherwise, the new 'updated.motion' will retrospectively apply to T=0, rewriting history.
+                let newKeyframes = [...currentKeyframes];
+
+                const hasPriorKeyframe = currentKeyframes.some(k => k.time < currentTime);
+                if (!hasPriorKeyframe && currentTime > p.birthTime) {
+                    newKeyframes.push({
+                        time: p.birthTime,
+                        eulerPole: oldMotion.eulerPole, // Use OLD motion for the past
+                        snapshotPolygons: p.initialPolygons || p.polygons, // Best guess for past state
+                        snapshotFeatures: p.initialFeatures || p.features
+                    });
+                }
+
+                // Now add the NEW keyframe at Current Time
                 const newKeyframe: MotionKeyframe = {
                     time: currentTime,
-                    eulerPole: updated.motion.eulerPole,
+                    eulerPole: updated.motion.eulerPole, // Use NEW motion for the future
                     snapshotPolygons: p.polygons,
                     snapshotFeatures: p.features
                 };
 
-                const otherKeyframes = (p.motionKeyframes || []).filter(k => Math.abs(k.time - currentTime) > 0.001);
-                updated.motionKeyframes = [...otherKeyframes, newKeyframe].sort((a, b) => a.time - b.time);
+                // Remove any existing keyframe exactly at current time to replace it
+                newKeyframes = newKeyframes.filter(k => Math.abs(k.time - currentTime) > 0.001);
+                newKeyframes.push(newKeyframe);
+                updated.motionKeyframes = newKeyframes.sort((a, b) => a.time - b.time);
 
                 // Record motion change event for Actions timeline
                 const existingEvents = updated.events || [];
@@ -3368,14 +3409,26 @@ class TectoLiteApp {
                 processedPlate = updated;
             }
 
-            // 2. TIMELINE INTEGRITY: Prune "Future" Orogeny strokes
-            // When history is changed (motion keyframe added/modified), any Orogeny strokes 
-            // generated in the future of the current time are now invalid results of a previous timeline.
-            // We must prune them to avoid "ghosts" of interactions that may no longer happen.
+            // 2. TIMELINE INTEGRITY: Prune "Future" Oceanic Crust
+            // If this plate is oceanic AND linked to one of the affected plates (e.g. it was generated by them)
+            // AND it was born AT OR AFTER the current time, it is now invalid "future history".
+            // It must be deleted so the simulation can regenerate it correctly with the new motion.
 
+            // Check if this plate should be deleted
+            const isOceanic = processedPlate.type === 'oceanic';
+            // Use >= to include the plate currently being born/active at this exact timestep
+            const isFuture = processedPlate.birthTime >= currentTime;
+
+            if (isOceanic && isFuture) {
+                // Check if linked to an affected plate (directly or indirectly)
+                // Note: 'linkedToPlateId' usually points to the continent it accreted to.
+                if (processedPlate.linkedToPlateId && affectedPlateIds.has(processedPlate.linkedToPlateId)) {
+                    return null; // DELETE THIS PLATE
+                }
+            }
 
             return processedPlate;
-        });
+        }).filter(p => p !== null) as TectonicPlate[];  // Filter out the nulls
 
         this.state = {
             ...this.state,
