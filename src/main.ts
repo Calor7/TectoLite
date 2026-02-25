@@ -55,6 +55,7 @@ import {
     type ModalOptions
 } from './ui/ModalSystem';
 import { getAppHTML } from './ui/AppTemplate';
+import { TutorialOverlay } from './ui/TutorialOverlay';
 
 
 
@@ -1429,6 +1430,10 @@ class TectoLiteApp {
 
         document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
             this.toggleTheme();
+        });
+
+        document.getElementById('btn-tutorial-help')?.addEventListener('click', () => {
+            TutorialOverlay.toggle();
         });
     }
 

@@ -43,6 +43,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     </h1>
                     <div class="header-actions">
             <!-- Projection Selector Moved to Sidebar -->
+            <button id="btn-tutorial-help" class="btn" title="Show Tutorial" style="background-color: var(--accent-danger); color: white; font-weight: bold; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; padding: 0;">
+                ?
+            </button>
             
             <!-- Retro Status Info Box -->
             <div id="retro-status-box" class="retro-status-box" style="display: none;">

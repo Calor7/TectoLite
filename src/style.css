@@ -1124,3 +1124,66 @@ body {
   font-weight: bold;
   background: rgba(59, 130, 246, 0.1);
 }
+
+/* --- Tutorial Overlay Styles --- */
+#tutorial-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.7);
+  z-index: 10000; /* Must be above everything */
+  pointer-events: auto; /* Catch clicks */
+}
+
+.tutorial-highlight {
+  border: 2px solid var(--accent-danger);
+  border-radius: 4px;
+  box-shadow: 0 0 10px rgba(248, 81, 73, 0.5), inset 0 0 10px rgba(248, 81, 73, 0.3);
+  pointer-events: none; /* Let clicks pass through to the dark overlay */
+  animation: pulse-border 2s infinite;
+}
+
+@keyframes pulse-border {
+  0% { border-color: rgba(248, 81, 73, 0.8); box-shadow: 0 0 10px rgba(248, 81, 73, 0.5); }
+  50% { border-color: rgba(248, 81, 73, 1); box-shadow: 0 0 15px rgba(248, 81, 73, 0.8); }
+  100% { border-color: rgba(248, 81, 73, 0.8); box-shadow: 0 0 10px rgba(248, 81, 73, 0.5); }
+}
+
+.tutorial-tooltip {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  max-width: 250px;
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto; /* Allow clicking links inside */
+}
+
+/* Base style for elements that have a secondary tooltip */
+.help-link {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  cursor: help;
+  font-weight: 600;
+  transition: color 0.15s ease;
+}
+
+.help-link:hover {
+  color: var(--accent-success);
+}
+
+.tutorial-nested-tooltip {
+  background: var(--bg-elevated);
+  border-color: var(--accent-primary);
+  max-width: 200px;
+  font-size: 11px;
+  z-index: 10001; /* Above normal tooltips */
+  padding: var(--space-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
