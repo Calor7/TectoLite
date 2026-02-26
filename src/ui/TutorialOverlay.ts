@@ -1,4 +1,5 @@
 import { TutorialDictionary } from './TutorialDictionary';
+import manualContent from './TutorialManual.html?raw';
 
 interface TooltipBox {
     el: HTMLElement;
@@ -18,7 +19,6 @@ export class TutorialOverlay {
     private static overlayElement: HTMLElement | null = null;
     private static svgElement: SVGSVGElement | null = null;
     private static resizeListener: () => void;
-    private static mutationObserver: MutationObserver | null = null;
     private static keydownListener: (e: KeyboardEvent) => void;
 
     /**
@@ -83,7 +83,7 @@ export class TutorialOverlay {
         this.svgElement.style.left = '0';
         this.svgElement.style.width = '100vw';
         this.svgElement.style.height = '100vh';
-        this.svgElement.style.zIndex = '1'; // Behind tooltips, but above the dark bg
+        this.svgElement.style.zIndex = '2'; // Behind tooltips, above manual
         this.svgElement.style.pointerEvents = 'none';
 
         // Define a glowing filter for lines
@@ -118,6 +118,8 @@ export class TutorialOverlay {
      * Hides the overlay and cleans up.
      */
     public static hide(): void {
+        this.hideDynamicTooltip();
+
         if (this.overlayElement) {
             this.overlayElement.remove();
             this.overlayElement = null;
@@ -136,12 +138,11 @@ export class TutorialOverlay {
     }
 
     /**
-     * Scans the DOM for elements matching dictionary keys and renders highlights + lines.
+     * Scans the DOM for elements matching dictionary keys and renders highlights with hover logic.
      */
     private static scanAndRender(): void {
         if (!this.overlayElement) return;
 
-        // Clear existing highlights and tooltips (skip the SVG itself)
         Array.from(this.overlayElement.children).forEach(child => {
             if (child.tagName !== 'svg') {
                 child.remove();
@@ -149,7 +150,6 @@ export class TutorialOverlay {
         });
 
         if (this.svgElement) {
-            // Clear existing lines but keep defs
             const defs = this.svgElement.querySelector('defs');
             this.svgElement.innerHTML = '';
             if (defs) this.svgElement.appendChild(defs);
@@ -158,22 +158,16 @@ export class TutorialOverlay {
         const canvasContainer = document.querySelector('.canvas-container') as HTMLElement;
         const rawRect = canvasContainer ? canvasContainer.getBoundingClientRect() : document.body.getBoundingClientRect();
 
-        // 0. Define strict constraints to stay inside canvas and visible viewport
-        const clampMargin = 20;
-        const cRect = {
-            left: Math.max(clampMargin, rawRect.left + clampMargin),
-            top: Math.max(clampMargin, Math.max(60, rawRect.top + clampMargin)), // Avoid overlapping the header
-            right: Math.min(window.innerWidth - clampMargin, rawRect.right - clampMargin),
-            bottom: Math.min(window.innerHeight - clampMargin, rawRect.bottom - clampMargin),
-            width: 0,
-            height: 0
-        };
-        cRect.width = cRect.right - cRect.left;
-        cRect.height = cRect.bottom - cRect.top;
+        const manualDiv = document.createElement('div');
+        manualDiv.classList.add('tutorial-general-manual');
+        manualDiv.innerHTML = manualContent;
+        manualDiv.style.left = `${rawRect.left}px`;
+        manualDiv.style.top = `${rawRect.top}px`;
+        manualDiv.style.width = `${rawRect.width}px`;
+        manualDiv.style.height = `${rawRect.height}px`;
 
-        const boxes: TooltipBox[] = [];
+        this.overlayElement.appendChild(manualDiv);
 
-        // 1. First Pass: Create highlights and measure tooltips
         for (const [selector, entry] of Object.entries(TutorialDictionary)) {
             const elements = document.querySelectorAll(selector);
 
@@ -181,203 +175,91 @@ export class TutorialOverlay {
                 const htmlEl = el as HTMLElement;
 
                 if (this.isElementVisible(htmlEl)) {
-                    // Draw highlight
-                    this.renderHighlightBox(htmlEl);
-
-                    const targetRect = htmlEl.getBoundingClientRect();
-
-                    // Create tooltip cleanly in DOM but hidden to measure it
-                    const tooltipContainer = document.createElement('div');
-                    tooltipContainer.classList.add('tutorial-tooltip-container');
-                    tooltipContainer.setAttribute('data-entry-key', selector);
-                    tooltipContainer.style.position = 'absolute';
-                    tooltipContainer.style.visibility = 'hidden';
-                    tooltipContainer.style.zIndex = '2'; // Above lines
-
-                    const tooltipText = document.createElement('div');
-                    tooltipText.classList.add('tutorial-tooltip');
-                    tooltipText.innerHTML = (entry as any).text;
-
-                    tooltipContainer.appendChild(tooltipText);
-                    this.overlayElement!.appendChild(tooltipContainer);
-
-                    const tRect = tooltipContainer.getBoundingClientRect();
-                    const w = tRect.width;
-                    const h = tRect.height;
-
-                    // Determine which canvas edge it belongs to
-                    let group: 'left' | 'right' | 'top' | 'bottom' = 'left';
-                    const targetCenterX = targetRect.left + (targetRect.width / 2);
-                    const targetCenterY = targetRect.top + (targetRect.height / 2);
-
-                    if (targetCenterX < cRect.left) group = 'left';
-                    else if (targetCenterX > cRect.right) group = 'right';
-                    else if (targetCenterY < cRect.top) group = 'top';
-                    else group = 'bottom'; // Defaults
-
-                    // Initial ideal position based on group
-                    let idealX = 0, idealY = 0;
-                    const padding = 20;
-
-                    if (group === 'left') {
-                        idealX = cRect.left + padding;
-                        idealY = targetRect.top;
-                    } else if (group === 'right') {
-                        idealX = cRect.right - w - padding;
-                        idealY = targetRect.top;
-                    } else if (group === 'top') {
-                        idealY = cRect.top + padding;
-                        idealX = targetCenterX - (w / 2);
-                    } else if (group === 'bottom') {
-                        idealY = cRect.bottom - h - padding;
-                        idealX = targetCenterX - (w / 2);
-                    }
-
-                    boxes.push({
-                        el: htmlEl,
-                        entryKey: selector,
-                        entry: entry,
-                        targetRect,
-                        w, h,
-                        idealX, idealY,
-                        group,
-                        tooltipEl: tooltipContainer
-                    });
+                    this.renderHighlightBox(htmlEl, entry, selector);
                 }
             });
         }
+    }
 
-        // 2. Prevent Overlaps (Simple Packing)
-        this.resolveOverlaps(boxes, cRect);
+    private static activeTooltipBox: TooltipBox | null = null;
 
-        // 3. Final Placement & Drawing Lines
-        for (const box of boxes) {
-            // Absolute hard-clamp to guarantee it never escapes the canvas/screen borders
-            box.idealX = Math.max(cRect.left, Math.min(box.idealX, cRect.right - box.w));
-            box.idealY = Math.max(cRect.top, Math.min(box.idealY, cRect.bottom - box.h));
+    private static hideDynamicTooltip(): void {
+        if (this.activeTooltipBox) {
+            this.activeTooltipBox.tooltipEl.remove();
+            this.activeTooltipBox = null;
+        }
 
-            box.tooltipEl.style.visibility = 'visible';
-            box.tooltipEl.style.left = `${box.idealX}px`;
-            box.tooltipEl.style.top = `${box.idealY}px`;
-
-            this.drawConnectionLine(box);
+        if (this.svgElement) {
+            const defs = this.svgElement.querySelector('defs');
+            this.svgElement.innerHTML = '';
+            if (defs) this.svgElement.appendChild(defs);
         }
     }
 
-    /**
-     * Adjusts positions to prevent tooltips from overlapping within their groups.
-     */
-    private static resolveOverlaps(boxes: TooltipBox[], cRect: { left: number, right: number, top: number, bottom: number }): void {
-        const padding = 15;
+    private static showDynamicTooltip(targetEl: HTMLElement, entry: any, entryKey: string): void {
+        if (!this.overlayElement) return;
 
-        // Process Vertical groups (Left and Right)
-        const vGroups = ['left', 'right'];
-        for (const g of vGroups) {
-            const groupBoxes = boxes.filter(b => b.group === g).sort((a, b) => a.idealY - b.idealY);
-            if (groupBoxes.length === 0) continue;
+        this.hideDynamicTooltip();
 
-            let currentY = cRect.top + padding;
-            for (const box of groupBoxes) {
-                if (box.idealY < currentY) {
-                    box.idealY = currentY;
-                }
-                currentY = box.idealY + box.h + padding;
+        const tooltipContainer = document.createElement('div');
+        tooltipContainer.classList.add('tutorial-tooltip-container');
+        tooltipContainer.setAttribute('data-entry-key', entryKey);
+        tooltipContainer.style.position = 'absolute';
+        tooltipContainer.style.visibility = 'hidden';
+        tooltipContainer.style.zIndex = '4'; // Above everything else
+
+        const tooltipText = document.createElement('div');
+        tooltipText.classList.add('tutorial-tooltip');
+        tooltipText.innerHTML = entry.text;
+
+        tooltipContainer.appendChild(tooltipText);
+        this.overlayElement.appendChild(tooltipContainer);
+
+        const targetRect = targetEl.getBoundingClientRect();
+
+        requestAnimationFrame(() => {
+            const tRect = tooltipContainer.getBoundingClientRect();
+            const w = tRect.width;
+            const h = tRect.height;
+
+            const screenCenterX = window.innerWidth / 2;
+            const targetCenterX = targetRect.left + (targetRect.width / 2);
+            const targetCenterY = targetRect.top + (targetRect.height / 2);
+
+            let idealX = 0;
+            let group: 'left' | 'right' | 'top' | 'bottom' = 'left';
+            const padding = 30;
+
+            if (targetCenterX < screenCenterX) {
+                idealX = targetRect.right + padding;
+                group = 'left';
+            } else {
+                idealX = targetRect.left - w - padding;
+                group = 'right';
             }
 
-            // If the bottom one went off screen, pack them upwards
-            const lastBox = groupBoxes[groupBoxes.length - 1];
-            if (lastBox && (lastBox.idealY + lastBox.h) > (cRect.bottom - padding)) {
-                let currentBottomY = cRect.bottom - padding;
-                for (let i = groupBoxes.length - 1; i >= 0; i--) {
-                    const box = groupBoxes[i];
-                    if (box.idealY + box.h > currentBottomY) {
-                        box.idealY = currentBottomY - box.h;
-                    }
-                    currentBottomY = box.idealY - padding;
-                }
-            }
-        }
+            let idealY = targetCenterY - (h / 2);
 
-        // Process Horizontal groups (Top and Bottom)
-        const hGroups = ['top', 'bottom'];
-        for (const g of hGroups) {
-            const groupBoxes = boxes.filter(b => b.group === g).sort((a, b) => a.idealX - b.idealX);
-            if (groupBoxes.length === 0) continue;
+            idealX = Math.max(10, Math.min(idealX, window.innerWidth - w - 10));
+            idealY = Math.max(60, Math.min(idealY, window.innerHeight - h - 10));
 
-            let currentX = cRect.left + padding;
-            for (const box of groupBoxes) {
-                if (box.idealX < currentX) {
-                    box.idealX = currentX;
-                }
-                currentX = box.idealX + box.w + padding;
-            }
+            tooltipContainer.style.visibility = 'visible';
+            tooltipContainer.style.left = `${idealX}px`;
+            tooltipContainer.style.top = `${idealY}px`;
 
-            const lastBox = groupBoxes[groupBoxes.length - 1];
-            if (lastBox && (lastBox.idealX + lastBox.w) > (cRect.right - padding)) {
-                let currentRightX = cRect.right - padding;
-                for (let i = groupBoxes.length - 1; i >= 0; i--) {
-                    const box = groupBoxes[i];
-                    if (box.idealX + box.w > currentRightX) {
-                        box.idealX = currentRightX - box.w;
-                    }
-                    currentRightX = box.idealX - padding;
-                }
-            }
-        }
-
-        // --- 2D Cross-Group Overlap Resolution ---
-        // Run a simple relaxation loop to push intersecting bounding boxes apart
-        for (let iter = 0; iter < 10; iter++) {
-            let overlapsFound = false;
-            for (let i = 0; i < boxes.length; i++) {
-                for (let j = i + 1; j < boxes.length; j++) {
-                    const b1 = boxes[i];
-                    const b2 = boxes[j];
-
-                    const r1 = { left: b1.idealX, right: b1.idealX + b1.w, top: b1.idealY, bottom: b1.idealY + b1.h };
-                    const r2 = { left: b2.idealX, right: b2.idealX + b2.w, top: b2.idealY, bottom: b2.idealY + b2.h };
-
-                    if (r1.left < r2.right + padding && r1.right + padding > r2.left &&
-                        r1.top < r2.bottom + padding && r1.bottom + padding > r2.top) {
-
-                        overlapsFound = true;
-
-                        // Calculate overlap depths in all 4 directions
-                        const overlapX1 = (r1.right + padding) - r2.left; // b1 pushes left, b2 pushes right
-                        const overlapX2 = (r2.right + padding) - r1.left; // b2 pushes left, b1 pushes right
-                        const overlapY1 = (r1.bottom + padding) - r2.top; // b1 pushes up, b2 pushes down
-                        const overlapY2 = (r2.bottom + padding) - r1.top; // b2 pushes up, b1 pushes down
-
-                        // Find the smallest overlap to resolve
-                        const minOverlap = Math.min(overlapX1, overlapX2, overlapY1, overlapY2);
-
-                        // Push boxes away from each other
-                        const pushBox = (box: TooltipBox, dx: number, dy: number) => {
-                            box.idealX += dx;
-                            box.idealY += dy;
-                            // Pre-clamp to avoid pushing them permanently off-canvas during relaxation
-                            box.idealX = Math.max(cRect.left, Math.min(box.idealX, cRect.right - box.w));
-                            box.idealY = Math.max(cRect.top, Math.min(box.idealY, cRect.bottom - box.h));
-                        };
-
-                        if (minOverlap === overlapX1) {
-                            pushBox(b1, -minOverlap / 2, 0);
-                            pushBox(b2, minOverlap / 2, 0);
-                        } else if (minOverlap === overlapX2) {
-                            pushBox(b1, minOverlap / 2, 0);
-                            pushBox(b2, -minOverlap / 2, 0);
-                        } else if (minOverlap === overlapY1) {
-                            pushBox(b1, 0, -minOverlap / 2);
-                            pushBox(b2, 0, minOverlap / 2);
-                        } else if (minOverlap === overlapY2) {
-                            pushBox(b1, 0, minOverlap / 2);
-                            pushBox(b2, 0, -minOverlap / 2);
-                        }
-                    }
-                }
-            }
-            if (!overlapsFound) break;
-        }
+            const box: TooltipBox = {
+                el: targetEl,
+                entryKey,
+                entry,
+                targetRect,
+                w, h,
+                idealX, idealY,
+                group,
+                tooltipEl: tooltipContainer
+            };
+            this.activeTooltipBox = box;
+            this.drawConnectionLine(box);
+        });
     }
 
     /**
@@ -456,9 +338,9 @@ export class TutorialOverlay {
     }
 
     /**
-     * Renders just a highlight box (border) over a specific element.
+     * Renders a highlight box (border) over a specific element and attaches hover events.
      */
-    private static renderHighlightBox(targetEl: HTMLElement): void {
+    private static renderHighlightBox(targetEl: HTMLElement, entry: any, entryKey: string): void {
         const rect = targetEl.getBoundingClientRect();
         const highlightBox = document.createElement('div');
         highlightBox.classList.add('tutorial-highlight');
@@ -467,7 +349,15 @@ export class TutorialOverlay {
         highlightBox.style.top = `${rect.top - 4}px`;
         highlightBox.style.width = `${rect.width + 8}px`;
         highlightBox.style.height = `${rect.height + 8}px`;
-        highlightBox.style.zIndex = '1';
+        highlightBox.style.zIndex = '3';
+
+        highlightBox.addEventListener('mouseenter', () => {
+            this.showDynamicTooltip(targetEl, entry, entryKey);
+        });
+
+        highlightBox.addEventListener('mouseleave', () => {
+            this.hideDynamicTooltip();
+        });
 
         this.overlayElement?.appendChild(highlightBox);
     }
@@ -490,7 +380,7 @@ export class TutorialOverlay {
         nestedTooltip.classList.add('tutorial-tooltip', 'tutorial-nested-tooltip');
         nestedTooltip.innerHTML = nestedText;
         nestedTooltip.style.position = 'absolute';
-        nestedTooltip.style.zIndex = '3'; // Above normal tooltips
+        nestedTooltip.style.zIndex = '5'; // Above normal tooltips
 
         this.overlayElement?.appendChild(nestedTooltip);
 
