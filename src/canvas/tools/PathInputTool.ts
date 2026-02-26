@@ -8,6 +8,14 @@ export class PathInputTool implements InputTool {
     private isDrawing: boolean = false;
     private mouseGeo: Coordinate | null = null;
 
+    // Configurable modes
+    public isLineMode: boolean = false;
+    public snappingEnabled: boolean = false;
+
+    // Snapping: external provider for candidate vertices
+    private snapCandidateProvider: (() => Coordinate[]) | null = null;
+    private snapThresholdPx: number = 12; // pixel distance to snap
+
     constructor(
         private projectionManager: ProjectionManager,
         private onUpdate: (count: number) => void,
@@ -16,6 +24,11 @@ export class PathInputTool implements InputTool {
         public minPoints: number = 2,
         private previewColor: string = '#ffffff'
     ) { }
+
+    /** Set a function that provides all candidate vertices for snapping */
+    setSnapCandidateProvider(provider: () => Coordinate[]): void {
+        this.snapCandidateProvider = provider;
+    }
 
     activate() {
         this.points = [];
@@ -27,7 +40,44 @@ export class PathInputTool implements InputTool {
         this.cancel();
     }
 
-    onMouseDown(e: MouseEvent, geo: Coordinate | null, _screenPos: { x: number, y: number }): void {
+    /** Configure for polygon mode (closed shape, min 3 points) */
+    configurePolygonMode(): void {
+        this.isLineMode = false;
+        this.minPoints = 3;
+        this.previewColor = '#ffffff';
+    }
+
+    /** Configure for line mode (open path, min 2 points) */
+    configureLineMode(): void {
+        this.isLineMode = true;
+        this.minPoints = 2;
+        this.previewColor = '#ff8844';
+    }
+
+    /** Try to snap a geo coordinate to the nearest existing vertex */
+    private trySnap(geo: Coordinate, screenPos: { x: number; y: number }): Coordinate {
+        if (!this.snappingEnabled || !this.snapCandidateProvider) return geo;
+
+        const candidates = this.snapCandidateProvider();
+        let bestDist = this.snapThresholdPx;
+        let bestCandidate: Coordinate | null = null;
+
+        for (const candidate of candidates) {
+            const screen = this.projectionManager.project(candidate);
+            if (!screen) continue;
+            const dx = screen[0] - screenPos.x;
+            const dy = screen[1] - screenPos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestCandidate = candidate;
+            }
+        }
+
+        return bestCandidate || geo;
+    }
+
+    onMouseDown(e: MouseEvent, geo: Coordinate | null, screenPos: { x: number, y: number }): void {
         if (!geo) return;
 
         // Right Click: Remove last point (Undo) - User Request
@@ -42,18 +92,25 @@ export class PathInputTool implements InputTool {
 
         if (e.button !== 0) return;
 
+        // Apply snapping
+        const snapped = this.trySnap(geo, screenPos);
+
         if (!this.isDrawing) {
             this.isDrawing = true;
-            this.points = [geo];
+            this.points = [snapped];
         } else {
-            this.points.push(geo);
+            this.points.push(snapped);
         }
 
         this.onUpdate(this.points.length);
     }
 
     onMouseMove(_e: MouseEvent, geo: Coordinate | null, _screenPos: { x: number, y: number }): void {
-        this.mouseGeo = geo;
+        if (geo && this.snappingEnabled) {
+            this.mouseGeo = this.trySnap(geo, _screenPos);
+        } else {
+            this.mouseGeo = geo;
+        }
     }
 
     onMouseUp(_e: MouseEvent, _geo: Coordinate | null, _screenPos: { x: number, y: number }): void {
@@ -107,6 +164,11 @@ export class PathInputTool implements InputTool {
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
 
+        // Use dashed line for line mode to visually distinguish from polygon
+        if (this.isLineMode) {
+            ctx.setLineDash([8, 4]);
+        }
+
         let totalDistance = 0;
 
         // Draw established segments
@@ -158,6 +220,19 @@ export class PathInputTool implements InputTool {
                     ctx.beginPath();
                     ctx.arc(screen[0], screen[1], 4, 0, Math.PI * 2);
                     ctx.fill();
+                }
+            }
+
+            // Draw snap indicator on cursor if snapping is active
+            if (this.snappingEnabled && this.mouseGeo) {
+                const cursorScreen = this.projectionManager.project(this.mouseGeo);
+                if (cursorScreen) {
+                    ctx.strokeStyle = '#00ff88';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([]);
+                    ctx.beginPath();
+                    ctx.arc(cursorScreen[0], cursorScreen[1], 8, 0, Math.PI * 2);
+                    ctx.stroke();
                 }
             }
         }

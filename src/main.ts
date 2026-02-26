@@ -15,7 +15,9 @@ import {
     Coordinate,
     ProjectionType,
     MotionKeyframe,
-    MantlePlume
+    MantlePlume,
+    DrawMode,
+    LineType
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -568,6 +570,34 @@ class TectoLiteApp {
             });
         });
 
+        // Draw Mode Controls
+        document.querySelectorAll('input[name="draw-mode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                const mode = (e.target as HTMLInputElement).value as DrawMode;
+                this.state.drawMode = mode;
+                this.canvasManager?.setDrawMode(mode);
+
+                const lineTypeGroup = document.getElementById('line-type-group');
+                if (lineTypeGroup) lineTypeGroup.style.display = mode === 'line' ? 'block' : 'none';
+
+                // Update hint
+                this.updateHint(
+                    mode === 'line'
+                        ? "[Line Mode] Click to place points. Double-click/Enter to finish. Press D to switch to Polygon."
+                        : "[Polygon Mode] Click to place points. Double-click/Enter to finish. Press D to switch to Line."
+                );
+            });
+        });
+
+        document.getElementById('draw-line-type')?.addEventListener('change', (e) => {
+            this.state.activeLineType = (e.target as HTMLSelectElement).value as LineType;
+        });
+
+        document.getElementById('check-vertex-snap')?.addEventListener('change', (e) => {
+            const enabled = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.setSnappingEnabled(enabled);
+        });
+
         // Projection
         document.getElementById('projection-select')?.addEventListener('change', (e) => {
             const val = (e.target as HTMLSelectElement).value as ProjectionType;
@@ -1097,7 +1127,14 @@ class TectoLiteApp {
             switch (e.key.toLowerCase()) {
                 case 'v': this.setActiveTool('select'); break;
                 case 'h': this.setActiveTool('pan'); break; // Now Rotate/Pan
-                case 'd': this.setActiveTool('draw'); break;
+                case 'd':
+                    if (this.state.activeTool === 'draw') {
+                        // Cycle draw mode when already in draw tool
+                        this.cycleDrawMode();
+                    } else {
+                        this.setActiveTool('draw');
+                    }
+                    break;
                 case 'e': this.setActiveTool('edit'); break;
                 case 'f': this.setActiveTool('feature'); break;
                 case 's': this.setActiveTool('split'); break;
@@ -1601,6 +1638,11 @@ class TectoLiteApp {
             featureSelector.style.display = tool === 'feature' ? 'block' : 'none';
         }
 
+        const drawModeControls = document.getElementById('draw-mode-controls');
+        if (drawModeControls) {
+            drawModeControls.style.display = tool === 'draw' ? 'flex' : 'none';
+        }
+
         const paintControls = document.getElementById('paint-controls');
         if (paintControls) {
             paintControls.style.display = tool === 'paint' ? 'flex' : 'none';
@@ -1629,7 +1671,9 @@ class TectoLiteApp {
                 hintText = "Select a plate, then drag edges to add points or drag vertices to move.";
                 break;
             case 'draw':
-                hintText = "Click anywhere to start drawing a new plate.";
+                hintText = this.state.drawMode === 'line'
+                    ? "[Line Mode] Click to place points. Double-click/Enter to finish. Press D to switch to Polygon."
+                    : "[Polygon Mode] Click to place points. Double-click/Enter to finish. Press D to switch to Line.";
                 break;
             case 'feature':
                 hintText = "Pick a feature type from Tool Options.";
@@ -1697,62 +1741,133 @@ class TectoLiteApp {
     }
 
     private handleDrawComplete(points: Coordinate[]): void {
-        if (points.length < 3) return;
-
-
+        const isLineMode = this.state.drawMode === 'line';
+        const minRequired = isLineMode ? 2 : 3;
+        if (points.length < minRequired) return;
 
         this.pushState(); // Save state for undo
-
-        // Create Polygon
-        const polygon: Polygon = {
-            id: generateId(),
-            points: points,
-            closed: true
-        };
 
         const currentTime = this.state.world.currentTime;
         const defaultMotion = createDefaultMotion();
 
-        // Create initial keyframe at birth time
-        const initialKeyframe: MotionKeyframe = {
-            time: currentTime,
-            eulerPole: { ...defaultMotion.eulerPole },
-            snapshotPolygons: [polygon],
-            snapshotFeatures: []
-        };
+        if (isLineMode) {
+            // --- LINE MODE: Create a line plate ---
+            const polygon: Polygon = {
+                id: generateId(),
+                points: points,
+                closed: false
+            };
 
-        const plate: TectonicPlate = {
-            id: generateId(),
-            name: `Plate ${this.state.world.plates.length + 1}`,
-            color: getNextPlateColor(this.state.world.plates),
-            polygons: [polygon],
-            features: [],
-            motion: defaultMotion,
-            motionKeyframes: [initialKeyframe],
-            visible: true,
-            locked: false,
-            center: points[0],
-            events: [],
-            birthTime: currentTime,
-            deathTime: null,
-            connectedRiftIds: [],
-            initialPolygons: [polygon],
-            initialFeatures: []
-        };
+            const initialKeyframe: MotionKeyframe = {
+                time: currentTime,
+                eulerPole: { ...defaultMotion.eulerPole },
+                snapshotPolygons: [polygon],
+                snapshotFeatures: []
+            };
 
-        // Immutable state update
-        this.state = {
-            ...this.state,
-            world: {
-                ...this.state.world,
-                plates: [...this.state.world.plates, plate],
-                selectedPlateId: plate.id
-            }
-        };
+            const lineType = this.state.activeLineType;
+            const typeLabel = lineType.charAt(0).toUpperCase() + lineType.slice(1);
+
+            const plate: TectonicPlate = {
+                id: generateId(),
+                name: `${typeLabel} ${this.state.world.plates.filter(p => p.type === 'rift').length + 1}`,
+                color: '#ff8844',
+                polygons: [polygon],
+                features: [],
+                motion: defaultMotion,
+                motionKeyframes: [initialKeyframe],
+                visible: true,
+                locked: false,
+                center: points[0],
+                events: [],
+                birthTime: currentTime,
+                deathTime: null,
+                connectedRiftIds: [],
+                initialPolygons: [polygon],
+                initialFeatures: [],
+                type: 'rift',
+                lineType: lineType
+            };
+
+            this.state = {
+                ...this.state,
+                world: {
+                    ...this.state.world,
+                    plates: [...this.state.world.plates, plate],
+                    selectedPlateId: plate.id
+                }
+            };
+        } else {
+            // --- POLYGON MODE: Create a standard plate ---
+            const polygon: Polygon = {
+                id: generateId(),
+                points: points,
+                closed: true
+            };
+
+            const initialKeyframe: MotionKeyframe = {
+                time: currentTime,
+                eulerPole: { ...defaultMotion.eulerPole },
+                snapshotPolygons: [polygon],
+                snapshotFeatures: []
+            };
+
+            const plate: TectonicPlate = {
+                id: generateId(),
+                name: `Plate ${this.state.world.plates.length + 1}`,
+                color: getNextPlateColor(this.state.world.plates),
+                polygons: [polygon],
+                features: [],
+                motion: defaultMotion,
+                motionKeyframes: [initialKeyframe],
+                visible: true,
+                locked: false,
+                center: points[0],
+                events: [],
+                birthTime: currentTime,
+                deathTime: null,
+                connectedRiftIds: [],
+                initialPolygons: [polygon],
+                initialFeatures: []
+            };
+
+            this.state = {
+                ...this.state,
+                world: {
+                    ...this.state.world,
+                    plates: [...this.state.world.plates, plate],
+                    selectedPlateId: plate.id
+                }
+            };
+        }
 
         this.updateUI();
         this.simulation?.setTime(this.state.world.currentTime);
         this.setActiveTool('select');
+    }
+
+    /** Cycle draw mode between polygon and line */
+    private cycleDrawMode(): void {
+        const newMode: DrawMode = this.state.drawMode === 'polygon' ? 'line' : 'polygon';
+        this.state.drawMode = newMode;
+        this.canvasManager?.setDrawMode(newMode);
+
+        // Update UI radio buttons
+        const polygonRadio = document.getElementById('draw-mode-polygon') as HTMLInputElement;
+        const lineRadio = document.getElementById('draw-mode-line') as HTMLInputElement;
+        if (polygonRadio) polygonRadio.checked = newMode === 'polygon';
+        if (lineRadio) lineRadio.checked = newMode === 'line';
+
+        // Show/hide line type dropdown
+        const lineTypeGroup = document.getElementById('line-type-group');
+        if (lineTypeGroup) lineTypeGroup.style.display = newMode === 'line' ? 'block' : 'none';
+
+        // Update hint
+        this.updateHint(
+            newMode === 'line'
+                ? "[Line Mode] Click to place points. Double-click/Enter to finish. Press D to switch to Polygon."
+                : "[Polygon Mode] Click to place points. Double-click/Enter to finish. Press D to switch to Line."
+        );
     }
 
 
@@ -2761,6 +2876,18 @@ class TectoLiteApp {
         <input type="color" id="prop-color" class="property-color" value="${plate.color}">
       </div>
       
+      ${isRift ? `
+      <div class="property-group">
+        <label class="property-label">Line Type</label>
+        <select id="prop-line-type" class="property-input">
+            <option value="rift" ${plate.lineType === 'rift' || !plate.lineType ? 'selected' : ''}>Rift</option>
+            <option value="trench" ${plate.lineType === 'trench' ? 'selected' : ''}>Trench</option>
+            <option value="fault" ${plate.lineType === 'fault' ? 'selected' : ''}>Fault</option>
+            <option value="custom" ${plate.lineType === 'custom' ? 'selected' : ''}>Custom</option>
+        </select>
+      </div>
+      ` : ''}
+
       ${!isRift ? `
       <div class="property-group">
         <label class="property-label">Rift Generation</label>
@@ -2905,6 +3032,20 @@ class TectoLiteApp {
         document.getElementById('prop-color')?.addEventListener('change', (e) => {
             plate.color = (e.target as HTMLInputElement).value;
             this.updateExplorer();
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('prop-line-type')?.addEventListener('change', (e) => {
+            plate.lineType = (e.target as HTMLSelectElement).value as LineType;
+            const typeLabel = plate.lineType.charAt(0).toUpperCase() + plate.lineType.slice(1);
+            // Auto-update name if it still looks like a default name
+            const nameInput = document.getElementById('prop-name') as HTMLInputElement;
+            if (nameInput && /^(Rift|Trench|Fault|Custom) \d+$/.test(plate.name)) {
+                const num = plate.name.split(' ').pop();
+                plate.name = `${typeLabel} ${num}`;
+                nameInput.value = plate.name;
+                this.updateExplorer();
+            }
             this.canvasManager?.render();
         });
 

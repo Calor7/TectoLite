@@ -288,6 +288,10 @@ export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
   }
 ];
 
+export type LineType = 'rift' | 'trench' | 'fault' | 'custom';
+
+export type DrawMode = 'polygon' | 'line';
+
 export interface TectonicPlate {
   id: string;
   name: string;
@@ -325,6 +329,7 @@ export interface TectonicPlate {
 
   // Rift & Generation Properties
   type?: 'lithosphere' | 'oceanic' | 'rift'; // Default 'lithosphere'
+  lineType?: LineType; // Classification for line-type plates (rift, trench, fault, custom)
   linkType?: 'motion' | 'generation'; // Default 'motion'
   connectedRiftIds: string[]; // IDs of Rifts accumulating crust from this plate
   connectedRiftId?: string; // Deprecated: Kept for backward compatibility
@@ -446,6 +451,8 @@ export interface AppState {
   world: WorldState;
   activeTool: ToolType;
   activeFeatureType: FeatureType;
+  drawMode: DrawMode; // 'polygon' or 'line'
+  activeLineType: LineType; // Line sub-type when drawMode is 'line'
   viewport: Viewport;
 }
 
@@ -541,6 +548,8 @@ export function createDefaultAppState(): AppState {
     world: createDefaultWorldState(),
     activeTool: 'select',
     activeFeatureType: 'mountain',
+    drawMode: 'polygon',
+    activeLineType: 'rift',
     viewport: {
       width: width,
       height: height,

@@ -326,6 +326,31 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                  
                  <!-- Dynamic Controls Stack -->
 
+                 <!-- Draw Mode Controls (visible when Draw tool is active) -->
+                 <div id="draw-mode-controls" style="display: none; flex-direction: column; gap: 6px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px;">
+                     <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">Draw Mode</div>
+                     <div style="display: flex; gap: 8px; align-items: center;">
+                         <label style="font-size: 11px; display: flex; align-items: center; gap: 3px; cursor: pointer;">
+                             <input type="radio" name="draw-mode" id="draw-mode-polygon" value="polygon" checked> Polygon
+                         </label>
+                         <label style="font-size: 11px; display: flex; align-items: center; gap: 3px; cursor: pointer;">
+                             <input type="radio" name="draw-mode" id="draw-mode-line" value="line"> Line
+                         </label>
+                     </div>
+                     <div id="line-type-group" style="display: none;">
+                         <label style="font-size: 10px; color: var(--text-secondary);">Line Type</label>
+                         <select id="draw-line-type" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
+                             <option value="rift">Rift</option>
+                             <option value="trench">Trench</option>
+                             <option value="fault">Fault</option>
+                             <option value="custom">Custom</option>
+                         </select>
+                     </div>
+                     <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer; margin-top: 2px;">
+                         <input type="checkbox" id="check-vertex-snap"> Vertex Snap
+                         <span class="info-icon" data-tooltip="Snap to existing plate vertices while drawing">(i)</span>
+                     </label>
+                 </div>
 
                  <div id="split-controls" style="display: none; flex-direction:column; gap:4px;">
                      <div style="align-self: center; font-size: 11px; color: var(--text-secondary);">Confirm Split?</div>

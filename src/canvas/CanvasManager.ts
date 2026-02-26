@@ -88,6 +88,8 @@ export class CanvasManager {
             () => this.cancelDrawing(),
             3, '#ffffff'
         );
+        // Set up snap candidate provider: collects all plate polygon vertices
+        this.drawTool.setSnapCandidateProvider(() => this.getAllPlateVertices());
         this.tools.set('draw', this.drawTool);
 
         this.splitTool = new PathInputTool(
@@ -285,6 +287,38 @@ export class CanvasManager {
         this.motionMode = mode;
         this.motionGizmo.setMode(mode);
         this.render();
+    }
+
+    /** Switch draw tool between polygon and line modes */
+    public setDrawMode(mode: 'polygon' | 'line'): void {
+        if (mode === 'line') {
+            this.drawTool.configureLineMode();
+        } else {
+            this.drawTool.configurePolygonMode();
+        }
+    }
+
+    /** Toggle vertex snapping for the draw tool */
+    public setSnappingEnabled(enabled: boolean): void {
+        this.drawTool.snappingEnabled = enabled;
+    }
+
+    /** Collect all vertices from all visible plate polygons for snapping */
+    private getAllPlateVertices(): Coordinate[] {
+        const state = this.getState();
+        const vertices: Coordinate[] = [];
+        const currentTime = state.world.currentTime;
+        for (const plate of state.world.plates) {
+            if (plate.deathTime !== null && plate.deathTime <= currentTime) continue;
+            if (plate.birthTime > currentTime) continue;
+            if (!plate.visible) continue;
+            for (const poly of plate.polygons) {
+                for (const pt of poly.points) {
+                    vertices.push(pt);
+                }
+            }
+        }
+        return vertices;
     }
 
     public resizeCanvas(): void {
