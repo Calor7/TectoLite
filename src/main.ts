@@ -1828,7 +1828,12 @@ class TectoLiteApp {
                 deathTime: null,
                 connectedRiftIds: [],
                 initialPolygons: [polygon],
-                initialFeatures: []
+                initialFeatures: [],
+                polygonType: this.state.activePolygonType,
+                type: 'lithosphere',
+                density: this.state.activePolygonType === 'oceanic_plate' ? 3.0 : 2.7,
+                isOceanic: this.state.activePolygonType === 'oceanic_plate',
+                zIndex: this.state.activePolygonType === 'craton' ? 2 : (this.state.activePolygonType === 'island' ? 1 : 0)
             };
 
             this.state = {
@@ -1861,6 +1866,9 @@ class TectoLiteApp {
         // Show/hide line type dropdown
         const lineTypeGroup = document.getElementById('line-type-group');
         if (lineTypeGroup) lineTypeGroup.style.display = newMode === 'line' ? 'block' : 'none';
+
+        const polygonTypeGroup = document.getElementById('polygon-type-group');
+        if (polygonTypeGroup) polygonTypeGroup.style.display = newMode === 'polygon' ? 'block' : 'none';
 
         // Update hint
         this.updateHint(
@@ -2882,8 +2890,9 @@ class TectoLiteApp {
         <select id="prop-line-type" class="property-input">
             <option value="rift" ${plate.lineType === 'rift' || !plate.lineType ? 'selected' : ''}>Rift</option>
             <option value="trench" ${plate.lineType === 'trench' ? 'selected' : ''}>Trench</option>
-            <option value="fault" ${plate.lineType === 'fault' ? 'selected' : ''}>Fault</option>
-            <option value="custom" ${plate.lineType === 'custom' ? 'selected' : ''}>Custom</option>
+            <option value="fault" ${plate.lineType === 'fault' ? 'selected' : ''}>Fault / Transform</option>
+            <option value="suture" ${plate.lineType === 'suture' ? 'selected' : ''}>Suture Zone</option>
+            <option value="generic" ${plate.lineType === 'generic' ? 'selected' : ''}>Generic</option>
         </select>
       </div>
       ` : ''}
@@ -2899,17 +2908,21 @@ class TectoLiteApp {
       </div>
 
       <div class="property-group">
-        <label class="property-label">Crust Type</label>
-        <select id="prop-crust-type" class="property-input">
-            <option value="continental" ${plate.crustType === 'continental' ? 'selected' : ''}>Continental</option>
-            <option value="oceanic" ${plate.crustType === 'oceanic' ? 'selected' : ''}>Oceanic</option>
+        <label class="property-label">Polygon Type</label>
+        <select id="prop-polygon-type" class="property-input">
+            <option value="generic" ${plate.polygonType === 'generic' ? 'selected' : ''}>Generic</option>
+            <option value="continental_crust" ${plate.polygonType === 'continental_crust' ? 'selected' : ''}>Continental Crust</option>
+            <option value="island" ${plate.polygonType === 'island' ? 'selected' : ''}>Island</option>
+            <option value="continental_plate" ${plate.polygonType === 'continental_plate' ? 'selected' : ''}>Continental Plate</option>
+            <option value="oceanic_plate" ${plate.polygonType === 'oceanic_plate' ? 'selected' : ''}>Oceanic Plate</option>
+            <option value="craton" ${plate.polygonType === 'craton' ? 'selected' : ''}>Craton</option>
         </select>
       </div>
       ` : ''}
 
       <div class="property-group">
         <label class="property-label">Density (g/cm³)</label>
-        <input type="number" id="prop-density" class="property-input" value="${plate.density || (plate.crustType === 'oceanic' ? 3.0 : 2.7)}" step="0.1">
+        <input type="number" id="prop-density" class="property-input" value="${plate.density || (plate.polygonType === 'oceanic_plate' ? 3.0 : 2.7)}" step="0.1">
       </div>
 
 
@@ -3049,17 +3062,19 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
-        document.getElementById('prop-crust-type')?.addEventListener('change', (e) => {
-            const val = (e.target as HTMLSelectElement).value as 'continental' | 'oceanic';
-            plate.crustType = val;
+        document.getElementById('prop-polygon-type')?.addEventListener('change', (e) => {
+            const val = (e.target as HTMLSelectElement).value as any;
+            plate.polygonType = val;
 
             // Auto-update density defaults
             const densityInput = document.getElementById('prop-density') as HTMLInputElement;
-            if (val === 'oceanic') {
+            if (val === 'oceanic_plate') {
                 plate.density = 3.0;
+                plate.isOceanic = true;
                 if (densityInput) densityInput.value = "3.0";
             } else {
                 plate.density = 2.7;
+                plate.isOceanic = false;
                 if (densityInput) densityInput.value = "2.7";
             }
             this.canvasManager?.render();

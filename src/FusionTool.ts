@@ -167,7 +167,7 @@ export function fusePlates(
         parentPlateIds: [plate1Id, plate2Id],
         initialPolygons: mergedPolygons,
         initialFeatures: combinedFeatures,
-        crustType: plate1.crustType === 'oceanic' && plate2.crustType === 'oceanic' ? 'oceanic' : 'continental',
+        polygonType: plate1.polygonType === 'oceanic_plate' && plate2.polygonType === 'oceanic_plate' ? 'oceanic_plate' : 'continental_plate',
         visible: true,
         locked: false,
         connectedRiftIds: [...new Set([...(plate1.connectedRiftIds || []), ...(plate2.connectedRiftIds || [])])]

@@ -442,7 +442,7 @@ export class SimulationEngine {
                         slabId: stripId,
                         name: `${plate.name} Crust ${generationTime}Ma`,
                         type: 'oceanic',
-                        crustType: 'oceanic',
+                        polygonType: 'oceanic_plate',
                         color: this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6',
                         zIndex: (plate.zIndex || 0) - 1,
                         birthTime: generationTime,
@@ -523,7 +523,7 @@ export class SimulationEngine {
                             slabId: growingId,
                             name: `${plate.name} Active Crust`,
                             type: 'oceanic',
-                            crustType: 'oceanic',
+                            polygonType: 'oceanic_plate',
                             color: '#60a5fa', // Slight lighter blue for active?
                             zIndex: (plate.zIndex || 0) - 1,
                             birthTime: currentTime, // Functionally "Now"

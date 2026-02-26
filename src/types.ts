@@ -119,7 +119,8 @@ export interface EventConsequence {
 export interface PlateSnapshot {
   id: string;
   name: string;
-  crustType: CrustType | undefined;
+  polygonType?: PolygonType;
+  color: string;
   velocity: number;                  // Relative velocity (cm/yr)
   age: number;                       // Plate age at event time (Ma since birth)
   area: number;                      // Approximate area (deg²)
@@ -288,7 +289,8 @@ export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
   }
 ];
 
-export type LineType = 'rift' | 'trench' | 'fault' | 'custom';
+export type LineType = 'rift' | 'trench' | 'fault' | 'suture' | 'generic';
+export type PolygonType = 'generic' | 'continental_crust' | 'island' | 'continental_plate' | 'oceanic_plate' | 'craton';
 
 export type DrawMode = 'polygon' | 'line';
 
@@ -305,7 +307,8 @@ export interface TectonicPlate {
   color: string;
 
   density?: number; // Optional custom density
-  crustType?: CrustType; // Type of crust
+  polygonType?: PolygonType; // Structure and composition
+  crustType?: undefined; // Deprecated: Type of crust
   isOceanic?: boolean;   // Explicit flag for oceanic crust (slab)
   age?: number;          // Creation time (Ma) for oceanic slabs
   generatedBy?: string;  // ID of the parent plate that generated this slab
@@ -427,7 +430,8 @@ export interface Boundary {
   plateIds: [string, string];
   velocity?: number; // Relative velocity magnitude
   overlapArea?: number; // Approximate overlap area in deg² (for fusion heuristics)
-  crustTypes?: [CrustType | undefined, CrustType | undefined]; // Crust types of each plate
+  polygonTypes?: [PolygonType | undefined, PolygonType | undefined]; // Polygon types of each plate
+  crustTypes?: undefined; // Deprecated
 }
 
 export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit' | 'paint';
@@ -453,6 +457,7 @@ export interface AppState {
   activeFeatureType: FeatureType;
   drawMode: DrawMode; // 'polygon' or 'line'
   activeLineType: LineType; // Line sub-type when drawMode is 'line'
+  activePolygonType: PolygonType; // Polygon sub-type when drawMode is 'polygon'
   viewport: Viewport;
 }
 
@@ -550,6 +555,7 @@ export function createDefaultAppState(): AppState {
     activeFeatureType: 'mountain',
     drawMode: 'polygon',
     activeLineType: 'rift',
+    activePolygonType: 'generic',
     viewport: {
       width: width,
       height: height,

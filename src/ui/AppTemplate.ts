@@ -342,8 +342,20 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                          <select id="draw-line-type" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
                              <option value="rift">Rift</option>
                              <option value="trench">Trench</option>
-                             <option value="fault">Fault</option>
-                             <option value="custom">Custom</option>
+                             <option value="fault">Fault / Transform</option>
+                             <option value="suture">Suture Zone</option>
+                             <option value="generic">Generic</option>
+                         </select>
+                     </div>
+                     <div id="polygon-type-group" style="display: block;">
+                         <label style="font-size: 10px; color: var(--text-secondary);">Polygon Type</label>
+                         <select id="draw-polygon-type" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
+                             <option value="generic">Generic</option>
+                             <option value="continental_crust">Continental Crust</option>
+                             <option value="island">Island</option>
+                             <option value="continental_plate">Continental Plate</option>
+                             <option value="oceanic_plate">Oceanic Plate</option>
+                             <option value="craton">Craton</option>
                          </select>
                      </div>
                      <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer; margin-top: 2px;">

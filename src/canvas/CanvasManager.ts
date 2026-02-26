@@ -608,8 +608,8 @@ export class CanvasManager {
         const sortedPlates = [...state.world.plates].sort((a, b) => {
             let zA = a.zIndex ?? 0;
             let zB = b.zIndex ?? 0;
-            if (a.crustType === 'continental') zA += 1;
-            if (b.crustType === 'continental') zB += 1;
+            if (a.polygonType === 'continental_plate' || a.polygonType === 'continental_crust' || a.polygonType === 'craton') zA += 1;
+            if (b.polygonType === 'continental_plate' || b.polygonType === 'continental_crust' || b.polygonType === 'craton') zB += 1;
             return zA - zB;
         });
 
@@ -948,7 +948,15 @@ export class CanvasManager {
                 if (geoArea(geojson) > 2 * Math.PI) geojson.geometry.coordinates[0].reverse();
                 this.ctx.beginPath();
                 path(geojson);
-                if (this.ctx.isPointInPath(mousePos.x, mousePos.y)) return { plateId: plate.id };
+                if (!poly.closed) {
+                    const originalLineWidth = this.ctx.lineWidth;
+                    this.ctx.lineWidth = 15; // wide enough to easily click
+                    const hit = this.ctx.isPointInStroke(mousePos.x, mousePos.y);
+                    this.ctx.lineWidth = originalLineWidth;
+                    if (hit) return { plateId: plate.id };
+                } else {
+                    if (this.ctx.isPointInPath(mousePos.x, mousePos.y)) return { plateId: plate.id };
+                }
             }
         }
         return null;

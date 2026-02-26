@@ -78,8 +78,8 @@ export class EventEffectsProcessor {
             .map(id => plateLookup.get(id))
             .filter((p): p is TectonicPlate => !!p);
 
-        const nonOceanic = candidates.filter(p => p.crustType !== 'oceanic').map(p => p.id);
-        const oceanic = candidates.filter(p => p.crustType === 'oceanic').map(p => p.id);
+        const nonOceanic = candidates.filter(p => p.polygonType !== 'oceanic_plate').map(p => p.id);
+        const oceanic = candidates.filter(p => p.polygonType === 'oceanic_plate').map(p => p.id);
 
         switch (consequenceType) {
             case 'trench':

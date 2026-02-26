@@ -30,7 +30,7 @@ export class EventSystem {
     // Track which plate pairs have active events at which times to avoid duplicates
     private processedInteractions: Map<string, { time: number; eventId: string }> = new Map();
 
-    constructor() {}
+    constructor() { }
 
     /**
      * Main update - detect new events from boundary changes
@@ -51,7 +51,7 @@ export class EventSystem {
 
         const currentTime = state.world.currentTime;
         const threshold = globalOptions.eventDetectionThreshold || 20;
-        
+
         let newState = { ...state };
         let newEvents = [...tectonicEvents];
         let newPendingEventId: string | null = null;
@@ -131,16 +131,16 @@ export class EventSystem {
         // Determine collision type for collisions
         let collisionType: 'continent-continent' | 'continent-ocean' | 'ocean-ocean' | undefined;
         if (eventType === 'collision') {
-            const isOcean1 = plate1.crustType === 'oceanic';
-            const isOcean2 = plate2.crustType === 'oceanic';
+            const isOcean1 = plate1.polygonType === 'oceanic_plate';
+            const isOcean2 = plate2.polygonType === 'oceanic_plate';
             if (!isOcean1 && !isOcean2) collisionType = 'continent-continent';
             else if (isOcean1 && isOcean2) collisionType = 'ocean-ocean';
             else collisionType = 'continent-ocean';
         }
 
         // Get consequence templates based on event type
-        const consequenceTemplates = eventType === 'collision' 
-            ? COLLISION_CONSEQUENCES 
+        const consequenceTemplates = eventType === 'collision'
+            ? COLLISION_CONSEQUENCES
             : RIFT_CONSEQUENCES;
 
         // Create consequences with unique IDs and parameter defaults scaled to event
@@ -196,7 +196,8 @@ export class EventSystem {
         return {
             id: plate.id,
             name: plate.name,
-            crustType: plate.crustType,
+            polygonType: plate.polygonType,
+            color: plate.color,
             velocity: velocity,
             age: currentTime - plate.birthTime,
             area: Math.round(area * 100) / 100,
@@ -258,7 +259,7 @@ export class EventSystem {
         if (currentTime - existing.time > 10) {
             return true;
         }
-        
+
         // For now, don't re-trigger events for same pair within 10Ma
         // Future: could compare overlap areas for significant changes
         return false;

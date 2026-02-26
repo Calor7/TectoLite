@@ -10,8 +10,8 @@ export class BoundarySystem {
         // Filter plates that are alive at the current time:
         // - Must be born (birthTime <= currentTime)
         // - Must not be dead yet (deathTime is null OR deathTime > currentTime)
-        const activePlates = plates.filter(p => 
-            p.birthTime <= currentTime && 
+        const activePlates = plates.filter(p =>
+            p.birthTime <= currentTime &&
             (p.deathTime === null || p.deathTime > currentTime)
         );
 
@@ -32,7 +32,7 @@ export class BoundarySystem {
 
                 const p1 = activePlates[i];
                 const p2 = activePlates[j];
-                
+
                 // Fast BBox Overlap Check
                 // If bounding boxes don't overlap, skip expensive polygon clipping
                 if (!this.bboxesOverlap(bboxes[i], bboxes[j])) continue;
@@ -55,7 +55,8 @@ export class BoundarySystem {
                         points: overlap.rings,
                         velocity: type.velocity,
                         overlapArea: overlap.area,
-                        crustTypes: [p1.crustType, p2.crustType]
+                        polygonTypes: [p1.polygonType, p2.polygonType],
+                        crustTypes: undefined // Deprecated
                     });
                 }
 
@@ -95,10 +96,10 @@ export class BoundarySystem {
 
         // Helper to run intersection check with offset
         const check = (offX: number) => {
-             const c2 = coords2.map(ring => ring.map(pt => [pt[0] + offX, pt[1]]));
-             try {
+            const c2 = coords2.map(ring => ring.map(pt => [pt[0] + offX, pt[1]]));
+            try {
                 return polygonClipping.intersection(coords1 as any, c2 as any);
-             } catch(e) { return []; }
+            } catch (e) { return []; }
         };
 
         // Check center, left (-360), and right (+360) to catch wrap-around neighbors
@@ -130,7 +131,7 @@ export class BoundarySystem {
                     }
                 }
                 area = Math.abs(area / 2);
-                
+
                 // Threshold: 0.2 deg² (approx 2500 km²)
                 if (area < 0.2) return;
 
@@ -140,21 +141,21 @@ export class BoundarySystem {
                 rings.push(ring.map((pt: [number, number]) => {
                     let lon = pt[0];
                     // Normalize lon
-                    while(lon > 180) lon -= 360;
-                    while(lon < -180) lon += 360;
+                    while (lon > 180) lon -= 360;
+                    while (lon < -180) lon += 360;
                     return [lon, pt[1]] as Coordinate;
                 }));
             }));
-            
+
             // Limit to top 5 largest rings
             if (rings.length > 5) {
-                rings.sort((a,b) => b.length - a.length);
+                rings.sort((a, b) => b.length - a.length);
                 rings = rings.slice(0, 5);
             }
 
             // Approximate center
             if (rings.length === 0 || rings[0].length === 0) return null;
-            const center = rings[0][Math.floor(rings[0].length/2)]; // Use a vertex as center approx
+            const center = rings[0][Math.floor(rings[0].length / 2)]; // Use a vertex as center approx
 
             return { rings, center, area: totalArea };
         }
@@ -164,7 +165,7 @@ export class BoundarySystem {
     private static getPlateBBox(p: TectonicPlate) {
         let minX = 180, maxX = -180, minY = 90, maxY = -90;
         let hasPoints = false;
-        
+
         for (const poly of p.polygons) {
             for (const pt of poly.points) {
                 if (pt[0] < minX) minX = pt[0];
@@ -174,9 +175,9 @@ export class BoundarySystem {
                 hasPoints = true;
             }
         }
-        
+
         // Edge case handling for wrapping? (Ignored for now, standard -180/180 check)
-        
+
         if (!hasPoints) return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
         // Expand slightly to catch edge cases
         return { minX: minX - 0.1, maxX: maxX + 0.1, minY: minY - 0.1, maxY: maxY + 0.1 };
@@ -222,7 +223,7 @@ export class BoundarySystem {
         const p1p2 = normalize(subtractVectors(pos2, pos1));
 
         const closingSpeed = dot(vRel, p1p2);
-        
+
         // Threshold Tuning:
         // 1 cm/yr ~= 0.09 deg/Ma ~= 0.0016 rad/Ma
         // Previous threshold 0.05 was ~30 cm/yr (Too high!)
