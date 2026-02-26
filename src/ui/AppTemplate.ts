@@ -321,7 +321,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             </div>
             
             <!-- 2. CONTEXT / OPTIONS GROUP -->
-            <div class="tool-group">
+            <div class="tool-group" style="flex: 1; min-height: 0;">
                  <h3 class="tool-group-title">Tool Options</h3>
                  
                  <!-- Dynamic Controls Stack -->
@@ -388,67 +388,60 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
 
 
-                 <!-- Motion Mode Specifics -->
-                 <div style="margin-top: 8px;">
-                    <label class="property-label" style="font-size:11px;">Interaction Mode <span class="info-icon" data-tooltip="Classic (Pole) vs Dragging">(i)</span></label>
-                    <select id="motion-mode-select" class="tool-select" style="width:100%;">
-                        <option value="classic">Classic (Fixed Pole)</option>
-                        <option value="dynamic_pole">Dynamic Direction</option>
-                        <option value="drag_target">Drag Landmass</option>
-                    </select>
+                 <!-- Select Mode Controls (visible when Select tool is active) -->
+                 <div id="select-mode-controls" style="display: none; flex-direction: column; gap: 6px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px; flex: 1; min-height: 0;">
+                     <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">Select Options</div>
+                     
+                     <div>
+                        <label class="property-label" style="font-size:11px;">Interaction Mode <span class="info-icon" data-tooltip="Classic (Pole) vs Dragging">(i)</span></label>
+                        <select id="motion-mode-select" class="tool-select" style="width:100%;">
+                            <option value="classic">Classic (Fixed Pole)</option>
+                            <option value="dynamic_pole">Dynamic Direction</option>
+                            <option value="drag_target">Drag Landmass</option>
+                        </select>
+                     </div>
+
+                     <hr class="property-divider" style="margin: 4px 0;">
+
+                     <div style="margin-bottom:6px;">
+                        <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Simulation Speed</div>
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <input type="number" id="speed-input-cm" class="property-input" step="0.05" style="width:70px;" disabled>
+                                <span style="font-size:10px; color:var(--text-secondary);">cm/yr</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <input type="number" id="speed-input-deg" class="property-input" step="0.05" style="width:70px;" disabled>
+                                <span style="font-size:10px; color:var(--text-secondary);">deg/Ma</span>
+                            </div>
+                        </div>
+                        <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
+                            <button id="btn-reposition-pole-north" class="btn btn-secondary" style="width:100%; font-size:10px;">Reposition Pole to North</button>
+                            <button id="btn-reposition-pole-south" class="btn btn-secondary" style="width:100%; font-size:10px;">Reposition Pole to South</button>
+                        </div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                      <div style="font-size:11px; font-weight:600; color:var(--text-secondary);">
+                        Speed Presets
+                      </div>
+                      <label style="display:flex; align-items:center; gap:4px; font-size:10px; cursor:pointer;" title="Switch between real-world examples and custom preset values">
+                          <input type="checkbox" id="check-use-custom-presets"> Custom 
+                      </label>
+                    </div>
+                    
+                    <!-- Real World List -->
+                    <div id="preset-container-realworld" style="display:flex; flex-direction:column; gap:6px; flex: 1; overflow-y:auto; padding-right:4px;">
+                        ${opts.realWorldPresetListHtml}
+                    </div>
+
+                    <!-- Custom List -->
+                    <div id="preset-container-custom" style="display:none; flex-direction:column; gap:6px; flex: 1; overflow-y:auto; padding-right:4px;">
+                        ${opts.customPresetListHtml}
+                    </div>
                  </div>
             </div>
 
             <!-- 3. VIEW GROUP -->
-
-            
-            <!-- 4. GLOBAL / SIMULATION GROUP -->
-            <div class="tool-group">
-                <h3 class="tool-group-title">Simulation</h3>
-                <hr class="property-divider" style="margin: 8px 0;">
-                <div style="margin-bottom:6px;">
-                    <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Speed</div>
-                    <div style="display:flex; flex-direction:column; gap:6px;">
-                        <div style="display:flex; align-items:center; gap:6px;">
-                            <input type="number" id="speed-input-cm" class="property-input" step="0.05" style="width:70px;" disabled>
-                            <span style="font-size:10px; color:var(--text-secondary);">cm/yr</span>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:6px;">
-                            <input type="number" id="speed-input-deg" class="property-input" step="0.05" style="width:70px;" disabled>
-                            <span style="font-size:10px; color:var(--text-secondary);">deg/Ma</span>
-                        </div>
-                    </div>
-                    <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
-                        <button id="btn-reposition-pole-north" class="btn btn-secondary" style="width:100%; font-size:10px;">Reposition Pole to North</button>
-                        <button id="btn-reposition-pole-south" class="btn btn-secondary" style="width:100%; font-size:10px;">Reposition Pole to South</button>
-                    </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                  <div style="font-size:11px; font-weight:600; color:var(--text-secondary);">
-                    Speed Presets
-                  </div>
-                  <label style="display:flex; align-items:center; gap:4px; font-size:10px; cursor:pointer;" title="Switch between real-world examples and custom preset values">
-                      <input type="checkbox" id="check-use-custom-presets"> Custom 
-                  </label>
-                </div>
-                
-                <!-- Real World List -->
-                <div id="preset-container-realworld" style="display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; padding-right:4px;">
-                    ${opts.realWorldPresetListHtml}
-                </div>
-
-                <!-- Custom List -->
-                <div id="preset-container-custom" style="display:none; flex-direction:column; gap:6px;">
-                    ${opts.customPresetListHtml}
-                </div>
-
-                <!-- Oceanic Crust Settings moved to Settings Modal -->
-                <div style="margin-top: 8px; border-top: 1px dotted var(--border-default); padding-top: 8px;">
-                     <div style="font-size:11px; color:var(--text-secondary); font-style:italic;">
-                        Use <span class="icon">⚙️</span> for global settings
-                     </div>
-                </div>
-            </div>
 
             <!-- 5. PLATES LIST -->
 

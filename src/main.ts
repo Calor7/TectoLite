@@ -1658,14 +1658,9 @@ class TectoLiteApp {
             }
         }
 
-        const motionContainer = document.getElementById('motion-mode-container');
-        if (motionContainer) {
-            motionContainer.style.display = tool === 'select' ? 'block' : 'none';
-        }
-
-        const simGroup = document.getElementById('simulation-group');
-        if (simGroup) {
-            simGroup.style.display = tool === 'select' ? 'flex' : 'none';
+        const selectControls = document.getElementById('select-mode-controls');
+        if (selectControls) {
+            selectControls.style.display = tool === 'select' ? 'flex' : 'none';
         }
 
         // Set initial Stage 1 hint/tooltip
