@@ -651,16 +651,9 @@ body {
   /* Take full width of sidebar container */
   border-left: none;
   /* Border moved to container */
-  flex: 1;
-  /* Take available space, but allow shrinking */
-  min-height: 200px;
 }
 
 .timeline-panel {
-  flex: 1;
-  /* Split specific height or flex? Let's say 40% height */
-  /* Actually, let's make it fixed proportion or flexible */
-  flex-grow: 1;
   border-top: 1px solid var(--border-default);
   background: var(--bg-surface);
   overflow-y: auto;

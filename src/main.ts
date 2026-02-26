@@ -1658,6 +1658,16 @@ class TectoLiteApp {
             }
         }
 
+        const motionContainer = document.getElementById('motion-mode-container');
+        if (motionContainer) {
+            motionContainer.style.display = tool === 'select' ? 'block' : 'none';
+        }
+
+        const simGroup = document.getElementById('simulation-group');
+        if (simGroup) {
+            simGroup.style.display = tool === 'select' ? 'flex' : 'none';
+        }
+
         // Set initial Stage 1 hint/tooltip
         let hintText = "";
         switch (tool) {
@@ -1994,6 +2004,13 @@ class TectoLiteApp {
 
         this.updateUI();
         this.canvasManager?.render();
+
+        const plate = plateId ? this.state.world.plates.find(p => p.id === plateId) : null;
+        if (plate) {
+            this.timelineSystem?.render(plate);
+        } else {
+            this.timelineSystem?.render(null);
+        }
     }
 
 
@@ -2857,10 +2874,23 @@ class TectoLiteApp {
             else titleEl.textContent = 'Plate Properties';
         }
 
-        if (!plate) {
-            content.innerHTML = '<p class="empty-message">Select a plate to edit properties</p>';
-            return;
+        const panel = document.getElementById('properties-panel');
+        const timelinePanel = document.getElementById('timeline-panel');
+
+        if (panel && timelinePanel) {
+            if (!plate) {
+                panel.style.display = 'none';
+                timelinePanel.style.flex = '1';
+                content.innerHTML = '';
+            } else {
+                panel.style.display = 'flex';
+                panel.style.flexDirection = 'column';
+                panel.style.flex = '2';
+                timelinePanel.style.flex = '1';
+            }
         }
+
+        if (!plate) return;
 
         const isRift = plate.type === 'rift';
 
