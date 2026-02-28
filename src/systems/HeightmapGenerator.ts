@@ -1,5 +1,5 @@
 import { AppState, ProjectionType } from '../types';
-import { geoPath, geoOrthographic, geoEquirectangular, geoMercator } from 'd3-geo';
+import { geoPath, geoOrthographic, geoEquirectangular, geoMercator, geoArea } from 'd3-geo';
 import * as geoProjection from 'd3-geo-projection';
 
 export interface HeightmapOptions {
@@ -23,7 +23,7 @@ export class HeightmapGenerator {
         // Setup Projection
         let projection: any;
         const projectionOptions = { type: "Sphere" } as any;
-        
+
         switch (options.projection) {
             case 'equirectangular':
                 projection = geoEquirectangular().fitSize([width, height], projectionOptions);
@@ -70,6 +70,8 @@ export class HeightmapGenerator {
                 if (ring.length > 0 && (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1])) {
                     ring.push(ring[0]);
                 }
+
+                if (geoArea(geojson as any) > 2 * Math.PI) geojson.coordinates[0].reverse();
 
                 path(geojson as any);
             });

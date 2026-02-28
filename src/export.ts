@@ -1,7 +1,7 @@
 // PNG Export functionality
 import { AppState, Feature, WorldState, ProjectionType } from './types';
 import { ProjectionManager } from './canvas/ProjectionManager';
-import { geoGraticule } from 'd3-geo';
+import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
 import {
     drawMountainIcon,
@@ -98,6 +98,8 @@ export function exportToPNG(
         // Polygons
         for (const polygon of plate.polygons) {
             const geojson = toGeoJSON(polygon);
+            if (geoArea(geojson) > 2 * Math.PI) geojson.geometry.coordinates[0].reverse();
+
             ctx.beginPath();
             path(geojson);
 
