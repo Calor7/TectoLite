@@ -424,15 +424,13 @@ export class SimulationEngine {
                     const newRiftEdgeIndices = Array.from({ length: youngEdge.length }, (_, i) => i);
 
                     const gridFeatures: Feature[] = [];
-                    // Add isochron feature (visual line)
                     gridFeatures.push({
                         id: generateId(),
-                        type: 'flowline',
+                        type: 'seafloor',
                         position: oldEdge[0],
                         rotation: 0,
                         scale: 1,
                         properties: { kind: 'isochron', age: generationTime },
-                        trail: [...oldEdge],
                         generatedAt: generationTime,
                         originalPosition: oldEdge[0]
                     });
@@ -995,36 +993,69 @@ export class SimulationEngine {
         this.setState(state => {
             const plates = state.world.plates;
             const currentTime = state.world.currentTime;
-            const fadeDuration = state.world.globalOptions.flowlineFadeDuration || 100;
-            const autoDelete = state.world.globalOptions.flowlineAutoDelete !== false;
 
             const newPlates = plates.map(plate => {
-                const flowlines = plate.features.filter(f => f.type === 'flowline');
-                if (flowlines.length === 0) return plate;
-                const newFeatures = plate.features.map(f => {
-                    if (f.type !== 'flowline') return f;
-                    const startTime = f.generatedAt || plate.birthTime;
-                    const origin = f.originalPosition || f.position;
+                if (!plate.showFlowlines) {
+                    return { ...plate, flowlinesTrailCache: undefined };
+                }
+
+                const duration = plate.flowlinesDuration || 50;
+                const startTime = Math.max(plate.birthTime, currentTime - duration);
+                const step = 5;
+
+                const allTrails: Coordinate[][] = [];
+
+                // Helper to generate a trail for a single coordinate
+                // We trace BACKWARDS in time from the current position. 
+                // However, `getPointPositionAtTime` usually takes an *original* position
+                // and a time `t` to find where it *was*.
+                // Wait, `getPointPositionAtTime` calculates the position of a point *originating* at `plate.birthTime` 
+                // (or rather, it assumes the `point` parameter is the spatial coordinate at `plate.birthTime`).
+                // To trace backwards from a current vertex, we actually need to know its position at `time t`.
+                // For a rigidly moving plate, calculating the history of a current vertex means applying the INVERSE motion.
+                // An easier way that works for TectoLite's current data model:
+                // Extract the "original" positions from `initialPolygons` and trace them FORWARD.
+
+                // Collect "source" points that need trails
+                // To keep the trails attached to the *current* vertices (which is what looks best),
+                // we'll trace the initial/original points from `startTime` to `currentTime`.
+
+                // Let's use the `initialPolygons` for the stable reference points of the plate's crust.
+                const sourcePoints: Coordinate[] = [];
+                if (plate.initialPolygons) {
+                    plate.initialPolygons.forEach(poly => {
+                        sourcePoints.push(...poly.points);
+                    });
+                } else {
+                    plate.polygons.forEach(poly => {
+                        sourcePoints.push(...poly.points);
+                    });
+                }
+
+                if (plate.lineType === 'rift' && plate.initialFeatures) {
+                    plate.initialFeatures.forEach(f => {
+                        if (f.properties?.path && Array.isArray(f.properties.path)) {
+                            sourcePoints.push(...f.properties.path);
+                        }
+                    });
+                }
+
+                // Generate trail for each source point
+                sourcePoints.forEach(origin => {
                     const points: Coordinate[] = [];
-                    const step = 5;
+                    // Trace forward from startTime to currentTime
                     for (let t = startTime; t <= currentTime; t += step) {
                         points.push(this.getPointPositionAtTime(origin, plate.id, t, plates));
                     }
-                    points.push(this.getPointPositionAtTime(origin, plate.id, currentTime, plates));
-
-                    // Calculate age and set death time if auto-delete is enabled
-                    const age = currentTime - startTime;
-                    let updatedFeature = { ...f, trail: points };
-
-                    // If auto-delete is enabled and flowline has reached full transparency, set death time
-                    if (autoDelete && age >= fadeDuration && !updatedFeature.deathTime) {
-                        updatedFeature = { ...updatedFeature, deathTime: currentTime };
+                    if (currentTime % step !== 0) {
+                        points.push(this.getPointPositionAtTime(origin, plate.id, currentTime, plates));
                     }
-
-                    return updatedFeature;
+                    allTrails.push(points);
                 });
-                return { ...plate, features: newFeatures };
+
+                return { ...plate, flowlinesTrailCache: allTrails };
             });
+
             return { ...state, world: { ...state.world, plates: newPlates } };
         });
     }

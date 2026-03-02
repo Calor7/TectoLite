@@ -1,4 +1,4 @@
-import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, TectonicEvent, ToolType } from '../types';
+import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, TectonicEvent, ToolType, TectonicPlate } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
@@ -605,6 +605,60 @@ export class CanvasManager {
     }
 
     private drawPlates(state: AppState, path: any) {
+        // HELPER: Draw flowlines for a given plate
+        const drawFlowlineTrails = (plate: TectonicPlate, isOnTop: boolean) => {
+            if (!plate.showFlowlines || !plate.flowlinesTrailCache) return;
+            if (!!plate.flowlinesOnTop !== isOnTop) return; // Only draw if it matches the current pass
+
+            this.ctx.save();
+            const fade = plate.flowlinesFade !== false;
+
+            for (const trail of plate.flowlinesTrailCache) {
+                if (trail.length < 2) continue;
+
+                if (!fade) {
+                    // Simple path render
+                    const geojson = { type: 'LineString', coordinates: trail };
+                    this.ctx.beginPath();
+                    path(geojson);
+                    this.ctx.strokeStyle = plate.color;
+                    this.ctx.lineWidth = 1;
+                    this.ctx.globalAlpha = 0.6;
+                    this.ctx.stroke();
+                } else {
+                    // Segmented rendering for fade
+                    // trail[0] is currentTime - duration (oldest), trail[end] is currentTime (youngest)
+                    // We want youngest to be opaque, oldest to be transparent.
+
+                    const segCount = trail.length - 1;
+                    for (let i = 0; i < segCount; i++) {
+                        const p1 = trail[i];
+                        const p2 = trail[i + 1];
+
+                        // Age goes from duration down to 0
+                        // Since segments are linearly spaced (usually step 5), we can approximate alpha
+                        // i = 0 (oldest) -> alpha 0
+                        // i = segCount (youngest) -> alpha 1
+
+                        const alphaStart = (i / segCount) * 0.8;
+                        const alphaEnd = ((i + 1) / segCount) * 0.8;
+                        const avgAlpha = (alphaStart + alphaEnd) / 2;
+
+                        // Note: A true gradient is hard on spherical projections because segment lengths vary
+                        // Drawing line by line with changing opacity is standard in d3-geo
+                        const geojson = { type: 'LineString', coordinates: [p1, p2] };
+                        this.ctx.beginPath();
+                        path(geojson);
+                        this.ctx.strokeStyle = plate.color;
+                        this.ctx.lineWidth = 1;
+                        this.ctx.globalAlpha = avgAlpha;
+                        this.ctx.stroke();
+                    }
+                }
+            }
+            this.ctx.restore();
+        };
+
         const sortedPlates = [...state.world.plates].sort((a, b) => {
             let zA = a.zIndex ?? 0;
             let zB = b.zIndex ?? 0;
@@ -642,6 +696,9 @@ export class CanvasManager {
                 }));
             }
 
+            // --- RENDER FLOWLINES (UNDER) ---
+            drawFlowlineTrails(plate, false);
+
             for (const poly of polygonsToDraw) {
                 const geojson = toGeoJSON(poly);
                 if (geoArea(geojson) > 2 * Math.PI) geojson.geometry.coordinates[0].reverse();
@@ -664,6 +721,9 @@ export class CanvasManager {
                 }
                 this.ctx.stroke();
             }
+
+            // --- RENDER FLOWLINES (OVER) ---
+            drawFlowlineTrails(plate, true);
 
             const showGlobalPoles = state.world.showEulerPoles;
             const gizmoActive = isSelected && state.activeTool === 'select';

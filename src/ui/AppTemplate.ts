@@ -2,23 +2,8 @@
  * AppTemplate - Main application HTML template.
  * Extracted from main.ts TectoLiteApp.getHTML() method.
  */
-
 export interface AppTemplateOptions {
-  globalOptions: {
-    showLinks?: boolean;
-    showFlowlines?: boolean;
-    gridOnTop?: boolean;
-    plateOpacity?: number;
-    showHints?: boolean;
-    customRadiusEnabled?: boolean;
-    customPlanetRadius?: number;
-    timelineMaxTime?: number;
-    enableAutoOceanicCrust?: boolean;
-    enableExpandingRifts?: boolean;
-    oceanicGenerationInterval?: number;
-    oceanicCrustColor?: string;
-    oceanicCrustOpacity?: number;
-  };
+  globalOptions: any;
   realWorldPresetListHtml: string;
   customPresetListHtml: string;
 }
@@ -89,7 +74,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         </label>
                         
                         <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center; opacity: 0.8;">
-                            <span>Flowlines (Legacy)</span>
+                            <span>Auto Generate</span>
                             <input type="checkbox" id="check-auto-oceanic" ${g.enableAutoOceanicCrust !== false ? 'checked' : ''}>
                         </label>
                         
@@ -201,9 +186,6 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-show-links" ${g.showLinks !== false ? 'checked' : ''}> Show Links <span class="info-icon" data-tooltip="Show plate-to-plate and landmass-to-plate links">(i)</span>
-                        </label>
-                        <label class="view-dropdown-item">
-                            <input type="checkbox" id="check-show-flowlines" ${g.showFlowlines !== false ? 'checked' : ''}> Show Flowlines <span class="info-icon" data-tooltip="Show flowline motion trails">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-grid-on-top" ${g.gridOnTop ? 'checked' : ''}> Grid on Top <span class="info-icon" data-tooltip="Render grid above plates instead of below">(i)</span>

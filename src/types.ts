@@ -19,10 +19,7 @@ export interface Polygon {
   closed: boolean;
   riftEdgeIndices?: number[]; // Indices of points in the ring that form active rift segments
 }
-
-export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'flowline' | 'seafloor';
-
-export type CrustType = 'continental' | 'oceanic';
+export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'seafloor';
 export type TimeMode = 'positive' | 'negative' | 'ma' | 'ago'; // Legacy - kept for transition, but functionally removed
 
 export type LayerMode = 'plate' | 'landmass';
@@ -55,9 +52,7 @@ export interface Feature {
   // Polygon feature specific
   polygon?: Coordinate[];
   fillColor?: string;
-  // Flowline / Seafloor specific
-  trail?: Coordinate[];     // Cached trail for flowlines
-  seedPlateId?: string;     // Reference plate for flowline
+  // Seafloor specific
   age?: number;             // Creation time for seafloor segments
 }
 
@@ -318,6 +313,14 @@ export interface TectonicPlate {
   // Current Visual State (Calculated from keyframes)
   polygons: Polygon[];
   features: Feature[];
+
+  // Entity Flowlines Settings
+  showFlowlines?: boolean; // Show trailing lines for vertices
+  flowlinesOnTop?: boolean; // Draw above the plate polygon
+  flowlinesFade?: boolean; // Fade trails out over their duration
+  flowlinesDuration?: number; // Duration of trail in Ma (defaults to 50)
+  flowlinesTrailCache?: Coordinate[][]; // For rendering
+
   center: Coordinate;
 
   // Lifecycle
@@ -400,11 +403,6 @@ export interface WorldState {
     gridOnTop?: boolean;                    // Render grid above plates instead of below
     plateOpacity?: number;                  // Plate transparency (0-1, default 1.0)
 
-    // Flowline Options
-    showFlowlines?: boolean;                // Show flowline trails
-    flowlineFadeDuration?: number;           // Duration in Ma for flowlines to fade
-    flowlineAutoDelete?: boolean;            // Whether to delete flowlines after fading
-
     // Oceanic Crust Generation
     enableAutoOceanicCrust?: boolean;        // Toggle for "Ribbed" generation
     oceanicGenerationInterval?: number;      // Interval in Ma (default 25)
@@ -434,7 +432,7 @@ export interface Boundary {
   crustTypes?: undefined; // Deprecated
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'flowline' | 'edit' | 'paint';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'edit' | 'paint';
 
 export type PaintMode = 'brush' | 'poly_fill';
 
@@ -526,11 +524,6 @@ export function createDefaultWorldState(): WorldState {
       showLinks: true,          // Show links by default
       gridOnTop: false,         // Grid below plates by default
       plateOpacity: 1.0,        // Full opacity
-
-      // Flowline defaults
-      showFlowlines: true,      // Show flowlines by default
-      flowlineFadeDuration: 100,
-      flowlineAutoDelete: true,
 
       // Oceanic Crust Defaults
       enableAutoOceanicCrust: true,

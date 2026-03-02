@@ -413,12 +413,10 @@ function applyTransformToFeatures(plate: TectonicPlate, time: number, allPlates:
     return plate.features.map(f => {
         const startPos = f.originalPosition || f.position;
         const newPos = applyRotation(startPos);
-        const newTrail = f.trail ? f.trail.map(p => applyRotation(p)) : undefined;
         return {
             ...f,
             position: newPos,
-            originalPosition: newPos, // BAKE IT
-            trail: newTrail // Bake trail too
+            originalPosition: newPos // BAKE IT
         };
     });
 }
@@ -472,8 +470,8 @@ function getSplitFeatures(
         if (feat.type === 'rift') continue;
 
         // --- POLYLINE / GRID LINE HANDLING ---
-        if (feat.trail && feat.trail.length >= 2) {
-            const subTrails = splitTrail(feat.trail, polylinePoints);
+        if (false) {
+            const subTrails = splitTrail([], polylinePoints);
 
             for (const sub of subTrails) {
                 if (sub.length < 2) continue;
@@ -488,7 +486,6 @@ function getSplitFeatures(
                 const newFeat = {
                     ...feat,
                     id: generateId(), // New ID for split segment
-                    trail: sub,
                     position: sub[0], // Update anchor to start of segment
                     originalPosition: sub[0]
                 };

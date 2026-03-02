@@ -218,19 +218,7 @@ class TectoLiteApp {
 
     private getHTML(): string {
         return getAppHTML({
-            globalOptions: {
-                showLinks: this.state.world.globalOptions.showLinks,
-                showFlowlines: this.state.world.globalOptions.showFlowlines,
-                gridOnTop: this.state.world.globalOptions.gridOnTop,
-                plateOpacity: this.state.world.globalOptions.plateOpacity,
-                showHints: this.state.world.globalOptions.showHints,
-                customRadiusEnabled: this.state.world.globalOptions.customRadiusEnabled,
-                customPlanetRadius: this.state.world.globalOptions.customPlanetRadius,
-                timelineMaxTime: this.state.world.globalOptions.timelineMaxTime,
-                enableAutoOceanicCrust: this.state.world.globalOptions.enableAutoOceanicCrust,
-                oceanicGenerationInterval: this.state.world.globalOptions.oceanicGenerationInterval,
-                enableExpandingRifts: this.state.world.globalOptions.enableExpandingRifts
-            },
+            globalOptions: this.state.world.globalOptions,
             realWorldPresetListHtml: this.generateRealWorldPresetList(),
             customPresetListHtml: this.generateCustomPresetList()
         });
@@ -647,26 +635,9 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
-        document.getElementById('check-show-flowlines')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.showFlowlines = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
         document.getElementById('check-grid-on-top')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.gridOnTop = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
-        });
-
-        // Flowline Duration
-        document.getElementById('flowline-fade-duration')?.addEventListener('change', (e) => {
-            const val = parseInt((e.target as HTMLInputElement).value);
-            if (!isNaN(val)) {
-                this.state.world.globalOptions.flowlineFadeDuration = val;
-            }
-        });
-
-        document.getElementById('check-flowline-auto-delete')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.flowlineAutoDelete = (e.target as HTMLInputElement).checked;
         });
 
         // Plate Opacity Slider
@@ -1140,7 +1111,6 @@ class TectoLiteApp {
                 case 's': this.setActiveTool('split'); break;
                 case 'g': this.setActiveTool('fuse'); break;
                 case 'l': this.setActiveTool('link'); break;
-                case 't': this.setActiveTool('flowline'); break;
 
                 case 'enter':
                     if (this.state.activeTool === 'draw') {
@@ -1698,10 +1668,6 @@ class TectoLiteApp {
             case 'paint':
                 hintText = "Select a plate, then draw on it with the brush. Adjust size and color in Tool Options.";
                 break;
-            case 'flowline':
-                hintText = "Click on a plate to place a flowline seed.";
-                break;
-
         }
 
         this.updateHint(hintText);
@@ -2959,6 +2925,28 @@ class TectoLiteApp {
         <input type="number" id="prop-z-index" class="property-input" value="${plate.zIndex || 0}" step="1" style="width: 60px;">
       </div>
 
+      <hr class="property-divider">
+      <h4 class="property-section-title">Flowlines</h4>
+      
+      <div class="property-group">
+        <label class="property-label">Enable Trails</label>
+        <input type="checkbox" id="prop-flowlines-enable" ${plate.showFlowlines ? 'checked' : ''}>
+      </div>
+      <div class="property-group">
+        <label class="property-label">Render Above</label>
+        <input type="checkbox" id="prop-flowlines-top" ${plate.flowlinesOnTop ? 'checked' : ''}>
+      </div>
+      <div class="property-group">
+        <label class="property-label">Fade Over Time</label>
+        <input type="checkbox" id="prop-flowlines-fade" ${plate.flowlinesFade ? 'checked' : ''}>
+      </div>
+      <div class="property-group">
+        <label class="property-label">Duration (Ma)</label>
+        <input type="number" id="prop-flowlines-duration" class="property-input" value="${plate.flowlinesDuration || 50}" step="5" min="5" style="width: 60px;">
+      </div>
+
+      <hr class="property-divider">
+
       <div class="property-group">
         <label class="property-label">Timeline (Ma)</label>
         <div style="display: flex; gap: 4px;">
@@ -3120,6 +3108,26 @@ class TectoLiteApp {
             const val = parseInt((e.target as HTMLInputElement).value);
             if (!isNaN(val)) {
                 plate.zIndex = val;
+                this.canvasManager?.render();
+            }
+        });
+
+        document.getElementById('prop-flowlines-enable')?.addEventListener('change', (e) => {
+            plate.showFlowlines = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+        document.getElementById('prop-flowlines-top')?.addEventListener('change', (e) => {
+            plate.flowlinesOnTop = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+        document.getElementById('prop-flowlines-fade')?.addEventListener('change', (e) => {
+            plate.flowlinesFade = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+        document.getElementById('prop-flowlines-duration')?.addEventListener('change', (e) => {
+            const val = parseInt((e.target as HTMLInputElement).value);
+            if (!isNaN(val) && val > 0) {
+                plate.flowlinesDuration = val;
                 this.canvasManager?.render();
             }
         });
@@ -3461,7 +3469,6 @@ class TectoLiteApp {
             island: 'Island',
             weakness: 'Weakness',
             poly_region: 'Polygon Region',
-            flowline: 'Flowline',
             seafloor: 'Seafloor'
         };
         return names[type] || type;
