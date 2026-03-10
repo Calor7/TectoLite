@@ -32,11 +32,6 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                 ?
             </button>
             
-            <!-- Retro Status Info Box -->
-            <div id="retro-status-box" class="retro-status-box" style="display: none;">
-                <span id="retro-status-text">INFO LOADING...</span>
-            </div>
-
             <!-- Settings Dropdown (formerly Planet) -->
             <div class="view-dropdown-container">
                 <button id="btn-planet" class="btn btn-secondary" title="Application Settings">
@@ -215,9 +210,6 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <button id="btn-fullscreen" class="btn btn-secondary" title="Toggle Fullscreen">
                <span class="icon">⛶</span><span class="oldschool-text">FULL</span>
             </button>
-            <button id="btn-ui-mode" class="btn btn-secondary" title="Toggle UI Mode">
-               <span class="icon">💻</span><span class="oldschool-text">UI</span>
-            </button>
 
             <button id="btn-theme-toggle" class="btn btn-secondary" title="Toggle Theme">
               <span class="icon">🌙</span><span class="oldschool-text">THEME</span>
@@ -237,9 +229,6 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <button id="btn-import-json" class="btn btn-secondary" title="Import JSON">
               <span class="icon">📂</span> Load
             </button>
-            <button id="btn-legend" class="btn btn-secondary" title="Legend">
-              <span class="icon">❓</span> Legend
-            </button>
             <input type="file" id="file-import" accept=".json" style="display: none;">
             <input type="file" id="file-overlay-upload" accept="image/*" style="display: none;">
           </div>
@@ -250,7 +239,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <!-- 1. TOOLS GROUP -->
             <div class="tool-group">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                <h3 class="tool-group-title" style="margin: 0;">Interaction</h3>
+                <h3 id="title-interaction" class="tool-group-title" style="margin: 0;">Interaction</h3>
                 <label style="font-size: 10px; display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-secondary);" title="Toggle on-canvas tooltips">
                   <input type="checkbox" id="check-show-hints" ${g.showHints !== false ? 'checked' : ''}> Hints
                 </label>
@@ -307,7 +296,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             
             <!-- 2. CONTEXT / OPTIONS GROUP -->
             <div class="tool-group" style="flex: 1; min-height: 0;">
-                 <h3 class="tool-group-title">Tool Options</h3>
+                 <h3 id="title-tool-options" class="tool-group-title">Tool Options</h3>
                  
                  <!-- Dynamic Controls Stack -->
 

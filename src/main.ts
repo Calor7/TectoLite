@@ -52,7 +52,6 @@ import {
 } from './ui/TimeControls';
 import {
     showModal as _showModal,
-    showLegendDialog as _showLegendDialog,
     toggleTheme as _toggleTheme,
     type ModalOptions
 } from './ui/ModalSystem';
@@ -230,19 +229,10 @@ class TectoLiteApp {
     }
 
 
-
-    private updateRetroStatusBox(text: string | null): void {
-        const statusBox = document.getElementById('retro-status-text');
-        if (statusBox) statusBox.textContent = text || this.activeToolText || "INFO LOADING...";
-    }
-
     private updateHint(text: string | null): void {
         if (text !== null) this.activeToolText = text;
 
         const showHints = this.state.world.globalOptions.showHints !== false;
-
-        // Update Retro Status Box
-        this.updateRetroStatusBox(text);
 
         // Update Canvas Hint
         const hint = document.getElementById('canvas-hint');
@@ -256,7 +246,6 @@ class TectoLiteApp {
     }
 
     private setupEventListeners(): void {
-        const getIsRetro = () => !!document.querySelector('.app-container')?.classList.contains('oldschool-mode');
         const getTooltipText = (el: Element): string | null => {
             const childIcon = el.querySelector('.info-icon');
             return childIcon?.getAttribute('data-tooltip') || el.getAttribute('data-tooltip');
@@ -377,36 +366,31 @@ class TectoLiteApp {
         };
 
         // Delegated Tooltip Logic
+        let activeTooltipElement: HTMLElement | null = null;
+
         const handleTooltipHover = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
-            // Find relevant interactive ancestor
-            // We want to capture the specific element that triggered it, but also check its context
             const element = target.closest(tooltipTargetSelector);
 
             if (!element) return;
 
-            const isRetro = getIsRetro();
-
-            // In modern mode, only allow standard tooltip behavior
-            if (!isRetro && !element.classList.contains('info-icon') && !element.closest('.info-icon') && !element.hasAttribute('data-tooltip')) {
+            // Only allow standard tooltip behavior
+            if (!element.classList.contains('info-icon') && !element.closest('.info-icon') && !element.hasAttribute('data-tooltip')) {
                 return;
             }
 
             // Determine text - PRIORITY SYSTEM
             let text: string | null = null;
 
-            // 1. If we are hovering an info-icon directly, that is supreme
             if (element.classList.contains('info-icon')) {
                 text = element.getAttribute('data-tooltip');
             }
 
-            // 2. If valid text not found yet, check if the element HAS a child info-icon (common in buttons)
             if (!text) {
                 const childIcon = element.querySelector('.info-icon');
                 if (childIcon) text = childIcon.getAttribute('data-tooltip');
             }
 
-            // 3. Check the element's own data-tooltip
             if (!text) {
                 text = element.getAttribute('data-tooltip');
             }
@@ -426,35 +410,22 @@ class TectoLiteApp {
                 element.removeAttribute('title');
             }
 
-            // 6. Retro Fallbacks
-            if (!text && isRetro) {
-                if (element.tagName === 'H3') text = `[ ${element.textContent} ]`;
-                else if (element.tagName === 'LABEL') text = element.textContent;
-                else if (element.tagName === 'BUTTON' || element.classList.contains('tool-btn')) {
-                    const label = element.querySelector('.tool-label');
-                    text = label ? label.textContent : element.textContent;
-                }
-            }
+            if (text && tooltip) {
+                activeTooltipElement = element as HTMLElement;
+                tooltip.innerHTML = text;
+                tooltip.style.display = 'block';
+                // Small delay before fading in to prevent flashing
+                setTimeout(() => {
+                    if (activeTooltipElement === element) tooltip.style.opacity = '1';
+                }, 50);
 
-            if (text) {
-                if (isRetro) {
-                    // Update Retro Status Box
-                    this.updateRetroStatusBox(text);
-                } else if (tooltip) {
-                    // Modern Tooltip
-                    tooltip.textContent = text;
-                    tooltip.style.display = 'block';
-                    tooltip.style.opacity = '1';
-                    updateTooltipPos(e);
-                }
+                updateTooltipPos(e);
             }
         };
 
         const handleTooltipOut = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
-            const related = e.relatedTarget as HTMLElement;
-
-            // Find the element we are leaving
+            const related = e.relatedTarget as Node | null;
             const element = target.closest(tooltipTargetSelector);
 
             // Restore title if valid
@@ -473,12 +444,7 @@ class TectoLiteApp {
                 return;
             }
 
-            const isRetro = getIsRetro();
-
-            if (isRetro) {
-                // Restore active tool text
-                this.updateRetroStatusBox(this.activeToolText);
-            } else if (tooltip) {
+            if (tooltip) {
                 tooltip.style.display = 'none';
                 tooltip.style.opacity = '0';
             }
@@ -487,9 +453,7 @@ class TectoLiteApp {
         document.body.addEventListener('mouseover', handleTooltipHover);
         document.body.addEventListener('mouseout', handleTooltipOut);
         document.body.addEventListener('mousemove', (e) => {
-            const isRetro = getIsRetro();
-
-            if (!isRetro && tooltip && tooltip.style.display === 'block') {
+            if (tooltip && tooltip.style.display === 'block') {
                 updateTooltipPos(e);
             }
         });
@@ -512,13 +476,6 @@ class TectoLiteApp {
             this.updateHint(this.activeToolText);
         });
 
-
-
-        // UI Mode Toggle
-        document.getElementById('btn-ui-mode')?.addEventListener('click', () => {
-            document.querySelector('.app-container')?.classList.toggle('oldschool-mode');
-        });
-
         // Tools
         document.querySelectorAll('.tool-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -531,10 +488,6 @@ class TectoLiteApp {
 
                 if (text) {
                     this.activeToolText = text;
-                    // Always update logic, even if not in retro mode, so state is correct when switching
-                    if (getIsRetro()) {
-                        this.updateRetroStatusBox(this.activeToolText);
-                    }
                 }
             });
 
@@ -545,7 +498,6 @@ class TectoLiteApp {
 
                 if (text) {
                     this.activeToolText = text;
-                    this.updateRetroStatusBox(text);
                 }
             }
         });
@@ -1438,10 +1390,6 @@ class TectoLiteApp {
             }
         });
 
-        document.getElementById('btn-legend')?.addEventListener('click', () => {
-            this.showLegendDialog();
-        });
-
         document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
             this.toggleTheme();
         });
@@ -1456,10 +1404,6 @@ class TectoLiteApp {
             setTheme: (theme: string) => this.canvasManager?.setTheme(theme),
             render: () => this.canvasManager?.render()
         });
-    }
-
-    private showLegendDialog(): void {
-        _showLegendDialog();
     }
 
     private getSpeedPresetData() {

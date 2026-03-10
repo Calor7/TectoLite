@@ -1,25 +1,149 @@
 <div class="manual-content">
   <h1>Welcome to TectoLite</h1>
   <p>
-    This is the Beta of the restructured Version i have been working on the last week, i decided to release it directly
-    as even though it is less tested it has less bugs than the old version.
-    If you still need to use the old version for something feel free to just visit
-    https://www.refracturedgames.com/tectolite-legacy/ this will be available for a few more weeks.
-    As always you can always just grab GitHub versions if you want to stay or go back to a certain Version. (or make
-    personal changes)
+    This is the Beta of the restructured version I have been working on. I decided to release it directly
+    as even though it is less tested, it has fewer bugs than the old version.
+    If you still need to use the old version, feel free to visit
+    <a href="https://www.refracturedgames.com/tectolite-legacy/">TectoLite Legacy</a> (available for a limited time).
+    You can also grab GitHub versions to revert to a previous state or make personal changes.
+  </p>
+  <p>
     This is the general manual for TectoLite (in progress). Hover over the flashing red
-    highlights on the UI elements to learn more about each tool's function.</p>
+    highlights on the UI elements to learn more about each tool's function.
+  </p>
 
   <h2>Getting Started</h2>
-  <p>Start by drawing continental polygons using the toolbar on the left. Once you have a few plates, you can define
-    their
-    velocities and let the simulation run over time.</p>
+  <p>
+    Start by drawing continental polygons using the toolbar on the left. Once you have a few plates, you can define
+    their velocities and let the simulation run over time.
+  </p>
 
   <h2>Keyboard Shortcuts</h2>
   <ul>
     <li><strong>Space</strong>: Play/Pause simulation</li>
     <li><strong>Escape</strong>: Exit current tool / Close tutorial</li>
+    <li><strong>Ctrl+Z / Ctrl+Y</strong>: Undo / Redo</li>
+    <li><strong>V, H, D, E, S, L, G</strong>: Tool hotkeys (Select, Rotate, Draw, Edit, Split, Link, Fuse)</li>
   </ul>
 
-  <p><em><code>src/ui/TutorialManual.html</code> #ToDo make a manual ^^ </em></p>
+  <!-- Tooltip Data Definitions (Parsed dynamically by TutorialOverlay.ts) -->
+  <div id="tutorial-data" style="display: none;">
+    <!-- Top Bar Actions -->
+    <div data-selector="#btn-tutorial-help">Click this button again, or press <kbd>Escape</kbd>, to close the tutorial
+      overlay.</div>
+    <div data-selector="#btn-planet"
+      data-nested='{"planet-radius": "Radius is locked if Custom Planet Radius is unchecked.", "timeline": "Maximum duration of the geological history in Ma (Mega-annum)."}'>
+      Opens the <strong style="color:var(--accent-primary);">Settings Menu</strong> to configure simulation rules,
+      timeline length, and global parameters.
+    </div>
+    <div data-selector="#btn-view-panels">Configure which UI panels and visual effects are toggled on or off.</div>
+    <div data-selector="#btn-reset-camera">Resets the 3D globe camera to default zoom and orientation.</div>
+    <div data-selector="#btn-fullscreen">Toggles the application into fullscreen mode.</div>
+    <div data-selector="#btn-theme-toggle">Toggle between <strong style="color:var(--accent-primary);">Light</strong>
+      and <strong style="color:var(--accent-primary);">Dark</strong> UI themes.</div>
+    <div data-selector="#btn-undo">Undo the last action (Shortcut: <kbd>Ctrl+Z</kbd>).</div>
+    <div data-selector="#btn-redo">Redo previously undone action (Shortcut: <kbd>Ctrl+Y</kbd>).</div>
+    <div data-selector="#btn-export">Exports the current view as PNG or heightmap.</div>
+    <div data-selector="#btn-export-json">Save the current simulation state to a JSON file on your computer.</div>
+    <div data-selector="#btn-import-json">Load a previously saved JSON simulation state.</div>
+    <div data-selector=".app-title a:first-child">TectoLite Official GitHub Repository. Open source and available for
+      your contributions!</div>
+    <div data-selector=".app-subtitle a">Refractured Games Website. Check out our other educational games and tools!
+    </div>
+    <div data-selector=".app-title a[href*='ko-fi']">Support the solo developer of TectoLite by buying a Ko-fi ✨</div>
+    <div data-selector="#link-subscribe">Subscribe to the newsletter to get development updates and beta access.</div>
+
+    <!-- Settings Menu Inputs -->
+    <div data-selector="#timeline-max-time">Change the maximum duration of the simulation (e.g., set to 1000 Ma for a
+      billion-year history).</div>
+    <div data-selector="#check-custom-radius">Unlocks the planet radius. Be cautious, changing planet radius can
+      severely warp existing plate geometries.</div>
+    <div data-selector="#global-planet-radius">The actual radius of the planet in Kilometers. Default is Earth (6371
+      km).</div>
+    <div data-selector="#check-expanding-rifts">When plates divide and pull apart, expanding oceanic rift polygons are
+      generated automatically.</div>
+    <div data-selector="#check-auto-oceanic">Automatically generates new oceanic crust across the globe over time
+      (currently experimental).</div>
+    <div data-selector="#input-oceanic-interval">How often (in Ma) new oceanic crust bands are generated. Lower means
+      more polygons and lower performance.</div>
+    <div data-selector="#input-oceanic-color">The base color assigned to newly generated oceanic crust.</div>
+    <div data-selector="#input-oceanic-opacity">Adjust the transparency of oceanic crust polygons specifically.</div>
+
+    <!-- View Menu Inputs -->
+    <div data-selector="#check-view-tools">Toggle the left-side tool bar.</div>
+    <div data-selector="#check-view-plates">Toggle the Explorer plate hierarchy panel.</div>
+    <div data-selector="#check-view-props">Toggle the right-side properties panel.</div>
+    <div data-selector="#check-view-timeline">Toggle the bottom timeline event log.</div>
+    <div data-selector="#projection-select">Change the map projection. Note: some features (like spherical rotation) are
+      locked to Orthographic (Globe) mode.</div>
+    <div data-selector="#check-show-overlay">Toggle the visibility of a custom image map overlay, useful for tracing
+      real-world geology.</div>
+    <div data-selector="#btn-upload-overlay">Upload any image file to drape over the globe/map as a reference.</div>
+    <div data-selector="#overlay-opacity-slider">Adjust how transparent the reference image overlay is.</div>
+    <div data-selector="#btn-clear-overlay">Remove the currently loaded reference image.</div>
+    <div data-selector="#check-grid">Toggle the visual longitude and latitude grid lines.</div>
+    <div data-selector="#grid-thickness-select">Change the line weight of the grid.</div>
+    <div data-selector="#check-features">Toggle standard terrain features like mountains, rifts, and collision zones.
+    </div>
+    <div data-selector="#check-euler-poles">Toggle the display of the rotational axis anchors (Euler Poles) for all
+      moving plates.</div>
+    <div data-selector="#check-future-features">If enabled, shows features that will appear in the future as faint
+      outlines based on birth time.</div>
+    <div data-selector="#check-show-links">Visualize parent-child kinematic dependencies directly on the map.</div>
+    <div data-selector="#check-show-hidden-plates">Force all plates to render, overriding individual plate visibility
+      settings.</div>
+    <div data-selector="#check-grid-on-top">Draw the grid lines above the continental plates instead of below them.
+    </div>
+    <div data-selector="#plate-opacity-slider">Adjust the global transparency of all plates simultaneously.</div>
+
+    <!-- Tools -->
+    <div data-selector="#title-interaction">This panel contains your primary tools for creating, rotating, and molding
+      the tectonic environment.</div>
+    <div data-selector="#title-tool-options">This panel dynamically updates to provide settings and configurations
+      specific to the tool you currently have active.</div>
+    <div data-selector="#check-show-hints">Toggle the instructional text hints at the bottom right corner of the canvas.
+    </div>
+    <div data-selector="[data-tool='select']">The <strong style="color:var(--accent-primary);">Select Tool</strong> lets
+      you pick plates to view their properties, select boundaries, or prepare for splitting/fusion.</div>
+    <div data-selector="[data-tool='pan']"
+      data-nested='{"euler-pole": "The axis of rotation for a tectonic plate on the sphere."}'>
+      The <strong style="color:var(--accent-primary);">Rotate Tool</strong> is used to assign <span class="help-link"
+        data-target="euler-pole">Euler Poles</span> for plate movement across the surface.
+    </div>
+    <div data-selector="[data-tool='draw']">The <strong style="color:var(--accent-primary);">Draw Tool</strong> allows
+      you to sketch new continental structures and oceanic rifts.</div>
+    <div data-selector="[data-tool='edit']">The <strong style="color:var(--accent-primary);">Edit Tool</strong> alters
+      existing plate geometries by modifying their vertices.</div>
+    <div data-selector="[data-tool='split']">The <strong style="color:var(--accent-primary);">Split Tool</strong>
+      dissects a plate into two pieces by drawing a boundary through it.</div>
+    <div data-selector="[data-tool='link']"
+      data-nested='{"kinematics": "Child plates will inherit the rotation (Euler pole) of their parent."}'>
+      The <strong style="color:var(--accent-primary);">Link Tool</strong> creates a parent/child hierarchical <span
+        class="help-link" data-target="kinematics">kinematic relationship</span> between two plates.
+    </div>
+    <div data-selector="[data-tool='fuse']">The <strong style="color:var(--accent-primary);">Fuse Tool</strong> merges
+      two adjacent plates into a single continuous polygon.</div>
+
+    <!-- Timeline -->
+    <div data-selector="#btn-play">Start or Pause the <strong style="color:var(--accent-primary);">Simulation
+        Timeline</strong>.</div>
+    <div data-selector="#speed-select">Adjust the playback speed multiplier of the simulation.</div>
+    <div data-selector="#time-slider">Scrub through geohistory. Left side is current time, right side is genesis / birth
+      time.</div>
+    <div data-selector="#current-time">Click the current time value to open a modal and manually enter an exact target
+      year.</div>
+    <div data-selector="#btn-reset-time">Reset the timeline back to current day (0 Ma).</div>
+    <div data-selector="#time-mode-label"
+      data-nested='{"mega-annum": "Ma stands for Mega-annum, equivalent to one million years."}'>
+      Current time in <span class="help-link" data-target="mega-annum">Ma</span>. Represents millions of years ago.
+    </div>
+
+    <!-- Panels -->
+    <div data-selector="#properties-panel"><strong style="color:var(--accent-primary);">Properties Panel:</strong> Edit
+      selected plate color, name, and oceanic crust settings.</div>
+    <div data-selector="#timeline-panel"><strong style="color:var(--accent-primary);">Timeline Box:</strong> View recent
+      significant geological events like continent splits and collisions.</div>
+    <div data-selector="#plate-sidebar">The <strong style="color:var(--accent-primary);">Explorer</strong> lists all
+      tectonic plates currently active in the simulation. Select them from here.</div>
+  </div>
 </div>

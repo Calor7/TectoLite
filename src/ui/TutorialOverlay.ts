@@ -1,5 +1,10 @@
-import { TutorialDictionary } from './TutorialDictionary';
 import manualContent from './TutorialManual.html?raw';
+
+export interface TutorialEntry {
+    text: string;
+    nested?: Record<string, string>;
+}
+export type TutorialDictionaryData = Record<string, TutorialEntry>;
 
 interface TooltipBox {
     el: HTMLElement;
@@ -137,6 +142,8 @@ export class TutorialOverlay {
         this.isActive = false;
     }
 
+    private static parsedDictionary: TutorialDictionaryData | null = null;
+
     /**
      * Scans the DOM for elements matching dictionary keys and renders highlights with hover logic.
      */
@@ -158,9 +165,41 @@ export class TutorialOverlay {
         const canvasContainer = document.querySelector('.canvas-container') as HTMLElement;
         const rawRect = canvasContainer ? canvasContainer.getBoundingClientRect() : document.body.getBoundingClientRect();
 
+        // Parse Manual HTML to extract dictionary and clean manual text
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(manualContent, 'text/html');
+
+        // Build dictionary if not done already
+        if (!this.parsedDictionary) {
+            this.parsedDictionary = {};
+            const dataNode = doc.getElementById('tutorial-data');
+            if (dataNode) {
+                Array.from(dataNode.children).forEach((child) => {
+                    const selector = child.getAttribute('data-selector');
+                    if (selector) {
+                        const entry: TutorialEntry = { text: child.innerHTML };
+                        const nestedStr = child.getAttribute('data-nested');
+                        if (nestedStr) {
+                            try {
+                                entry.nested = JSON.parse(nestedStr);
+                            } catch (e) {
+                                console.error('Failed to parse nested tooltip data:', e);
+                            }
+                        }
+                        this.parsedDictionary![selector] = entry;
+                    }
+                });
+                // Remove the data block so it doesn't render in the manual
+                dataNode.remove();
+            }
+        } else {
+            const dataNode = doc.getElementById('tutorial-data');
+            if (dataNode) dataNode.remove();
+        }
+
         const manualDiv = document.createElement('div');
         manualDiv.classList.add('tutorial-general-manual');
-        manualDiv.innerHTML = manualContent;
+        manualDiv.innerHTML = doc.body.innerHTML;
         manualDiv.style.left = `${rawRect.left}px`;
         manualDiv.style.top = `${rawRect.top}px`;
         manualDiv.style.width = `${rawRect.width}px`;
@@ -168,16 +207,19 @@ export class TutorialOverlay {
 
         this.overlayElement.appendChild(manualDiv);
 
-        for (const [selector, entry] of Object.entries(TutorialDictionary)) {
-            const elements = document.querySelectorAll(selector);
+        if (this.parsedDictionary) {
+            for (const [selector, entry] of Object.entries(this.parsedDictionary)) {
+                // Find all matching elements in the DOM
+                const elements = document.querySelectorAll(selector);
 
-            elements.forEach((el) => {
-                const htmlEl = el as HTMLElement;
+                elements.forEach((el) => {
+                    const htmlEl = el as HTMLElement;
 
-                if (this.isElementVisible(htmlEl)) {
-                    this.renderHighlightBox(htmlEl, entry, selector);
-                }
-            });
+                    if (this.isElementVisible(htmlEl)) {
+                        this.renderHighlightBox(htmlEl, (entry as TutorialEntry), selector);
+                    }
+                });
+            }
         }
     }
 
@@ -366,7 +408,8 @@ export class TutorialOverlay {
      * Shows a secondary/nested tooltip.
      */
     private static showNestedTooltip(anchorElement: HTMLElement, entryKey: string, termKey: string): void {
-        const entry = (TutorialDictionary as any)[entryKey];
+        if (!this.parsedDictionary) return;
+        const entry = this.parsedDictionary[entryKey] as TutorialEntry;
         if (!entry || !entry.nested || !entry.nested[termKey]) return;
 
         const nestedText = entry.nested[termKey];

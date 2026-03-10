@@ -1,5 +1,5 @@
 /**
- * ModalSystem - Generic modal dialog, legend dialog, and theme toggle.
+ * ModalSystem - Generic modal dialog and theme toggle.
  * Extracted from main.ts TectoLiteApp class.
  */
 
@@ -21,36 +21,6 @@ export interface ModalOptions {
  * Shows a modal dialog. In retro mode, falls back to native confirm/alert.
  */
 export function showModal(options: ModalOptions): void {
-    const appContainer = document.querySelector('.app-container');
-    const isRetro = appContainer ? appContainer.classList.contains('oldschool-mode') : false;
-
-    // RETRO THEME POPUP
-    if (isRetro) {
-        // Strip HTML tags for clean alert text
-        let cleanText = options.content.replace(/<[^>]*>/g, '');
-
-        // Check if this is a "Confirm" style (multiple choices) or "Alert" style (OK only)
-        const mainAction = options.buttons.find(b => !b.isSecondary);
-        const secondaryAction = options.buttons.find(b => b.isSecondary);
-
-        if (mainAction && secondaryAction) {
-            // Bi-modal choice (OK/Cancel)
-            cleanText += `\n\n[OK] -> ${mainAction.text}\n[Cancel] -> ${secondaryAction.text}`;
-
-            if (confirm(cleanText)) {
-                mainAction.onClick();
-            } else {
-                secondaryAction.onClick();
-            }
-        } else if (mainAction) {
-            alert(cleanText);
-            mainAction.onClick();
-        } else {
-            alert(cleanText);
-        }
-        return;
-    }
-
     // MODERN THEME MODAL (Standard TectoLite UI)
     const overlay = document.createElement('div');
     overlay.style.cssText = `
@@ -123,44 +93,6 @@ export function showModal(options: ModalOptions): void {
             btnContainer.appendChild(row);
         }
     }
-}
-
-/**
- * Shows the legend dialog with placeholder content.
- */
-export function showLegendDialog(): void {
-    const overlay = document.createElement('div');
-    overlay.style.cssText = `
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.6); z-index: 10000;
-      display: flex; align-items: center; justify-content: center;
-  `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-      background: #1e1e2e; border: 1px solid var(--border-default); border-radius: 8px; padding: 20px;
-      min-width: 400px; color: var(--text-primary); font-family: system-ui, sans-serif;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;
-  `;
-
-    dialog.innerHTML = `
-      <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">🗺️ Map Legend</h3>
-      
-      <div style="margin-bottom: 10px; color: var(--text-secondary); font-style: italic;">
-          Handbook content coming soon...
-      </div>
-      
-      <div style="display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 16px;">
-          <button id="legend-close" class="btn btn-secondary" style="padding: 8px 16px;">Close</button>
-      </div>
-  `;
-
-    overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
-
-    const cleanup = () => document.body.removeChild(overlay);
-    dialog.querySelector('#legend-close')?.addEventListener('click', cleanup);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
 }
 
 /**
