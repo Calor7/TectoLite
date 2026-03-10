@@ -3,7 +3,7 @@ import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
 import { MotionGizmo } from './MotionGizmo';
-import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid } from '../utils/sphericalMath';
+import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid, distance } from '../utils/sphericalMath';
 
 import { InputTool } from './tools/InputTool';
 import { PathInputTool } from './tools/PathInputTool';
@@ -86,7 +86,8 @@ export class CanvasManager {
             (c) => this.onDrawUpdate?.(c),
             (points) => this.onDrawComplete(points),
             () => this.cancelDrawing(),
-            3, '#ffffff'
+            3, '#ffffff',
+            () => this.getState().world.globalOptions.planetRadius || 6371
         );
         // Set up snap candidate provider: collects all plate polygon vertices
         this.drawTool.setSnapCandidateProvider(() => this.getAllPlateVertices());
@@ -105,7 +106,8 @@ export class CanvasManager {
             () => {
                 this.onSplitPreviewChange(false);
             },
-            2, '#ff4444'
+            2, '#ff4444',
+            () => this.getState().world.globalOptions.planetRadius || 6371
         );
         this.tools.set('split', this.splitTool);
 
@@ -117,7 +119,8 @@ export class CanvasManager {
                 this.onPolyFeatureComplete?.(points, colorInput?.value || '#ff6b6b');
             },
             () => { },
-            3, '#ff6b6b'
+            3, '#ff6b6b',
+            () => this.getState().world.globalOptions.planetRadius || 6371
         );
         this.tools.set('poly_feature', polyTool);
 
@@ -149,6 +152,8 @@ export class CanvasManager {
             (x, y) => this.findNearestBoundaryElement(x, y),
             () => this.render()
         );
+        // Set up snap candidate provider for edit tool (same as draw tool)
+        this.editTool.setSnapCandidateProvider(() => this.getAllPlateVertices());
         this.tools.set('edit', this.editTool);
 
         this.tools.set('pan', {
@@ -178,8 +183,10 @@ export class CanvasManager {
         } else {
             if (hit?.plateId) {
                 this.onSelect(hit.plateId, hit.featureId ?? null);
+                this.setState(s => ({ ...s, world: { ...s.world, selectedEdge: hit.edge || null } }));
             } else {
                 this.onSelect(null, null);
+                this.setState(s => ({ ...s, world: { ...s.world, selectedEdge: null } }));
             }
         }
     }
@@ -303,6 +310,11 @@ export class CanvasManager {
         this.drawTool.snappingEnabled = enabled;
     }
 
+    /** Toggle vertex snapping for the edit tool */
+    public setEditSnappingEnabled(enabled: boolean): void {
+        this.editTool.snappingEnabled = enabled;
+    }
+
     /** Collect all vertices from all visible plate polygons for snapping */
     private getAllPlateVertices(): Coordinate[] {
         const state = this.getState();
@@ -311,7 +323,7 @@ export class CanvasManager {
         for (const plate of state.world.plates) {
             if (plate.deathTime !== null && plate.deathTime <= currentTime) continue;
             if (plate.birthTime > currentTime) continue;
-            if (!plate.visible) continue;
+            if (!plate.visible && !state.world.globalOptions.showHiddenPlates) continue;
             for (const poly of plate.polygons) {
                 for (const pt of poly.points) {
                     vertices.push(pt);
@@ -394,7 +406,7 @@ export class CanvasManager {
 
         if (this.motionGizmo.isActive() && state.activeTool === 'select') {
             const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
-            if (selectedPlate) {
+            if (selectedPlate && !selectedPlate.locked) {
                 const handle = this.motionGizmo.hitTest(screen.x, screen.y, this.projectionManager, selectedPlate.center);
                 if (handle) {
                     this.motionGizmo.startDrag(handle, screen.x, screen.y);
@@ -490,7 +502,7 @@ export class CanvasManager {
 
         const state = this.getState();
         const p = state.world.plates.find(pl => pl.id === this.ghostPlateId);
-        if (!p) return;
+        if (!p || p.locked) return;
 
         const startMouseVec = latLonToVector(this.dragStartGeo);
         const currMouseVec = latLonToVector(geoPos);
@@ -515,6 +527,10 @@ export class CanvasManager {
     }
 
     private startDragTarget(plateId: string, geo: Coordinate) {
+        const state = this.getState();
+        const plate = state.world.plates.find(p => p.id === plateId);
+        if (plate?.locked) return; // Prevent dragging locked plates
+
         this.ghostPlateId = plateId;
         this.ghostRotation = { plateId, axis: { x: 0, y: 0, z: 1 }, angle: 0 };
         this.dragStartGeo = geo;
@@ -558,6 +574,7 @@ export class CanvasManager {
         }
 
         this.drawPlates(state, path);
+        this.drawSelectedEdge();
         this.drawEventIcons(state);
         this.drawPlumes(state);
 
@@ -668,7 +685,7 @@ export class CanvasManager {
         });
 
         for (const plate of sortedPlates) {
-            if (!plate.visible) continue;
+            if (!plate.visible && !state.world.globalOptions.showHiddenPlates) continue;
             if (state.world.currentTime < plate.birthTime) continue;
             if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
 
@@ -707,7 +724,13 @@ export class CanvasManager {
                 path(geojson);
 
                 const globalOpacity = state.world.globalOptions.plateOpacity ?? 1.0;
-                const oceanicOpacity = plate.type === 'oceanic' ? (state.world.globalOptions.oceanicCrustOpacity ?? 0.5) : 1.0;
+                let oceanicOpacity = plate.type === 'oceanic' ? (state.world.globalOptions.oceanicCrustOpacity ?? 0.5) : 1.0;
+
+                // Dim hidden plates slightly if they are being revealed by the global toggle
+                if (!plate.visible && state.world.globalOptions.showHiddenPlates) {
+                    oceanicOpacity *= 0.4;
+                }
+
                 this.ctx.globalAlpha = globalOpacity * oceanicOpacity;
                 this.ctx.fillStyle = plate.color;
                 if (poly.closed !== false) this.ctx.fill();
@@ -716,10 +739,22 @@ export class CanvasManager {
                 this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
                 this.ctx.lineWidth = isSelected ? 2 : 1;
                 if (plate.type === 'rift') {
-                    this.ctx.strokeStyle = isSelected ? '#ff3333' : '#ff0000';
-                    this.ctx.lineWidth = isSelected ? 4 : 2;
+                    // Line type visual differentiation
+                    const lt = plate.lineType || 'generic';
+                    const lineTypeStyles: Record<string, { color: string; selectedColor: string; dash: number[]; width: number }> = {
+                        rift: { color: '#ff4444', selectedColor: '#ff6666', dash: [12, 4], width: 2 },
+                        trench: { color: '#4488ff', selectedColor: '#66aaff', dash: [3, 3], width: 2 },
+                        fault: { color: '#ffaa00', selectedColor: '#ffcc44', dash: [], width: 2 },
+                        suture: { color: '#aa44ff', selectedColor: '#cc66ff', dash: [6, 2], width: 2 },
+                        generic: { color: '#ff8844', selectedColor: '#ffaa66', dash: [8, 4], width: 2 },
+                    };
+                    const style = lineTypeStyles[lt] || lineTypeStyles.generic;
+                    this.ctx.strokeStyle = isSelected ? style.selectedColor : style.color;
+                    this.ctx.lineWidth = isSelected ? style.width + 2 : style.width;
+                    this.ctx.setLineDash(style.dash);
                 }
                 this.ctx.stroke();
+                this.ctx.setLineDash([]); // Reset dash after each polygon stroke
             }
 
             // --- RENDER FLOWLINES (OVER) ---
@@ -876,9 +911,9 @@ export class CanvasManager {
         this.ctx.setLineDash([8, 4]);
 
         for (const plate of state.world.plates) {
-            if (plate.linkedToPlateId) {
+            if (plate.linkedToPlateId && !plate.hideLinkMarker) {
                 const parent = state.world.plates.find(p => p.id === plate.linkedToPlateId);
-                if (parent) {
+                if (parent && (!parent.hideLinkMarker || parent.id !== plate.linkedToPlateId)) {
                     this.ctx.beginPath();
                     path({ type: 'LineString', coordinates: [plate.center, parent.center] } as any);
                     this.ctx.stroke();
@@ -911,6 +946,38 @@ export class CanvasManager {
         this.ctx.restore();
     }
 
+    private drawSelectedEdge(): void {
+        const state = this.getState();
+        const selectedEdge = state.world.selectedEdge;
+        if (!selectedEdge) return;
+
+        const plate = state.world.plates.find(p => p.id === selectedEdge.plateId);
+        if (!plate) return;
+
+        const poly = plate.polygons[selectedEdge.polyIndex];
+        if (!poly) return;
+
+        const p1 = poly.points[selectedEdge.vertexIndex];
+        const isClosed = poly.closed !== false;
+        const nextIdx = isClosed
+            ? (selectedEdge.vertexIndex + 1) % poly.points.length
+            : selectedEdge.vertexIndex + 1;
+
+        if (nextIdx < poly.points.length) {
+            const p2 = poly.points[nextIdx];
+            const edgeGeo = { type: 'LineString' as const, coordinates: [p1, p2] };
+            const path = this.projectionManager.getPathGenerator();
+
+            this.ctx.save();
+            this.ctx.beginPath();
+            path(edgeGeo as any);
+            this.ctx.strokeStyle = '#00ffff'; // Cyan color for selected edge
+            this.ctx.lineWidth = 5;
+            this.ctx.stroke();
+            this.ctx.restore();
+        }
+    }
+
     private drawEditHighlights() {
         const state = this.getState();
         const plateId = state.world.selectedPlateId;
@@ -919,7 +986,28 @@ export class CanvasManager {
         if (!plate) return;
 
         const polygons = this.editTool.getTempPolygons()?.polygons || plate.polygons;
+        const path = this.projectionManager.getPathGenerator();
 
+        // --- ELEMENT GLOW (polygon/line outline highlight on hover) ---
+        const hoveredVertex = this.editTool.getHoveredVertex();
+        const hoveredEdge = this.editTool.getHoveredEdge();
+        const anyHover = hoveredVertex || hoveredEdge;
+        if (anyHover && anyHover.plateId === plateId) {
+            const hoverPolyIdx = anyHover.polyIndex;
+            const poly = polygons[hoverPolyIdx];
+            if (poly) {
+                const geojson = toGeoJSON(poly);
+                this.ctx.save();
+                this.ctx.beginPath();
+                path(geojson);
+                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+                this.ctx.lineWidth = 6;
+                this.ctx.stroke();
+                this.ctx.restore();
+            }
+        }
+
+        // --- DRAW ALL VERTICES ---
         this.ctx.fillStyle = '#ffffff';
         this.ctx.strokeStyle = '#000000';
         this.ctx.lineWidth = 1;
@@ -935,7 +1023,41 @@ export class CanvasManager {
             }
         }
 
-        const hoveredVertex = this.editTool.getHoveredVertex();
+        // --- EDGE HIGHLIGHT ---
+        if (hoveredEdge && hoveredEdge.plateId === plateId) {
+            const poly = polygons[hoveredEdge.polyIndex];
+            if (poly) {
+                const p1 = poly.points[hoveredEdge.vertexIndex];
+                const isClosed = poly.closed !== false;
+                const nextIdx = isClosed
+                    ? (hoveredEdge.vertexIndex + 1) % poly.points.length
+                    : hoveredEdge.vertexIndex + 1;
+                if (nextIdx < poly.points.length) {
+                    const p2 = poly.points[nextIdx];
+                    // Draw highlighted edge as geodesic arc
+                    const edgeGeo = { type: 'LineString' as const, coordinates: [p1, p2] };
+                    this.ctx.save();
+                    this.ctx.beginPath();
+                    path(edgeGeo as any);
+                    this.ctx.strokeStyle = '#ffaa00';
+                    this.ctx.lineWidth = 4;
+                    this.ctx.stroke();
+                    this.ctx.restore();
+                }
+                // Highlight insertion point
+                if (hoveredEdge.pointOnEdge) {
+                    const proj = this.projectionManager.project(hoveredEdge.pointOnEdge);
+                    if (proj) {
+                        this.ctx.beginPath();
+                        this.ctx.arc(proj[0], proj[1], 5, 0, Math.PI * 2);
+                        this.ctx.fillStyle = '#ffaa00';
+                        this.ctx.fill();
+                    }
+                }
+            }
+        }
+
+        // --- HOVERED VERTEX HIGHLIGHT ---
         if (hoveredVertex && hoveredVertex.plateId === plateId) {
             const poly = polygons[hoveredVertex.polyIndex];
             if (poly) {
@@ -982,7 +1104,7 @@ export class CanvasManager {
         });
     }
 
-    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string } | null {
+    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string; edge?: any } | null {
         const state = this.getState();
         if (state.world.mantlePlumes) {
             for (const plume of state.world.mantlePlumes) {
@@ -993,6 +1115,8 @@ export class CanvasManager {
 
         for (const plate of state.world.plates) {
             if (!plate.visible || state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
+            // Locked plates can be selected, but we might want them to be selectable to UNLOCK them. 
+            // So we still hit test them for selection, but tools must respect the lock.
             for (const feature of plate.features) {
                 const proj = this.projectionManager.project(feature.position);
                 if (proj && Math.hypot(proj[0] - mousePos.x, proj[1] - mousePos.y) < 20) return { plateId: plate.id, featureId: feature.id };
@@ -1003,7 +1127,28 @@ export class CanvasManager {
         for (let i = state.world.plates.length - 1; i >= 0; i--) {
             const plate = state.world.plates[i];
             if (!plate.visible || state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
-            for (const poly of plate.polygons) {
+            // Allow selecting locked plates so the user can unlock them in the properties panel
+            for (let polyIndex = 0; polyIndex < plate.polygons.length; polyIndex++) {
+                const poly = plate.polygons[polyIndex];
+
+                // Edge hit test
+                const points = poly.points as Coordinate[];
+                const screenPoints = points.map(p => this.projectionManager.project(p));
+                const isClosed = poly.closed !== false;
+                for (let j = 0; j < screenPoints.length; j++) {
+                    const p = screenPoints[j];
+                    if (!p) continue;
+                    const nextIdx = isClosed ? (j + 1) % screenPoints.length : j + 1;
+                    if (nextIdx >= screenPoints.length) continue;
+                    const pNext = screenPoints[nextIdx];
+                    if (!pNext) continue;
+
+                    const dist2 = this.distToSegmentSquared({ x: mousePos.x, y: mousePos.y }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
+                    if (dist2 < 25) { // 5px radius for edge selection
+                        return { plateId: plate.id, edge: { plateId: plate.id, polyIndex, vertexIndex: j } };
+                    }
+                }
+
                 const geojson = toGeoJSON(poly);
                 if (geoArea(geojson) > 2 * Math.PI) geojson.geometry.coordinates[0].reverse();
                 this.ctx.beginPath();
@@ -1033,29 +1178,28 @@ export class CanvasManager {
 
         let closestVertex: any = null, minVertexDist2 = 64;
         let closestEdge: any = null, minEdgeDist2 = 64;
-        // const mouseVec = this.projectionManager.invert(mouseX, mouseY) ? latLonToVector(this.projectionManager.invert(mouseX, mouseY)!) : null; // Unused
 
         polygons.forEach((poly: any, polyIndex: number) => {
             const points = poly.points as Coordinate[];
             const screenPoints = points.map(p => this.projectionManager.project(p));
+            const isClosed = poly.closed !== false;
             for (let i = 0; i < screenPoints.length; i++) {
                 const p = screenPoints[i];
                 if (!p) continue;
                 const d2 = (p[0] - mouseX) ** 2 + (p[1] - mouseY) ** 2;
                 if (d2 < minVertexDist2) { minVertexDist2 = d2; closestVertex = { plateId: plate.id, polyIndex, vertexIndex: i }; }
-                if (!closestVertex) {
-                    const nextIdx = (i + 1) % screenPoints.length;
-                    const pNext = screenPoints[nextIdx];
-                    if (!pNext) continue;
-                    // Simplified edge check
-                    const dist2 = this.distToSegmentSquared({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
-                    if (dist2 < minEdgeDist2) {
-                        const t = this.getT({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
-                        const screenX = p[0] + t * (pNext[0] - p[0]);
-                        const screenY = p[1] + t * (pNext[1] - p[1]);
-                        const geo = this.projectionManager.invert(screenX, screenY);
-                        if (geo) { minEdgeDist2 = dist2; closestEdge = { plateId: plate.id, polyIndex, vertexIndex: i, pointOnEdge: geo }; }
-                    }
+                // Always check edges (previously skipped when any vertex was found)
+                const nextIdx = isClosed ? (i + 1) % screenPoints.length : i + 1;
+                if (nextIdx >= screenPoints.length) continue;
+                const pNext = screenPoints[nextIdx];
+                if (!pNext) continue;
+                const dist2 = this.distToSegmentSquared({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
+                if (dist2 < minEdgeDist2) {
+                    const t = this.getT({ x: mouseX, y: mouseY }, { x: p[0], y: p[1] }, { x: pNext[0], y: pNext[1] });
+                    const screenX = p[0] + t * (pNext[0] - p[0]);
+                    const screenY = p[1] + t * (pNext[1] - p[1]);
+                    const geo = this.projectionManager.invert(screenX, screenY);
+                    if (geo) { minEdgeDist2 = dist2; closestEdge = { plateId: plate.id, polyIndex, vertexIndex: i, pointOnEdge: geo }; }
                 }
             }
         });

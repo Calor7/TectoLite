@@ -188,6 +188,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <input type="checkbox" id="check-show-links" ${g.showLinks !== false ? 'checked' : ''}> Show Links <span class="info-icon" data-tooltip="Show plate-to-plate and landmass-to-plate links">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-show-hidden-plates" ${g.showHiddenPlates ? 'checked' : ''}> Show Hidden Plates <span class="info-icon" data-tooltip="Reveal plates even if their visibility is toggled off">(i)</span>
+                        </label>
+                        <label class="view-dropdown-item">
                             <input type="checkbox" id="check-grid-on-top" ${g.gridOnTop ? 'checked' : ''}> Grid on Top <span class="info-icon" data-tooltip="Render grid above plates instead of below">(i)</span>
                         </label>
                         

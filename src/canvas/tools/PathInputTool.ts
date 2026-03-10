@@ -2,6 +2,7 @@ import { Coordinate } from '../../types';
 import { InputTool } from './InputTool';
 import { ProjectionManager } from '../ProjectionManager';
 import { distance } from '../../utils/sphericalMath';
+import { geoInterpolate } from 'd3-geo';
 
 export class PathInputTool implements InputTool {
     private points: Coordinate[] = [];
@@ -22,7 +23,8 @@ export class PathInputTool implements InputTool {
         private onComplete: (points: Coordinate[]) => void,
         private onCancel: () => void,
         public minPoints: number = 2,
-        private previewColor: string = '#ffffff'
+        private previewColor: string = '#ffffff',
+        private getPlanetRadius: () => number = () => 6371
     ) { }
 
     /** Set a function that provides all candidate vertices for snapping */
@@ -158,6 +160,8 @@ export class PathInputTool implements InputTool {
     render(ctx: CanvasRenderingContext2D, _width: number, _height: number): void {
         if (!this.isDrawing && this.points.length === 0) return;
 
+        const path = this.projectionManager.getPathGenerator();
+
         ctx.save();
         ctx.strokeStyle = this.previewColor;
         ctx.lineWidth = 2;
@@ -171,46 +175,54 @@ export class PathInputTool implements InputTool {
 
         let totalDistance = 0;
 
-        // Draw established segments
+        // Draw established segments as geodesic arcs via d3-geo path
         if (this.points.length > 0) {
-            ctx.beginPath();
-            let started = false;
-            let lastPt: Coordinate | null = null;
+            // Draw each segment as a geodesic LineString
+            for (let i = 0; i < this.points.length - 1; i++) {
+                const geojson = { type: 'LineString' as const, coordinates: [this.points[i], this.points[i + 1]] };
+                ctx.beginPath();
+                path(geojson as any);
+                ctx.stroke();
 
-            for (const pt of this.points) {
-                const screen = this.projectionManager.project(pt);
-                if (screen) {
-                    if (!started) {
-                        ctx.moveTo(screen[0], screen[1]);
-                        started = true;
-                    } else {
-                        ctx.lineTo(screen[0], screen[1]);
-                        if (lastPt) {
-                            totalDistance += distance(lastPt, pt) * 6371; // Earth radius in km
-                        }
-                    }
-                    lastPt = pt;
-                }
-            }
+                const segDist = distance(this.points[i], this.points[i + 1]) * this.getPlanetRadius();
+                totalDistance += segDist;
 
-            // Draw elastic line to cursor
-            if (this.mouseGeo && lastPt) {
-                const screen = this.projectionManager.project(this.mouseGeo);
-                if (screen) {
-                    ctx.lineTo(screen[0], screen[1]);
-                    // Show distance of CURRENT segment only (User Request)
-                    const segmentDist = distance(lastPt, this.mouseGeo) * 6371;
-
-                    ctx.fillStyle = '#ffffff';
-                    ctx.font = '12px Sans-Serif';
+                // Show segment distance at midpoint of each committed segment
+                const interp = geoInterpolate(this.points[i], this.points[i + 1]);
+                const midGeo = interp(0.5) as Coordinate;
+                const midScreen = this.projectionManager.project(midGeo);
+                if (midScreen) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                    ctx.font = '11px Sans-Serif';
                     ctx.shadowColor = 'rgba(0,0,0,0.8)';
-                    ctx.shadowBlur = 4;
-                    ctx.fillText(`${Math.round(segmentDist).toLocaleString()} km`, screen[0] + 15, screen[1] - 15);
+                    ctx.shadowBlur = 3;
+                    ctx.fillText(`${Math.round(segDist).toLocaleString()} km`, midScreen[0] + 8, midScreen[1] - 8);
                     ctx.shadowBlur = 0;
                 }
             }
 
-            ctx.stroke();
+            // Draw elastic line to cursor as geodesic
+            const lastPt = this.points[this.points.length - 1];
+            if (this.mouseGeo && lastPt) {
+                const elasticGeo = { type: 'LineString' as const, coordinates: [lastPt, this.mouseGeo] };
+                ctx.beginPath();
+                path(elasticGeo as any);
+                ctx.stroke();
+
+                // Show distance of current elastic segment at its midpoint
+                const segmentDist = distance(lastPt, this.mouseGeo) * this.getPlanetRadius();
+                const interp = geoInterpolate(lastPt, this.mouseGeo);
+                const midGeo = interp(0.5) as Coordinate;
+                const midScreen = this.projectionManager.project(midGeo);
+                if (midScreen) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '12px Sans-Serif';
+                    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+                    ctx.shadowBlur = 4;
+                    ctx.fillText(`${Math.round(segmentDist).toLocaleString()} km`, midScreen[0] + 10, midScreen[1] - 10);
+                    ctx.shadowBlur = 0;
+                }
+            }
 
             // Draw vertices
             ctx.fillStyle = this.previewColor;

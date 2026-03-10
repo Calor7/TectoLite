@@ -18,6 +18,20 @@ export interface Polygon {
   points: Coordinate[]; // Changed to spherical coordinates
   closed: boolean;
   riftEdgeIndices?: number[]; // Indices of points in the ring that form active rift segments
+  edgeStyles?: EdgeStyle[];  // Per-edge type overrides (foundation for future edge-type features)
+}
+
+// Edge identifier for selection
+export interface EdgeRef {
+  plateId: string;
+  polyIndex: number;
+  vertexIndex: number; // Edge is between vertex[i] and vertex[(i+1) % len]
+}
+
+// Per-edge type assignment (foundation for future edge-type color coding)
+export interface EdgeStyle {
+  edgeIndex: number;  // Index into polygon's points array
+  type: LineType;     // 'rift' | 'trench' | 'fault' | 'suture' | 'generic'
 }
 export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'seafloor';
 export type TimeMode = 'positive' | 'negative' | 'ma' | 'ago'; // Legacy - kept for transition, but functionally removed
@@ -321,6 +335,8 @@ export interface TectonicPlate {
   flowlinesDuration?: number; // Duration of trail in Ma (defaults to 50)
   flowlinesTrailCache?: Coordinate[][]; // For rendering
 
+  hideLinkMarker?: boolean; // Hide visual link to parent plate on canvas
+
   center: Coordinate;
 
   // Lifecycle
@@ -364,6 +380,7 @@ export interface WorldState {
   selectedPlateId: string | null;
   selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
   selectedFeatureIds: string[];     // Support multiple selection
+  selectedEdge: EdgeRef | null;     // Currently selected edge element
 
   projection: ProjectionType;
   showGrid: boolean;
@@ -400,6 +417,7 @@ export interface WorldState {
 
     // Visual Options
     showLinks?: boolean;                    // Show plate-to-plate and landmass-to-plate links
+    showHiddenPlates?: boolean;             // Reveal plates even if plate.visible is false
     gridOnTop?: boolean;                    // Render grid above plates instead of below
     plateOpacity?: number;                  // Plate transparency (0-1, default 1.0)
 
@@ -499,6 +517,7 @@ export function createDefaultWorldState(): WorldState {
     selectedPlateId: null,
     selectedFeatureId: null,
     selectedFeatureIds: [],
+    selectedEdge: null,
     globalOptions: {
       planetRadius: 6371, // Earth radius in km
       customPlanetRadius: 6371,
@@ -522,6 +541,7 @@ export function createDefaultWorldState(): WorldState {
 
       // Visual defaults
       showLinks: true,          // Show links by default
+      showHiddenPlates: false,  // Hide invisible plates by default
       gridOnTop: false,         // Grid below plates by default
       plateOpacity: 1.0,        // Full opacity
 

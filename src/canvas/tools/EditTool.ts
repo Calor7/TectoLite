@@ -27,6 +27,13 @@ export class EditTool implements InputTool {
     private lastSpinAngle: number = 0;
     private isSpinning: boolean = false;
 
+    // Snapping State
+    public snappingEnabled: boolean = false;
+    private snapCandidateProvider: (() => Coordinate[]) | null = null;
+    private snapThresholdPx: number = 12;
+    private lastMouseScreenPos: Point = { x: 0, y: 0 };
+    private lastMouseGeo: Coordinate | null = null;
+
     constructor(
         private projectionManager: ProjectionManager,
         private getState: () => AppState,
@@ -37,6 +44,43 @@ export class EditTool implements InputTool {
         // private onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void // Unused
         // _onDragTargetRequest removed as unused
     ) { }
+
+    /** Set a function that provides all candidate vertices for snapping */
+    setSnapCandidateProvider(provider: () => Coordinate[]): void {
+        this.snapCandidateProvider = provider;
+    }
+
+    /** Try to snap a geo coordinate to the nearest existing vertex */
+    private trySnap(geo: Coordinate, screenPos: Point): Coordinate {
+        if (!this.snappingEnabled || !this.snapCandidateProvider) return geo;
+
+        const candidates = this.snapCandidateProvider();
+        let bestDist = this.snapThresholdPx;
+        let bestCandidate: Coordinate | null = null;
+
+        for (const candidate of candidates) {
+            const screen = this.projectionManager.project(candidate);
+            if (!screen) continue;
+            const dx = screen[0] - screenPos.x;
+            const dy = screen[1] - screenPos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestCandidate = candidate;
+            }
+        }
+
+        return bestCandidate || geo;
+    }
+
+    /** Get current snap state for rendering */
+    getSnapState(): { enabled: boolean; mouseScreen: Point; mouseGeo: Coordinate | null } {
+        return {
+            enabled: this.snappingEnabled,
+            mouseScreen: this.lastMouseScreenPos,
+            mouseGeo: this.lastMouseGeo
+        };
+    }
 
     onMouseDown(e: MouseEvent, geo: Coordinate | null, screenPos: Point): void {
         // Right Click: Delete Vertex (User Request)
@@ -145,6 +189,8 @@ export class EditTool implements InputTool {
 
     onMouseMove(e: MouseEvent, geo: Coordinate | null, screenPos: Point): void {
         const state = this.getState();
+        this.lastMouseScreenPos = screenPos;
+        this.lastMouseGeo = geo;
 
         if (this.dragState && geo) {
             const plate = state.world.plates.find(p => p.id === this.dragState!.plateId);
@@ -153,8 +199,10 @@ export class EditTool implements InputTool {
 
             if (this.dragState.operation === 'move_vertex' || this.dragState.operation === 'insert_vertex') {
                 if (this.dragState.polyIndex !== undefined && this.dragState.vertexIndex !== undefined) {
+                    // Apply snapping to vertex drag destination
+                    const snapped = this.trySnap(geo, screenPos);
                     const poly = this.tempPolygons!.polygons[this.dragState.polyIndex];
-                    if (poly) poly.points[this.dragState.vertexIndex] = geo;
+                    if (poly) poly.points[this.dragState.vertexIndex] = snapped;
                 }
             } else if (this.dragState.operation === 'move_plate') {
                 if (!this.dragState.hasMoved && this.dragState.startScreenPoint) {
@@ -276,6 +324,20 @@ export class EditTool implements InputTool {
 
         if (this.dragState?.operation === 'rotate_plate' && this.dragState.startCenter) {
             this.drawRotationWidget(ctx, this.dragState.startCenter);
+        }
+
+        // Draw snap indicator when snapping is active
+        if (this.snappingEnabled && this.lastMouseGeo) {
+            const cursorScreen = this.projectionManager.project(this.lastMouseGeo);
+            if (cursorScreen) {
+                ctx.save();
+                ctx.strokeStyle = '#00ff88';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(cursorScreen[0], cursorScreen[1], 8, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
         }
     }
 
