@@ -112,10 +112,25 @@
     </div>
     <div data-selector="[data-tool='draw']">The <strong style="color:var(--accent-primary);">Draw Tool</strong> allows
       you to sketch new continental structures and oceanic rifts.</div>
+    <div data-selector="#draw-mode-polygon">Draw continuous closed polygons for continents and oceanic plates.</div>
+    <div data-selector="#draw-mode-line">Draw open line segments for rifts, trenches, and faults.</div>
+    <div data-selector="#draw-line-type">Choose the geological type for the line being drawn (Rift, Trench, Fault,
+      etc.).</div>
+    <div data-selector="#draw-polygon-type">Choose the geological composition of the polygon being drawn (Continental
+      Crust, Oceanic, etc.).</div>
+    <div data-selector="#check-vertex-snap">Automatically snap to existing vertices from nearby plates when drawing to
+      create perfect boundaries without gaps.</div>
+
     <div data-selector="[data-tool='edit']">The <strong style="color:var(--accent-primary);">Edit Tool</strong> alters
       existing plate geometries by modifying their vertices.</div>
+    <div data-selector="#btn-edit-apply">Confirm and apply the newly edited plate geometry.</div>
+    <div data-selector="#btn-edit-cancel">Discard custom geometry edits and revert shape.</div>
+
     <div data-selector="[data-tool='split']">The <strong style="color:var(--accent-primary);">Split Tool</strong>
       dissects a plate into two pieces by drawing a boundary through it.</div>
+    <div data-selector="#btn-split-apply">Confirm and apply the split to divide the selected plate.</div>
+    <div data-selector="#btn-split-cancel">Cancel the current split operation.</div>
+
     <div data-selector="[data-tool='link']"
       data-nested='{"kinematics": "Child plates will inherit the rotation (Euler pole) of their parent."}'>
       The <strong style="color:var(--accent-primary);">Link Tool</strong> creates a parent/child hierarchical <span
@@ -123,6 +138,37 @@
     </div>
     <div data-selector="[data-tool='fuse']">The <strong style="color:var(--accent-primary);">Fuse Tool</strong> merges
       two adjacent plates into a single continuous polygon.</div>
+
+    <div data-selector="#motion-mode-select">Change how you interact with plate movement: via classic absolute poles,
+      dynamic pointing, or screen dragging.</div>
+    <div data-selector="#speed-input-cm">The current plate speed in centimeters per year.</div>
+    <div data-selector="#speed-input-deg">The current plate rotational speed in degrees per Mega-annum.</div>
+    <div data-selector="#btn-reposition-pole-north">Force the rotation anchor (Euler Pole) for the selected plate to the
+      geographic North Pole.</div>
+    <div data-selector="#btn-reposition-pole-south">Force the rotation anchor (Euler Pole) for the selected plate to the
+      geographic South Pole.</div>
+    <div data-selector="#check-use-custom-presets">Toggle to define and use your own custom speed presets rather than
+      Earth analogs.</div>
+    <div data-selector="#preset-container-realworld">Preset speeds based on actual Earth tectonic plates (e.g., Pacific,
+      Eurasian, Nazca).</div>
+    <div data-selector="#preset-container-custom">Your customized speed presets for quick access.</div>
+
+    <!-- Modals -->
+    <div data-selector="#apply-edit-modal">Choose how shape edits affect the geological timeline: rewrite history from
+      birth, or insert an instantaneous event.</div>
+    <div data-selector="#btn-apply-generation">Applies your shape changes back to the plate's creation time, modifying
+      all history.</div>
+    <div data-selector="#btn-apply-event">Inserts a 'geometry edit event' at the current timeline year so the change
+      only affects the future.</div>
+    <div data-selector="#drag-target-modal">Confirms the velocity requirements when dynamically dragging a landmass to a
+      target location in time.</div>
+    <div data-selector="#drag-target-input">The target year you want the selected plate to arrive at the dragged
+      location.</div>
+    <div data-selector="#btn-drag-target-confirm">Confirms the dynamically calculated pole and speeds and applies the
+      motion.</div>
+    <div data-selector="#time-input-modal">Manually enter a specific year to jump to in the timeline.</div>
+    <div data-selector="#time-input-field">Type the exact year in Mega-annum (Ma).</div>
+    <div data-selector="#btn-time-input-confirm">Jump to the specified year in the timeline.</div>
 
     <!-- Timeline -->
     <div data-selector="#btn-play">Start or Pause the <strong style="color:var(--accent-primary);">Simulation
@@ -141,6 +187,62 @@
     <!-- Panels -->
     <div data-selector="#properties-panel"><strong style="color:var(--accent-primary);">Properties Panel:</strong> Edit
       selected plate color, name, and oceanic crust settings.</div>
+
+    <!-- Plate Properties Options -->
+    <div data-selector="#prop-name">Change the display name of the selected tectonic plate or geologic feature.</div>
+    <div data-selector="#prop-visible">Toggles whether this specific plate is currently rendered.</div>
+    <div data-selector="#prop-locked">Lock the plate to prevent accidental edits or movement.</div>
+    <div data-selector="#prop-description">Add personal notes or geologic history descriptions for this plate.</div>
+    <div data-selector="#prop-color">Change the base color used to render the polygon fill.</div>
+    <div data-selector="#prop-line-type">Change what type of boundary (Rift, Trench, Fault, etc.) this line represents.
+    </div>
+    <div data-selector="#prop-rift-mode">Controls whether generating this new rift is forced, prevented, or defaults to
+      global rules.</div>
+    <div data-selector="#prop-polygon-type">The geological type of this plate (e.g., core Craton vs Oceanic Crust).
+    </div>
+    <div data-selector="#prop-density">The specific chemical density of the plate crust, which affects subduction
+      interactions.</div>
+    <div data-selector="#prop-elevation">The base topographic elevation in meters for this landmass.</div>
+    <div data-selector="#prop-z-index">The rendering layer priority. Higher numbers render on top.</div>
+    <div data-selector="#prop-birth-time">The exact timeline year (Ma) when this feature appears in the simulation.
+    </div>
+    <div data-selector="#prop-death-time">The exact timeline year (Ma) when this feature vanishes or is completely
+      subducted.</div>
+
+    <!-- Lineage & Flowlines Options -->
+    <div data-selector="#prop-hide-link">Hides the visual dotted line connecting this plate to its kinematic parent.
+    </div>
+    <div data-selector=".child-link-hide">Hides the visual dotted line connecting this parent plate to a specific child.
+    </div>
+    <div data-selector="#prop-link-time">The timeline year (Ma) when the kinematic link becomes active.</div>
+    <div data-selector="#prop-unlink-time">The timeline year (Ma) when the plates severe their kinematic relationship.
+    </div>
+    <div data-selector="#prop-flowlines-enable">Enables visualization trails showing the exact path vertices have taken
+      over time.</div>
+    <div data-selector="#prop-flowlines-top">Forces flowlines to draw visually on top of the plate geometries.</div>
+    <div data-selector="#prop-flowlines-fade">Activates a fading gradient on flowlines over time to reduce visual
+      clutter.</div>
+    <div data-selector="#prop-flowlines-duration">How many millions of years into the past the flowline trail should
+      extend.</div>
+
+    <!-- Motion & Copy Options -->
+    <div data-selector="#prop-pole-lon">The Longitude coordinate for the Euler pole rotational anchor.</div>
+    <div data-selector="#prop-pole-lat">The Latitude coordinate for the Euler pole rotational anchor.</div>
+    <div data-selector="#prop-pole-vis">Toggles the visual marker for this plate's specific rotational axis pole.</div>
+    <div data-selector="#cb-copy-speed">When copying, include the angular rotation speed.</div>
+    <div data-selector="#cb-copy-pole">When copying, include the exact Euler pole coordinate location.</div>
+    <div data-selector="#btn-copy-momentum">Copy the current direction and speed of this plate into memory.</div>
+    <div data-selector="#btn-paste-momentum">Apply the memorized direction and speed to the currently selected plate.
+    </div>
+    <div data-selector="#btn-delete-plate">Permanently delete this plate and immediately remove it from the simulation.
+    </div>
+
+    <!-- Plume Options -->
+    <div data-selector="#prop-plume-active">Toggles whether the mantle plume is actively erupting over time.</div>
+    <div data-selector="#prop-plume-rate-main">Overrides the global hotspot spawn rate and specifies how often this
+      specific plume generates new land.</div>
+    <div data-selector="#btn-delete-plume">Permanently remove this mantle plume.</div>
+
     <div data-selector="#timeline-panel"><strong style="color:var(--accent-primary);">Timeline Box:</strong> View recent
       significant geological events like continent splits and collisions.</div>
     <div data-selector="#plate-sidebar">The <strong style="color:var(--accent-primary);">Explorer</strong> lists all
