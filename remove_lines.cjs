@@ -1,50 +1,38 @@
+@
 const fs = require('fs');
-const path = 'src/SplitTool.ts';
-try {
-    const content = fs.readFileSync(path, 'utf8');
-    const lines = content.split(/\r?\n/);
+let code = fs.readFileSync('src/SplitTool.ts', 'utf8');
+let lines = code.split(/\r?\n/);
 
-    const startMarker = '    // Helper to update a plate\'s rift connections';
-    // We need to be careful with the end marker. It's just a closure.
-    // Let's find the start, then count braces to find the end of the function?
-    // Or just look for the indentation level.
-
-    let startIndex = -1;
-    let endIndex = -1;
-
-    for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes(startMarker)) {
-            startIndex = i;
-            break;
-        }
-    }
-
-    if (startIndex !== -1) {
-        // Find the matching closing brace for the function at line startIndex + 1
-        // The function starts at startIndex + 1: "    const updatePlateRiftConnections = ..."
-        // We can just iterate until we find the closing brace at the same indentation level.
-        // Or we can just look for the known end line context if we trust it hasn't moved much.
-        // Let's use a simpler approach: look for the closing brace of the function.
-        // The function started with 4 spaces indentation.
-        // Expecting end at "    };"
-
-        for (let i = startIndex + 1; i < lines.length; i++) {
-            if (lines[i] === '    };') {
-                endIndex = i;
-                break;
-            }
-        }
-    }
-
-    if (startIndex !== -1 && endIndex !== -1) {
-        console.log(`Removing lines ${startIndex} to ${endIndex}`);
-        lines.splice(startIndex, endIndex - startIndex + 1);
-        fs.writeFileSync(path, lines.join('\n'));
-        console.log('File updated successfully.');
-    } else {
-        console.log('Could not find start or end markers.');
-        console.log('Start:', startIndex, 'End:', endIndex);
-    }
-} catch (e) {
-    console.error('Error:', e);
+function removeLines(start, end) {
+   for(let i=start-1; i <= end-1; i++) {
+        lines[i] = '';
+   }
 }
+
+removeLines(545, 912); // LRift
+removeLines(1041, 1080); // Rift plate creation
+lines[1330] = ''; // ...(riftPlate...)
+
+lines[1021] = ''; // let riftAxisPath
+lines[1163] = ''; // connectedRiftIds
+lines[1164] = ''; // connectedRiftId
+lines[1189] = ''; 
+lines[1190] = ''; 
+
+removeLines(1115, 1143); 
+
+lines[1128] = ''; 
+lines[1129] = ''; 
+lines[1249] = ''; 
+lines[1250] = ''; 
+lines[1266] = ''; 
+lines[1283] = ''; 
+lines[1293] = ''; 
+lines[1321] = ''; 
+
+lines[1162] = lines[1162] + '\n        siblingSystem: true,'; 
+lines[1188] = lines[1188] + '\n        siblingSystem: true,';
+
+fs.writeFileSync('src/SplitTool.ts', lines.join('\n'));
+console.log('Removed successfully.');
+@

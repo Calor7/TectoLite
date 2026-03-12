@@ -439,9 +439,15 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
           <div class="right-sidebar" id="right-sidebar">
             <aside class="properties-panel" id="properties-panel">
-                <h3 class="panel-title" id="properties-panel-title">Properties</h3>
+                <h3 class="panel-title" id="properties-panel-title">Plate Properties</h3>
                 <div id="properties-content">
                   <p class="empty-message">Select a plate to edit properties</p>
+                </div>
+            </aside>
+            <aside class="properties-panel" id="edge-properties-panel" style="display: none; border-top: 1px solid var(--border-default); margin-top: 8px; padding-top: 8px;">
+                <h3 class="panel-title">Edge Details</h3>
+                <div id="edge-properties-content">
+                  <!-- JS Populated -->
                 </div>
             </aside>
             <div id="timeline-panel" class="timeline-panel">

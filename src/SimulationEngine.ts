@@ -201,22 +201,18 @@ export class SimulationEngine {
                 newPlates = newPlates.filter(p => !p.slabId?.endsWith('_growing'));
 
                 const interval = globalOptions.oceanicGenerationInterval || 25;
-                const riftSlabs = this.generateRiftCrust(newPlates, newTime, interval);
-                if (riftSlabs.length > 0) {
-                    newPlates = [...newPlates, ...riftSlabs];
-                    // Note: generateRiftCrust might mutate 'newPlates' to remove rift indices from parents
-                    // But we passed newPlates by content. 
-                    // To handle handover, generateRiftCrust should return modified parents OR we blindly add children 
-                    // and rely on the fact that we modify the OBJECT refs in newPlates?
-                    // actually map() in update() creates shallow copies.
-                    // generateRiftCrust will need to modify the objects in the array OR return a "patch".
+                
+                // NEW PATH: sibling-based
+                const siblingSlabs = this.generateSiblingCrust(newPlates, newTime, interval);
+                
+                // LEGACY PATH: rift-based (for old plates without siblingSystem flag)
+                const legacySlabs = this.generateRiftCrust(
+                    newPlates.filter(p => !p.siblingSystem), newTime, interval
+                );
+                
+                if (siblingSlabs.length > 0 || legacySlabs.length > 0) {
+                    newPlates = [...newPlates, ...siblingSlabs, ...legacySlabs];
                 }
-            } else if (globalOptions.enableAutoOceanicCrust) {
-                // --- LEGACY FLOWLINE GENERATION ---
-                // (Kept as fallback if enabled and Rifts disabled, or just remove as per plan?)
-                // Plan says "Remove... and its calls".
-                // But user didn't explicitly say "delete the code", just "replace current... generation".
-                // I'll comment it out or remove it to keep it clean.
             }
 
             // Calculate Boundaries if enabled
@@ -550,6 +546,278 @@ export class SimulationEngine {
                             linkTime: currentTime,
                             connectedRiftIds: [rift.id],
                             connectedRiftId: rift.id
+                        });
+                    }
+                }
+            }
+        }
+        return newStrips;
+    }
+
+    private generateSiblingCrust(currentPlates: TectonicPlate[], currentTime: number, interval: number): TectonicPlate[] {
+        const newStrips: TectonicPlate[] = [];
+        const RIFT_GRID_RESOLUTION = 2.0;
+
+        const activePlates = currentPlates.filter(p =>
+            p.siblingSystem && p.birthTime <= currentTime && (p.deathTime === null || p.deathTime > currentTime)
+        );
+
+        for (const plate of activePlates) {
+            for (let polyIdx = 0; polyIdx < plate.polygons.length; polyIdx++) {
+                const poly = plate.polygons[polyIdx];
+                if (!poly.edgeMeta) continue;
+
+                const activeGroupIds = new Set<string>();
+                for (const meta of poly.edgeMeta) {
+                    if (meta.siblings) {
+                        for (const s of meta.siblings) {
+                            if (!s.frozen && s.siblingPlateId) {
+                                activeGroupIds.add(s.groupId);
+                            }
+                        }
+                    }
+                }
+
+                for (const groupId of activeGroupIds) {
+                    const pEdges = poly.edgeMeta.filter(m => m.siblings?.some(s => s.groupId === groupId && !s.frozen));
+                    if (pEdges.length === 0) continue;
+                    
+                    pEdges.sort((a, b) => a.edgeIndex - b.edgeIndex);
+
+                    const firstSibling = pEdges[0].siblings!.find(s => s.groupId === groupId && !s.frozen)!;
+                    const qId = firstSibling.siblingPlateId;
+                    const qPlate = currentPlates.find(p => p.id === qId);
+                    if (!qPlate || (qPlate.deathTime !== null && qPlate.deathTime <= currentTime)) continue;
+
+                    let qEdges: import('./types').EdgeMeta[] = [];
+                    let qPolyIndex = -1;
+                    
+                    for (let qi = 0; qi < qPlate.polygons.length; qi++) {
+                        const qp = qPlate.polygons[qi];
+                        if (qp.edgeMeta) {
+                            const edges = qp.edgeMeta.filter(m => m.siblings?.some(s => s.groupId === groupId && !s.frozen));
+                            if (edges.length > 0) {
+                                qEdges = edges;
+                                qPolyIndex = qi;
+                                break;
+                            }
+                        }
+                    }
+                    if (qEdges.length === 0 || qPolyIndex === -1) continue;
+                    const qPoly = qPlate.polygons[qPolyIndex];
+
+                    qEdges.sort((a, b) => a.edgeIndex - b.edgeIndex);
+
+                    const getEdgePoints = (polygon: import('./types').Polygon, edges: import('./types').EdgeMeta[]): Coordinate[] => {
+                        const pts: Coordinate[] = [];
+                        for (const edge of edges) {
+                            pts.push(polygon.points[edge.edgeIndex]);
+                        }
+                        if (edges.length > 0) {
+                            const lastEdge = edges[edges.length - 1].edgeIndex;
+                            pts.push(polygon.points[(lastEdge + 1) % polygon.points.length]);
+                        }
+                        return this.interpolatePoints(pts, RIFT_GRID_RESOLUTION);
+                    };
+
+                    const getLatestPermanentStrip = () => {
+                        const candidates = [...currentPlates, ...newStrips]
+                            .filter(p =>
+                                p.type === 'oceanic' &&
+                                p.linkedToPlateId === plate.id &&
+                                p.slabId && p.slabId.includes(`_${groupId}_`) &&
+                                !p.slabId.endsWith('_growing')
+                            )
+                            .sort((a, b) => b.birthTime - a.birthTime);
+                        return candidates[0];
+                    };
+
+                    const groupBirth = firstSibling.createdAt;
+
+                    let lastStrip = getLatestPermanentStrip();
+                    let nextGenerationTime = lastStrip
+                        ? lastStrip.birthTime + interval
+                        : (Math.floor(groupBirth / interval) + 1) * interval;
+
+                    while (nextGenerationTime <= currentTime) {
+                        const generationTime = nextGenerationTime;
+                        nextGenerationTime += interval;
+
+                        if (generationTime <= groupBirth) continue;
+                        const stripId = `${plate.id}_${groupId}_strip_${generationTime}`;
+                        const alreadyExists = currentPlates.some(p => p.slabId === stripId) || newStrips.some(p => p.slabId === stripId);
+                        if (alreadyExists) continue;
+
+                        lastStrip = getLatestPermanentStrip();
+
+                        // 1. Get History of this plate (P) and sibling plate (Q) at Generation Time
+                        const pAtBirth = this.calculatePlateAtTime(plate, generationTime, currentPlates);
+                        const qAtBirth = this.calculatePlateAtTime(qPlate, generationTime, currentPlates);
+
+                        const pBirthPoly = pAtBirth.polygons[polyIdx];
+                        const qBirthPoly = qAtBirth.polygons[qPolyIndex];
+                        
+                        if (!pBirthPoly || !qBirthPoly) continue;
+                        
+                        const rawOldEdgePts = getEdgePoints(pBirthPoly, pEdges);
+                        const rawYoungEdgePts = getEdgePoints(qBirthPoly, qEdges);
+
+                        const oldEdge = rawOldEdgePts.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
+                        const youngEdgeP = rawYoungEdgePts.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
+
+                        if (youngEdgeP.length < 2 || oldEdge.length < 2) continue;
+
+                        const ring = [...oldEdge, ...[...youngEdgeP].reverse(), oldEdge[0]];
+                        const numOldPoints = oldEdge.length;
+                        const numYoungPoints = youngEdgeP.length;
+
+                        const pFacingEdgeMeta: import('./types').EdgeMeta[] = [];
+                        for(let i=0; i < numOldPoints - 1; i++) {
+                            pFacingEdgeMeta.push({
+                                edgeIndex: i,
+                                type: 'rift',
+                                sourceId: groupId,
+                                siblings: [{
+                                    id: generateId(),
+                                    siblingPlateId: plate.id,
+                                    siblingPolyIndex: polyIdx,
+                                    siblingEdgeIndex: pEdges[Math.min(i, pEdges.length - 1)].edgeIndex,
+                                    groupId,
+                                    frozen: true,
+                                    createdAt: generationTime
+                                }]
+                            });
+                        }
+                        
+                        const qFacingEdgeMeta: import('./types').EdgeMeta[] = [];
+                        for(let i=0; i < numYoungPoints - 1; i++) {
+                           const edgeIndex = numOldPoints + i;
+                           const qEdgeMatch = qEdges[qEdges.length - 1 - Math.min(i, qEdges.length - 1)];
+                           
+                           qFacingEdgeMeta.push({
+                               edgeIndex: edgeIndex,
+                               type: 'rift',
+                               sourceId: groupId,
+                               siblings: [{
+                                   id: generateId(),
+                                   siblingPlateId: qPlate.id,
+                                   siblingPolyIndex: qPolyIndex,
+                                   siblingEdgeIndex: qEdgeMatch.edgeIndex,
+                                   groupId,
+                                   frozen: false,
+                                   createdAt: generationTime
+                               }]
+                           });
+                           
+                           const targetQEdge = qPoly.edgeMeta!.find(e => e.edgeIndex === qEdgeMatch.edgeIndex);
+                           if (targetQEdge) {
+                               const targetQSib = targetQEdge.siblings?.find(s => s.groupId === groupId && !s.frozen);
+                               if (targetQSib) {
+                                   targetQSib.siblingPlateId = stripId;
+                                   targetQSib.siblingPolyIndex = 0;
+                                   targetQSib.siblingEdgeIndex = edgeIndex;
+                               }
+                           }
+                        }
+                        
+                        for (const pEdge of pEdges) {
+                            const targetPSib = pEdge.siblings?.find(s => s.groupId === groupId && !s.frozen);
+                            if (targetPSib) {
+                                targetPSib.frozen = true;
+                            }
+                        }
+
+                        const newPlateId = generateId();
+                        for (let qi=0; qi < qPlate.polygons.length; qi++) {
+                            const qp = qPlate.polygons[qi];
+                            if (qp.edgeMeta) {
+                                for(const qmeta of qp.edgeMeta) {
+                                    if (qmeta.siblings) {
+                                        for(const qsib of qmeta.siblings) {
+                                            if (qsib.groupId === groupId && qsib.siblingPlateId === stripId) {
+                                                qsib.siblingPlateId = newPlateId;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        newStrips.push({
+                            id: newPlateId,
+                            slabId: stripId,
+                            name: `${plate.name} Crust ${generationTime}Ma`,
+                            type: 'oceanic',
+                            polygonType: 'oceanic_plate',
+                            color: this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6',
+                            zIndex: (plate.zIndex || 0) - 1,
+                            birthTime: generationTime,
+                            deathTime: null,
+                            visible: true,
+                            locked: false,
+                            center: calculateSphericalCentroid(ring),
+                            polygons: [{
+                                id: generateId(),
+                                points: ring,
+                                closed: true,
+                                edgeMeta: [...pFacingEdgeMeta, ...qFacingEdgeMeta]
+                            }],
+                            features: [],
+                            initialPolygons: [{
+                                id: generateId(),
+                                points: ring,
+                                closed: true,
+                                edgeMeta: [...pFacingEdgeMeta, ...qFacingEdgeMeta]
+                            }],
+                            initialFeatures: [],
+                            motion: createDefaultMotion(),
+                            motionKeyframes: [],
+                            events: [],
+                            linkedToPlateId: plate.id,
+                            linkTime: currentTime,
+                            connectedRiftIds: [],
+                            siblingSystem: true
+                        });
+                    }
+
+                    const pCurrentPts = getEdgePoints(poly, pEdges);
+                    const qCurrentPts = getEdgePoints(qPoly, qEdges);
+
+                    if (pCurrentPts.length >= 2 && qCurrentPts.length >= 2) {
+                        const ring = [...pCurrentPts, ...[...qCurrentPts].reverse(), pCurrentPts[0]];
+                        newStrips.push({
+                            id: generateId(),
+                            slabId: `${plate.id}_${groupId}_growing`,
+                            name: `${plate.name} Active Crust`,
+                            type: 'oceanic',
+                            polygonType: 'oceanic_plate',
+                            color: '#60a5fa',
+                            zIndex: (plate.zIndex || 0) - 1,
+                            birthTime: currentTime,
+                            deathTime: null,
+                            visible: true,
+                            locked: false,
+                            center: calculateSphericalCentroid(ring),
+                            polygons: [{
+                                id: generateId(),
+                                points: ring,
+                                closed: true,
+                                edgeMeta: []
+                            }],
+                            features: [],
+                            initialPolygons: [{
+                                id: generateId(),
+                                points: ring,
+                                closed: true
+                            }],
+                            initialFeatures: [],
+                            motion: createDefaultMotion(),
+                            motionKeyframes: [],
+                            events: [],
+                            linkedToPlateId: plate.id,
+                            linkTime: currentTime,
+                            connectedRiftIds: [],
+                            siblingSystem: true
                         });
                     }
                 }

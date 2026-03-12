@@ -3,7 +3,7 @@ import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
 import { MotionGizmo } from './MotionGizmo';
-import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid, distance } from '../utils/sphericalMath';
+import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid } from '../utils/sphericalMath';
 
 import { InputTool } from './tools/InputTool';
 import { PathInputTool } from './tools/PathInputTool';
@@ -574,6 +574,7 @@ export class CanvasManager {
         }
 
         this.drawPlates(state, path);
+        this.drawDerivedRiftLines(state, path);
         this.drawSelectedEdge();
         this.drawEventIcons(state);
         this.drawPlumes(state);
@@ -770,6 +771,91 @@ export class CanvasManager {
         if (state.world.globalOptions.enableBoundaryVisualization && state.world.boundaries) {
             this.drawBoundaries(state.world.boundaries, path);
         }
+    }
+
+    private drawDerivedRiftLines(state: AppState, path: any) {
+        const RIFT_COLOR = '#ff4444';
+        this.ctx.strokeStyle = RIFT_COLOR;
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash([12, 4]);
+
+        for (const plate of state.world.plates) {
+            if (!plate.siblingSystem || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
+            
+            for (const poly of plate.polygons) {
+                if (!poly.edgeMeta) continue;
+                 
+                const activeGroupIds = new Set<string>();
+                for (const meta of poly.edgeMeta) {
+                    if (meta.siblings) {
+                        for (const s of meta.siblings) {
+                            if (!s.frozen && s.siblingPlateId) {
+                                if (plate.id < s.siblingPlateId) {
+                                    activeGroupIds.add(s.groupId);
+                                }
+                            }
+                        }
+                    }
+                }
+                 
+                for (const groupId of activeGroupIds) {
+                    const pEdges = poly.edgeMeta.filter(m => m.siblings?.some(s => s.groupId === groupId && !s.frozen));
+                    if (pEdges.length === 0) continue;
+                      
+                    const qId = pEdges[0].siblings!.find(s => s.groupId === groupId && !s.frozen)!.siblingPlateId;
+                    const qPlate = state.world.plates.find(p => p.id === qId);
+                    if (!qPlate || (qPlate.deathTime !== null && state.world.currentTime >= qPlate.deathTime)) continue;
+                      
+                    let qEdges: import('../types').EdgeMeta[] = [];
+                    let qPolyIndex = -1;
+                    for (let qi = 0; qi < qPlate.polygons.length; qi++) {
+                        if (qPlate.polygons[qi].edgeMeta) {
+                            const edges = qPlate.polygons[qi].edgeMeta!.filter(m => m.siblings?.some(s => s.groupId === groupId && !s.frozen));
+                            if (edges.length > 0) {
+                                qEdges = edges;
+                                qPolyIndex = qi;
+                                break;
+                            }
+                        }
+                    }
+                      
+                    if (qEdges.length === 0) continue;
+                      
+                    pEdges.sort((a,b) => a.edgeIndex - b.edgeIndex);
+                    qEdges.sort((a,b) => a.edgeIndex - b.edgeIndex);
+                      
+                    const getEdgePts = (polyPts: Coordinate[], edges: import('../types').EdgeMeta[]) => {
+                        const pts: Coordinate[] = [];
+                        for (const edge of edges) pts.push(polyPts[edge.edgeIndex]);
+                        if (edges.length > 0) {
+                            pts.push(polyPts[(edges[edges.length - 1].edgeIndex + 1) % polyPts.length]);
+                        }
+                        return pts;
+                    };
+                      
+                    const pPts = getEdgePts(poly.points, pEdges);
+                    const qPts = getEdgePts(qPlate.polygons[qPolyIndex].points, qEdges);
+                      
+                    if (pPts.length < 2 || qPts.length < 2) continue;
+                      
+                    const midpoints: Coordinate[] = [];
+                    const qPtsRev = [...qPts].reverse();
+                    for(let i = 0; i < Math.min(pPts.length, qPtsRev.length); i++) {
+                        const pV = latLonToVector(pPts[i]);
+                        const qV = latLonToVector(qPtsRev[i]);
+                        const midV = normalize({ x: (pV.x + qV.x)/2, y: (pV.y + qV.y)/2, z: (pV.z + qV.z)/2 });
+                        midpoints.push(vectorToLatLon(midV));
+                    }
+                      
+                    if (midpoints.length >= 2) {
+                        this.ctx.beginPath();
+                        path({ type: 'LineString', coordinates: midpoints });
+                        this.ctx.stroke();
+                    }
+                }
+            }
+        }
+        this.ctx.setLineDash([]);
     }
 
     private drawImageOverlay(state: AppState): void {

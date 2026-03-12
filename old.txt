@@ -1,0 +1,133 @@
+interface SplitResult {
+    points: Coordinate[];
+    riftIndices: number[];
+    cutPath?: Coordinate[]; // The actual split line segment
+}
+
+// Split polygon using polyline - returns [leftPolygon, rightPolygon] with rift info
+function splitPolygonWithPolyline(
+    polygonPoints: Coordinate[],
+    polylinePoints: Coordinate[],
+    existingRiftIndices?: number[]
+): [SplitResult, SplitResult] {
+    const defaultResult: [SplitResult, SplitResult] = [
+        { points: polygonPoints, riftIndices: existingRiftIndices || [] },
+        { points: [], riftIndices: [] }
+    ];
+
+    if (polylinePoints.length < 2 || polygonPoints.length < 3) {
+        return defaultResult;
+    }
+
+    // Find entry and exit points where polyline crosses polygon boundary
+    const crossings: { index: number; point: Coordinate; polylineIdx: number }[] = [];
+
+    for (let pi = 0; pi < polylinePoints.length - 1; pi++) {
+        const pStart = polylinePoints[pi];
+        const pEnd = polylinePoints[pi + 1];
+
+        for (let bi = 0; bi < polygonPoints.length; bi++) {
+            const bStart = polygonPoints[bi];
+            const bEnd = polygonPoints[(bi + 1) % polygonPoints.length];
+
+            const intersection = findSegmentIntersection(pStart, pEnd, bStart, bEnd);
+            if (intersection) {
+                crossings.push({ index: bi, point: intersection, polylineIdx: pi });
+            }
+        }
+    }
+
+    if (crossings.length < 2) {
+        return defaultResult;
+    }
+
+    // Sort crossings by polyline index (first along the cut)
+    crossings.sort((a, b) => a.polylineIdx - b.polylineIdx);
+
+    const firstCrossing = crossings[0];
+    const secondCrossing = crossings[crossings.length - 1];
+
+    // Get the polyline points between crossings
+    const cutSegment: Coordinate[] = [];
+    const intermediatePoints = polylinePoints.slice(
+        firstCrossing.polylineIdx + 1,
+        secondCrossing.polylineIdx + 1
+    );
+    cutSegment.push(...intermediatePoints);
+
+    // --- CONSTRUCT POLYGON A ---
+    const polyA: Coordinate[] = [];
+    const riftA: number[] = [];
+
+    // 1. First Crossing Point
+    polyA.push(firstCrossing.point);
+
+    // 2. Boundary Segment: From First Crossing -> Second Crossing
+    let idx = (firstCrossing.index + 1) % polygonPoints.length;
+
+    if (isRiftEdge(firstCrossing.index, existingRiftIndices)) {
+        riftA.push(polyA.length - 1);
+    }
+
+    while (idx !== (secondCrossing.index + 1) % polygonPoints.length) {
+        polyA.push(polygonPoints[idx]);
+        if (isRiftEdge(idx, existingRiftIndices)) {
+            riftA.push(polyA.length - 1);
+        }
+        idx = (idx + 1) % polygonPoints.length;
+    }
+
+    polyA.push(secondCrossing.point);
+
+    // 4. Cut Segment (Reversed) -> Closing Loop (NEW RIFT)
+    const cutRev = [...cutSegment].reverse();
+    riftA.push(polyA.length - 1);
+
+    for (const p of cutRev) {
+        polyA.push(p);
+        riftA.push(polyA.length - 1);
+    }
+    riftA.push(polyA.length - 1);
+
+
+    // --- CONSTRUCT POLYGON B ---
+    const polyB: Coordinate[] = [];
+    const riftB: number[] = [];
+
+    // 1. Second Crossing Point
+    polyB.push(secondCrossing.point);
+
+    // 2. Boundary Segment: From Second Crossing -> First Crossing
+    if (isRiftEdge(secondCrossing.index, existingRiftIndices)) {
+        riftB.push(polyB.length - 1);
+    }
+
+    idx = (secondCrossing.index + 1) % polygonPoints.length;
+    while (idx !== (firstCrossing.index + 1) % polygonPoints.length) {
+        polyB.push(polygonPoints[idx]);
+        if (isRiftEdge(idx, existingRiftIndices)) {
+            riftB.push(polyB.length - 1);
+        }
+        idx = (idx + 1) % polygonPoints.length;
+    }
+
+    polyB.push(firstCrossing.point);
+
+    // 4. Cut Segment (Forward) (NEW RIFT)
+    riftB.push(polyB.length - 1);
+
+    for (const p of cutSegment) {
+        polyB.push(p);
+        riftB.push(polyB.length - 1);
+    }
+    riftB.push(polyB.length - 1);
+
+    const fullCutPath = [firstCrossing.point, ...cutSegment, secondCrossing.point];
+
+    return [
+        { points: polyA, riftIndices: riftA, cutPath: fullCutPath },
+        { points: polyB, riftIndices: riftB, cutPath: fullCutPath }
+    ];
+
+}
+

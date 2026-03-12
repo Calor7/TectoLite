@@ -13,12 +13,51 @@ export type ProjectionType = 'equirectangular' | 'mollweide' | 'mercator' | 'rob
 
 export type InteractionMode = 'classic' | 'dynamic_pole' | 'drag_target';
 
+/** Links one edge on this polygon to an edge on another plate/polygon */
+export interface SiblingAssignment {
+  id: string;                  // Unique assignment ID (for manual removal)
+  siblingPlateId: string;      // Plate the sibling edge lives on
+  siblingPolyIndex: number;    // Polygon index on that plate
+  siblingEdgeIndex: number;    // Edge index on that polygon
+  groupId: string;             // Groups multiple edge-pairs into one logical rift arm
+  frozen: boolean;             // True when this pair has been superseded by a strip's young edge
+  createdAt: number;           // Geological time when assignment was made (split time)
+}
+
+/** Per-edge metadata. edgeIndex = edge from points[i] → points[(i+1) % len] */
+export interface EdgeMeta {
+  edgeIndex: number;
+  type: LineType;                    // 'rift' | 'trench' | 'fault' | 'suture' | 'generic'
+  sourceId?: string;                 // Entity that "owns" this edge (plate ID, rift group ID)
+  siblings?: SiblingAssignment[];    // 0, 1, or 2+ sibling assignments (non-exclusive)
+}
+
 export interface Polygon {
   id: string;
   points: Coordinate[]; // Changed to spherical coordinates
   closed: boolean;
-  riftEdgeIndices?: number[]; // Indices of points in the ring that form active rift segments
-  edgeStyles?: EdgeStyle[];  // Per-edge type overrides (foundation for future edge-type features)
+  edgeMeta?: EdgeMeta[];             // NEW: per-edge metadata with siblings
+  riftEdgeIndices?: number[];        // DEPRECATED: kept for migration, derived from edgeMeta
+  edgeStyles?: EdgeStyle[];          // DEPRECATED: kept for migration, derived from edgeMeta
+}
+
+export function getRiftEdgeIndices(poly: Polygon): number[] {
+  if (poly.edgeMeta) {
+    return poly.edgeMeta.filter(e => e.type === 'rift').map(e => e.edgeIndex);
+  }
+  return poly.riftEdgeIndices || [];
+}
+
+export function getEdgesForSiblingGroup(poly: Polygon, groupId: string): EdgeMeta[] {
+  return (poly.edgeMeta || []).filter(e =>
+    e.siblings?.some(s => s.groupId === groupId)
+  );
+}
+
+export function getActiveSiblingEdges(poly: Polygon): EdgeMeta[] {
+  return (poly.edgeMeta || []).filter(e =>
+    e.siblings?.some(s => !s.frozen)
+  );
 }
 
 // Edge identifier for selection
@@ -344,6 +383,8 @@ export interface TectonicPlate {
   deathTime: number | null; // Time when plate was destroyed/split (null if active)
   parentPlateId?: string; // ID of parent plate if this plate was created from a split
   parentPlateIds?: string[]; // IDs of parent plates (used for fusion and splits)
+
+  siblingSystem?: boolean;  // True = uses EdgeMeta siblings for crust generation. False/undefined = legacy
 
   // Geometry at birthTime (Basis for initial keyframe)
   initialPolygons: Polygon[];

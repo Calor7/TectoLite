@@ -1,0 +1,431 @@
+191: 
+192:                 if (plate.locked) return plate;
+193: 
+194:                 return this.calculatePlateAtTime(plate, newTime, state.world.plates);
+195:             });
+196: 
+197:             // --- AUTOMATED OCEANIC CRUST "EXPANDING RIFT" GENERATION ---
+198:             if (globalOptions.enableExpandingRifts !== false) { // Default true
+199:                 // CLEANUP: Remove old "growing" strips (active gap fillers) so they can be regenerated fresh
+200:                 // This prevents duplicates and ensures the active strip always matches current rift position
+201:                 newPlates = newPlates.filter(p => !p.slabId?.endsWith('_growing'));
+202: 
+203:                 const interval = globalOptions.oceanicGenerationInterval || 25;
+204:                 const riftSlabs = this.generateRiftCrust(newPlates, newTime, interval);
+205:                 if (riftSlabs.length > 0) {
+206:                     newPlates = [...newPlates, ...riftSlabs];
+207:                     // Note: generateRiftCrust might mutate 'newPlates' to remove rift indices from parents
+208:                     // But we passed newPlates by content. 
+209:                     // To handle handover, generateRiftCrust should return modified parents OR we blindly add children 
+210:                     // and rely on the fact that we modify the OBJECT refs in newPlates?
+211:                     // actually map() in update() creates shallow copies.
+212:                     // generateRiftCrust will need to modify the objects in the array OR return a "patch".
+213:                 }
+214:             } else if (globalOptions.enableAutoOceanicCrust) {
+215:                 // --- LEGACY FLOWLINE GENERATION ---
+216:                 // (Kept as fallback if enabled and Rifts disabled, or just remove as per plan?)
+217:                 // Plan says "Remove... and its calls".
+218:                 // But user didn't explicitly say "delete the code", just "replace current... generation".
+219:                 // I'll comment it out or remove it to keep it clean.
+220:             }
+221: 
+222:             // Calculate Boundaries if enabled
+223:             // ALWAYS update boundaries if Visualization OR Guided Creation is enabled.
+224:             // If none are on, clear boundaries to prevent stale artifacts.
+225:             const boundaries = (globalOptions.enableBoundaryVisualization ||
+226:                 globalOptions.enableGuidedCreation ||
+227:                 globalOptions.pauseOnFusionSuggestion)
+228:                 ? BoundarySystem.detectBoundaries(newPlates, newTime)
+229:                 : [];
+230: 
+231:             // Phase 3: Geological Automation — DISABLED (features removed)
+232:             const tempState = {
+233:                 ...state,
+234:                 world: {
+235:                     ...state.world,
+236:                     plates: newPlates,
+237:                     boundaries: boundaries,
+238:                     currentTime: newTime
+239:                 }
+240:             };
+241:             const postAutomationState = tempState; // Bypass automation
+242: 
+243:             // Phase 4: Event System (detect tectonic events for guided creation)
+244:             const postEventState = eventSystem.update(postAutomationState);
+245:             const finalState = this.eventEffectsProcessor.update(postEventState);
+246: 
+247:             return finalState;
+248:         });
+249:         this.updateFlowlines();
+250:     }
+251: 
+252:     // Helper: Interpolate points along a polyline to a fixed resolution (e.g. 1 degree)
+253:     private interpolatePoints(points: Coordinate[], resolution: number): Coordinate[] {
+254:         if (points.length < 2) return points;
+255:         const result: Coordinate[] = [points[0]];
+256: 
+257:         for (let i = 0; i < points.length - 1; i++) {
+258:             const p1 = points[i];
+259:             const p2 = points[i + 1];
+260: 
+261:             // Spherical distance without import loop? Using class helper or just simple approx?
+262:             // SimulationEngine imports from sphericalMath, so we use that.
+263:             // But 'distance' wasn't imported. Let's assume linear interpolation on lat/lon for simplicity 
+264:             // OR proper slerp if vectors available. 
+265:             // Given the typical scale, linear lat/lon interp is "okay" for short segments but bad for long ones.
+266:             // Let's use a robust Vector3 slerp/nlerp approach.
+267: 
+268:             const v1 = latLonToVector(p1);
+269:             const v2 = latLonToVector(p2);
+270: 
+271:             // Dot for angle
+272:             // We need 'distance' equivalent. 
+273:             // Let's just use a simple approx distance: sqrt(dx^2 + dy^2) is bad for poles.
+274:             // Let's reuse rotatePoint logic or just simple linear fraction if segments are small.
+275:             // Actually, we should just iterate.
+276: 
+277:             const dotProd = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+278:             const angle = Math.acos(Math.max(-1, Math.min(1, dotProd)));
+279:             const distDeg = angle * (180 / Math.PI);
+280: 
+281:             const numSteps = Math.ceil(distDeg / resolution);
+282: 
+283:             for (let s = 1; s <= numSteps; s++) {
+284:                 const t = s / numSteps;
+285:                 // Slerp
+286:                 const sinTotal = Math.sin(angle);
+287:                 // If angle is too small, linear (nlerp) is fine
+288:                 if (sinTotal < 0.001) {
+289:                     // Linear mix
+290:                     const x = v1.x * (1 - t) + v2.x * t;
+291:                     const y = v1.y * (1 - t) + v2.y * t;
+292:                     const z = v1.z * (1 - t) + v2.z * t;
+293:                     // Normalize
+294:                     const mag = Math.sqrt(x * x + y * y + z * z);
+295:                     result.push(vectorToLatLon({ x: x / mag, y: y / mag, z: z / mag }));
+296:                 } else {
+297:                     const ratioA = Math.sin((1 - t) * angle) / sinTotal;
+298:                     const ratioB = Math.sin(t * angle) / sinTotal;
+299:                     const x = v1.x * ratioA + v2.x * ratioB;
+300:                     const y = v1.y * ratioA + v2.y * ratioB;
+301:                     const z = v1.z * ratioA + v2.z * ratioB;
+302:                     // Already unit length theoretically, but safe to normalize
+303:                     result.push(vectorToLatLon({ x, y, z }));
+304:                 }
+305:             }
+306:         }
+307:         return result;
+308:     }
+309: 
+310:     // --- AUTOMATED RIFT CRUST GENERATION ---
+311:     // UPDATED: Single-Slab Physics + Visual Grid Overlay (Features)
+312:     // --- CONVEYOR BELT / ACCRETION CRUST GENERATION ---
+313:     // Renamed logic, kept method name for compatibility with update loop
+314:     private generateRiftCrust(currentPlates: TectonicPlate[], currentTime: number, interval: number): TectonicPlate[] {
+315:         const newStrips: TectonicPlate[] = [];
+316:         const RIFT_GRID_RESOLUTION = 2.0;
+317: 
+318:         // 1. Identify Rift Plates (The Generators)
+319:         const riftPlates = currentPlates.filter(p => p.type === 'rift');
+320: 
+321:         for (const rift of riftPlates) {
+322:             const axisPoly = rift.polygons[0];
+323:             if (!axisPoly || !axisPoly.points || axisPoly.points.length < 2) {
+324:                 continue;
+325:             }
+326: 
+327:             const axisPoints = this.interpolatePoints(axisPoly.points, RIFT_GRID_RESOLUTION);
+328:             const riftBirth = rift.birthTime;
+329: 
+330:             // Skip if rift hasn't been born yet
+331:             if (currentTime <= riftBirth) continue;
+332: 
+333:             // 2. Find Connected Plates (The Pullers)
+334:             // We only care about plates that are explicitly connected to this rift
+335:             // AND are "diverging" (moving away).
+336:             const connectedPlates = currentPlates.filter(p =>
+337:                 (p.connectedRiftIds?.includes(rift.id) || p.connectedRiftId === rift.id) &&
+338:                 p.type !== 'rift' &&
+339:                 p.type !== 'oceanic' // Only attach to the main lithosphere/continent parent
+340:             );
+341: 
+342: 
+343:             for (const plate of connectedPlates) {
+344:                 if (plate.riftGenerationMode === 'never') continue;
+345:                 if (plate.deathTime !== null && currentTime > plate.deathTime) continue;
+346: 
+347:                 // Growing strips (_growing suffix) are cleaned up by update() each frame.
+348:                 // We only consider permanent strips for backfill scheduling.
+349: 
+350:                 const getLatestPermanentStrip = () => {
+351:                     const candidates = [...currentPlates, ...newStrips]
+352:                         .filter(p =>
+353:                             p.type === 'oceanic' &&
+354:                             p.linkedToPlateId === plate.id &&
+355:                             p.connectedRiftIds.includes(rift.id) &&
+356:                             !p.slabId?.endsWith('_growing') // Ignore growing strips
+357:                         )
+358:                         .sort((a, b) => b.birthTime - a.birthTime);
+359:                     return candidates[0];
+360:                 };
+361: 
+362:                 let lastStrip = getLatestPermanentStrip();
+363:                 let nextGenerationTime = lastStrip
+364:                     ? lastStrip.birthTime + interval
+365:                     : (Math.floor(riftBirth / interval) + 1) * interval;
+366: 
+367:                 // Loop to backfill Permanent Strips
+368:                 while (nextGenerationTime <= currentTime) {
+369:                     const generationTime = nextGenerationTime;
+370:                     nextGenerationTime += interval; // Advance for next loop
+371: 
+372:                     if (generationTime <= riftBirth) continue;
+373:                     const stripId = `${plate.id}_strip_${generationTime}`;
+374: 
+375:                     // Double check existence
+376:                     const alreadyExists = currentPlates.some(p => p.slabId === stripId) || newStrips.some(p => p.slabId === stripId);
+377:                     if (alreadyExists) continue;
+378: 
+379:                     // --- Generate Geometry (Permanent) ---
+380:                     // 1. Get History of Rift at Generation Time
+381:                     const riftAtBirth = this.calculatePlateAtTime(rift, generationTime, currentPlates);
+382:                     const birthAxisPoly = riftAtBirth.polygons[0];
+383:                     if (!birthAxisPoly || !birthAxisPoly.points) continue;
+384: 
+385:                     const birthAxisPoints = this.interpolatePoints(birthAxisPoly.points, RIFT_GRID_RESOLUTION);
+386: 
+387:                     // Stitching
+388:                     lastStrip = getLatestPermanentStrip(); // Update reference
+389: 
+390:                     let oldEdge: Coordinate[] = [];
+391:                     let isStitched = false;
+392: 
+393:                     if (lastStrip && lastStrip.polygons.length > 0) {
+394:                         const lastPoly = lastStrip.polygons[0];
+395:                         if (lastPoly.riftEdgeIndices && lastPoly.riftEdgeIndices.length > 0) {
+396:                             const edgePoints = lastPoly.riftEdgeIndices.map(i => lastPoly.points[i]);
+397:                             oldEdge = edgePoints;
+398:                             isStitched = true;
+399:                         }
+400:                     }
+401: 
+402:                     // Fallback Projection from Historical Rift
+403:                     if (!isStitched) {
+404:                         const effectiveOldBirth = Math.max(riftBirth, generationTime - interval);
+405:                         const riftAtOldBirth = this.calculatePlateAtTime(rift, effectiveOldBirth, currentPlates);
+406:                         const oldBirthAxisPoly = riftAtOldBirth.polygons[0];
+407: 
+408:                         if (oldBirthAxisPoly && oldBirthAxisPoly.points) {
+409:                             const oldBirthAxisPoints = this.interpolatePoints(oldBirthAxisPoly.points, RIFT_GRID_RESOLUTION);
+410:                             oldEdge = oldBirthAxisPoints.map(p => {
+411:                                 return this.applyPlateMotion(p, plate, effectiveOldBirth, currentTime, currentPlates);
+412:                             });
+413:                         }
+414:                     }
+415: 
+416:                     // Young Edge: Historical Rift -> Current Time
+417:                     const youngEdge = birthAxisPoints.map(p => {
+418:                         return this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates);
+419:                     });
+420: 
+421:                     if (youngEdge.length < 2 || oldEdge.length < 2) continue;
+422: 
+423:                     const ring = [...youngEdge, ...[...oldEdge].reverse(), youngEdge[0]];
+424:                     const newRiftEdgeIndices = Array.from({ length: youngEdge.length }, (_, i) => i);
+425: 
+426:                     const gridFeatures: Feature[] = [];
+427:                     gridFeatures.push({
+428:                         id: generateId(),
+429:                         type: 'seafloor',
+430:                         position: oldEdge[0],
+431:                         rotation: 0,
+432:                         scale: 1,
+433:                         properties: { kind: 'isochron', age: generationTime },
+434:                         generatedAt: generationTime,
+435:                         originalPosition: oldEdge[0]
+436:                     });
+437: 
+438:                     newStrips.push({
+439:                         id: generateId(),
+440:                         slabId: stripId,
+441:                         name: `${plate.name} Crust ${generationTime}Ma`,
+442:                         type: 'oceanic',
+443:                         polygonType: 'oceanic_plate',
+444:                         color: this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6',
+445:                         zIndex: (plate.zIndex || 0) - 1,
+446:                         birthTime: generationTime,
+447:                         deathTime: null,
+448:                         visible: true,
+449:                         locked: false,
+450:                         center: calculateSphericalCentroid(ring),
+451:                         polygons: [{
+452:                             id: generateId(),
+453:                             points: ring,
+454:                             closed: true,
+455:                             riftEdgeIndices: newRiftEdgeIndices
+456:                         }],
+457:                         features: gridFeatures,
+458:                         initialPolygons: [{
+459:                             id: generateId(),
+460:                             points: ring,
+461:                             closed: true,
+462:                             riftEdgeIndices: newRiftEdgeIndices
+463:                         }],
+464:                         initialFeatures: gridFeatures,
+465:                         motion: createDefaultMotion(),
+466:                         motionKeyframes: [],
+467:                         events: [],
+468:                         linkedToPlateId: plate.id,
+469:                         linkTime: currentTime,
+470:                         connectedRiftIds: [rift.id],
+471:                         connectedRiftId: rift.id
+472:                     });
+473:                 } // End Backfill Loop
+474: 
+475:                 // --- 4. Generate "Growing" Strip (Gap Filler) ---
+476:                 // Fills the space from lastPermanentStrip to Current Rift
+477:                 // Always regenerated.
+478: 
+479:                 lastStrip = getLatestPermanentStrip();
+480:                 // If we have a last strip, and there is a gap > epsilon
+481:                 // Or if we have NO last strip but we are past rift birth (first growth)
+482: 
+483:                 const lastStripTime = lastStrip ? lastStrip.birthTime : riftBirth;
+484: 
+485:                 if (currentTime > lastStripTime + 0.1) {
+486:                     const growingId = `${plate.id}_${rift.id}_growing`;
+487: 
+488:                     // Old Edge: From Last Strip (or Rift Start)
+489:                     let oldEdge: Coordinate[] = [];
+490:                     let isStitched = false;
+491: 
+492:                     if (lastStrip && lastStrip.polygons.length > 0) {
+493:                         const lastPoly = lastStrip.polygons[0];
+494:                         if (lastPoly.riftEdgeIndices && lastPoly.riftEdgeIndices.length > 0) {
+495:                             oldEdge = lastPoly.riftEdgeIndices.map(i => lastPoly.points[i]);
+496:                             isStitched = true;
+497:                         }
+498:                     }
+499: 
+500:                     if (!isStitched) {
+501:                         // Project from Rift Birth (if first strip) or Last Strip Time
+502:                         const effectiveOldBirth = lastStripTime;
+503:                         const riftAtOld = this.calculatePlateAtTime(rift, effectiveOldBirth, currentPlates);
+504:                         const oldAxisPoly = riftAtOld.polygons[0];
+505:                         if (oldAxisPoly && oldAxisPoly.points) {
+506:                             const oldPoints = this.interpolatePoints(oldAxisPoly.points, RIFT_GRID_RESOLUTION);
+507:                             oldEdge = oldPoints.map(p => this.applyPlateMotion(p, plate, effectiveOldBirth, currentTime, currentPlates));
+508:                         }
+509:                     }
+510: 
+511:                     // Young Edge: The Current Rift (No motion projection needed as it's "Now")
+512:                     // Actually, Rift might be moving, so we just take current axisPoints (which are at currentTime)
+513:                     const youngEdge = axisPoints.map(p => [...p] as Coordinate);
+514: 
+515:                     if (youngEdge.length >= 2 && oldEdge.length >= 2) {
+516:                         const ring = [...youngEdge, ...[...oldEdge].reverse(), youngEdge[0]];
+517:                         const newRiftEdgeIndices = Array.from({ length: youngEdge.length }, (_, i) => i);
+518: 
+519:                         newStrips.push({
+520:                             id: generateId(),
+521:                             slabId: growingId,
+522:                             name: `${plate.name} Active Crust`,
+523:                             type: 'oceanic',
+524:                             polygonType: 'oceanic_plate',
+525:                             color: '#60a5fa', // Slight lighter blue for active?
+526:                             zIndex: (plate.zIndex || 0) - 1,
+527:                             birthTime: currentTime, // Functionally "Now"
+528:                             deathTime: null,
+529:                             visible: true,
+530:                             locked: false,
+531:                             center: calculateSphericalCentroid(ring),
+532:                             polygons: [{
+533:                                 id: generateId(),
+534:                                 points: ring,
+535:                                 closed: true,
+536:                                 riftEdgeIndices: newRiftEdgeIndices
+537:                             }],
+538:                             features: [], // No isochrons on active strip
+539:                             initialPolygons: [{
+540:                                 id: generateId(),
+541:                                 points: ring,
+542:                                 closed: true,
+543:                                 riftEdgeIndices: newRiftEdgeIndices
+544:                             }],
+545:                             initialFeatures: [],
+546:                             motion: createDefaultMotion(),
+547:                             motionKeyframes: [],
+548:                             events: [],
+549:                             linkedToPlateId: plate.id,
+550:                             linkTime: currentTime,
+551:                             connectedRiftIds: [rift.id],
+552:                             connectedRiftId: rift.id
+553:                         });
+554:                     }
+555:                 }
+556:             }
+557:         }
+558:         return newStrips;
+559:     }
+560: 
+561: 
+562: 
+563:     // Helper to move a point forward in time according to a plate's motion history
+564:     private applyPlateMotion(point: Coordinate, plate: TectonicPlate, fromTime: number, toTime: number, allPlates: TectonicPlate[]): Coordinate {
+565:         let currentP = point;
+566:         let time = fromTime;
+567: 
+568:         // Resolve linked motion (inherit from parent)
+569:         let effectivePlate = plate;
+570:         if (plate.linkedToPlateId) {
+571:             let current = plate;
+572:             const visited = new Set<string>();
+573:             while (current.linkedToPlateId && !visited.has(current.id)) {
+574:                 visited.add(current.id);
+575:                 const parent = allPlates.find(p => p.id === current.linkedToPlateId);
+576:                 if (!parent) break;
+577:                 current = parent;
+578:             }
+579:             effectivePlate = current;
+580:         }
+581: 
+582:         const keyframes = (effectivePlate.motionKeyframes || []).sort((a, b) => a.time - b.time);
+583: 
+584:         // If no keyframes, fallback to simple current motion
+585:         if (keyframes.length === 0) {
+586:             const pole = effectivePlate.motion.eulerPole;
+587:             const dt = toTime - fromTime;
+588:             if (dt > 1e-6) {
+589:                 const angle = pole.rate * dt;
+590:                 currentP = rotatePoint(currentP, pole.position, toRad(angle));
+591:             }
+592:             return currentP;
+593:         }
+594: 
+595:         while (time < toTime) {
+596:             let pole = effectivePlate.motion.eulerPole;
+597:             let nextBoundary = toTime;
+598: 
+599:             // Find last keyframe <= time
+600:             let activeKFIndex = -1;
+601:             for (let i = 0; i < keyframes.length; i++) {
+602:                 if (keyframes[i].time <= time) activeKFIndex = i;
+603:                 else break;
+604:             }
+605: 
+606:             if (activeKFIndex !== -1) {
+607:                 pole = keyframes[activeKFIndex].eulerPole;
+608:                 if (activeKFIndex + 1 < keyframes.length) {
+609:                     nextBoundary = Math.min(toTime, keyframes[activeKFIndex + 1].time);
+610:                 }
+611:             } else {
+612:                 // Before first keyframe: use first keyframe's pole (assume constant back in time)
+613:                 if (keyframes.length > 0) {
+614:                     pole = keyframes[0].eulerPole;
+615:                     nextBoundary = Math.min(toTime, keyframes[0].time);
+616:                 }
+617:             }
+618: 
+619:             const dt = nextBoundary - time;
+620:             if (dt > 1e-6) {
+621:                 const angle = pole.rate * dt;

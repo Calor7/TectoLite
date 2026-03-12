@@ -1,0 +1,145 @@
+                    points: res2.points,
+                    riftEdgeIndices: res2.riftIndices
+                });
+            }
+
+            if (res1.cutPath) {
+                allCutPaths.push(res1.cutPath);
+            }
+        } else {
+            // If no split occurred for this polygon, assign it to one side based on centroid
+            const centroid = calculateSphericalCentroid(poly.points);
+            const vCentroid = latLonToVector(centroid);
+            if (dot(vCentroid, overallNormal) > 0) {
+                leftPolygons.push({ ...poly, id: generateId() });
+            } else {
+                rightPolygons.push({ ...poly, id: generateId() });
+            }
+        }
+    }
+
+    // Determine Rift Axis Geometry
+    let riftAxisPath: Coordinate[] = [];
+    if (allCutPaths.length > 0) {
+        // For now, take the first one. TODO: Handle multiple segments (e.g., merge or take longest)
+        riftAxisPath = allCutPaths[0];
+    } else {
+        riftAxisPath = polylinePoints;
+    }
+
+    // Calculate the new centers
+    const leftCenter = calculateSphericalCentroid(leftPolygons.length > 0 ? leftPolygons[0].points : []);
+    const rightCenter = calculateSphericalCentroid(rightPolygons.length > 0 ? rightPolygons[0].points : []);
+
+    if (leftPolygons.length === 0 || rightPolygons.length === 0) {
+        return currentState; // Split failed or was wholly on one side
+    }
+
+    const newMotion = inheritMomentum ? { ...plateToSplit.motion } : createDefaultMotion();
+
+    // --- Create RIFT PLATE Entity (only if no L-rifts were created) ---
+    const hasLRifts = lRiftResults.length > 0;
+    let riftPlate: TectonicPlate | null = null;
+    let riftPlateId: string | null = null;
+
+    if (!hasLRifts) {
+        riftPlateId = generateId();
+        const riftPolyPoints = riftAxisPath.length >= 2 ? riftAxisPath : polylinePoints;
+        const riftCenter = calculateSphericalCentroid(riftPolyPoints);
+
+        riftPlate = {
+            id: riftPlateId,
+            slabId: riftPlateId,
+            name: `Rift Axis ${plateToSplit.name}`,
+            description: `Rift Axis formed from ${plateToSplit.name}`,
+            type: 'rift',
+            polygonType: 'oceanic_plate',
+            color: '#FF0000',
+            zIndex: -1,
+            birthTime: state.world.currentTime,
+            deathTime: null,
+            visible: true,
+            locked: true,
+            center: riftCenter,
+            polygons: [{ id: generateId(), points: riftPolyPoints, closed: false, riftEdgeIndices: [] }],
+            features: [{
+                id: generateId(),
+                type: 'rift',
+                position: riftCenter,
+                rotation: 0,
+                scale: 1,
+                properties: { isAxis: true, path: riftAxisPath }
+            }],
+            initialPolygons: [{ id: generateId(), points: riftPolyPoints, closed: false, riftEdgeIndices: [] }],
+            initialFeatures: [],
+            motion: { eulerPole: { position: [0, 90], rate: 0, visible: false } },
+            motionKeyframes: [],
+            events: [],
+            connectedRiftIds: []
+        };
+    }
+
+    // --- BAKE MOTION INTO FEATURES BEFORE SPLITTING ---
+    const bakedFeatures = applyTransformToFeatures(plateToSplit, currentState.world.currentTime, currentState.world.plates);
+
+    const { leftFeatures, rightFeatures } = getSplitFeatures(
+        bakedFeatures,
+        leftPolygons,
+        rightPolygons,
+        polylinePoints,
+        overallNormal
+    );
+
+    const leftPlateId = generateId();
+    const rightPlateId = generateId();
+
+    const leftKeyframe: MotionKeyframe = {
+        time: currentTime,
+        eulerPole: newMotion.eulerPole,
+        snapshotPolygons: leftPolygons,
+        snapshotFeatures: []
+    };
+
+    const rightKeyframe: MotionKeyframe = {
+        time: currentTime,
+        eulerPole: newMotion.eulerPole,
+        snapshotPolygons: rightPolygons,
+        snapshotFeatures: []
+    };
+
+    const inheritedDescription = `Split from ${plateToSplit.name}`;
+
+    // --- Distribute Connected Rifts ---
+    // For L-rift case: each plate half gets its matching L-rift.
+    // For normal case: distribute based on side + add the new straight rift.
+    const getDistributedRifts = (p: TectonicPlate, mySide: 'left' | 'right') => {
+        if (!p.connectedRiftIds) return [];
+        return p.connectedRiftIds.filter(rId => {
+            // Skip L-rift IDs (handled separately below)
+            if (lRiftResults.some(lr => lr.leftLRiftId === rId || lr.rightLRiftId === rId)) return false;
+            // Skip the straight rift ID (handled separately)
+            if (riftPlateId && rId === riftPlateId) return false;
+
+            const rPlate = currentState.world.plates.find(rp => rp.id === rId);
+            if (!rPlate) return false;
+            return getSide(rPlate.polygons) === mySide;
+        });
+    };
+
+    let leftRiftIds = getDistributedRifts(plateToSplit, 'left');
+    let rightRiftIds = getDistributedRifts(plateToSplit, 'right');
+
+    if (hasLRifts) {
+        // Each plate half gets its corresponding L-rift
+        for (const lr of lRiftResults) {
+            leftRiftIds.push(lr.leftLRiftId);
+            rightRiftIds.push(lr.rightLRiftId);
+        }
+    } else if (riftPlateId) {
+        // Both halves connect to the new straight-line rift
+        leftRiftIds.push(riftPlateId);
+        rightRiftIds.push(riftPlateId);
+    }
+
+    const leftPlate: TectonicPlate = {
+        ...plateToSplit,

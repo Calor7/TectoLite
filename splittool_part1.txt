@@ -1,0 +1,380 @@
+import {
+    AppState, TectonicPlate,
+    Polygon,
+    Coordinate,
+    generateId,
+    MotionKeyframe,
+    createDefaultMotion
+} from './types';
+import {
+    Vector3,
+    latLonToVector,
+    vectorToLatLon,
+    cross,
+    dot,
+    normalize,
+    calculateSphericalCentroid,
+} from './utils/sphericalMath';
+
+// Legacy interface for start/end splits
+interface SplitLine {
+    start: Coordinate;
+    end: Coordinate;
+}
+
+// For polyline splits - array of points
+interface SplitPolyline {
+    points: Coordinate[];
+}
+
+// Check if a point is inside a spherical polygon using ray casting
+export function isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
+    if (polygon.length < 3) return false;
+
+    const pLat = point[1];
+    const pLon = point[0];
+    let windingNumber = 0;
+
+    let prev = polygon[polygon.length - 1];
+    for (let i = 0; i < polygon.length; i++) {
+        // Check vertical crossing (simplified spherical version)
+        const curr = polygon[i];
+        const lat1 = prev[1];
+        const lat2 = curr[1];
+        const lon1 = prev[0];
+        const lon2 = curr[0];
+
+        // Ray casting using longitude
+        if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
+            // Compute longitude at intersection
+            const t = (pLat - lat1) / (lat2 - lat1);
+            let lonAtIntersection = lon1 + t * (lon2 - lon1);
+
+            // Handle wrap-around
+            if (Math.abs(lon2 - lon1) > 180) {
+                if (lon2 < lon1) lonAtIntersection = lon1 + t * (lon2 + 360 - lon1);
+                else lonAtIntersection = lon1 + t * (lon2 - 360 - lon1);
+            }
+
+            if (pLon < lonAtIntersection) {
+                windingNumber += (lat2 > lat1) ? 1 : -1;
+            }
+        }
+
+        prev = curr;
+    }
+
+    return windingNumber !== 0;
+}
+
+// Find intersection of two line segments on sphere (great circle arcs)
+function findSegmentIntersection(
+    a1: Coordinate, a2: Coordinate,
+    b1: Coordinate, b2: Coordinate
+): Coordinate | null {
+    const va1 = latLonToVector(a1);
+    const va2 = latLonToVector(a2);
+    const vb1 = latLonToVector(b1);
+    const vb2 = latLonToVector(b2);
+
+    // Normal of plane containing great circle A
+    const nA = normalize(cross(va1, va2));
+    // Normal of plane containing great circle B
+    const nB = normalize(cross(vb1, vb2));
+
+    // Check for parallel planes (same great circle)
+    const crossN = cross(nA, nB);
+    const len = Math.sqrt(crossN.x ** 2 + crossN.y ** 2 + crossN.z ** 2);
+    if (len < 1e-6) return null;
+
+    // Intersection line direction
+    const dir = { x: crossN.x / len, y: crossN.y / len, z: crossN.z / len };
+
+    // Angle validation helper
+    const clamp = (val: number, min: number, max: number) => (val < min ? min : val > max ? max : val);
+    const getAngle = (u: Vector3, v: Vector3) => Math.acos(clamp(dot(u, v), -1, 1));
+
+    const isBetween = (p: Vector3, start: Vector3, end: Vector3): boolean => {
+        const angTotal = getAngle(start, end);
+        const ang1 = getAngle(start, p);
+        const ang2 = getAngle(end, p);
+        // Point is on arc if sum of angles equals total angle (within tolerance)
+        return Math.abs((ang1 + ang2) - angTotal) < 1e-4;
+    };
+
+    // Try both intersection points (+/- direction)
+    for (let sign = 1; sign >= -1; sign -= 2) {
+        const p = { x: dir.x * sign, y: dir.y * sign, z: dir.z * sign };
+        if (isBetween(p, va1, va2) && isBetween(p, vb1, vb2)) {
+            return vectorToLatLon(p);
+        }
+    }
+
+    return null;
+}
+
+
+// Helper to check if an edge index is a rift
+function isRiftEdge(index: number, riftIndices?: number[]): boolean {
+    return riftIndices ? riftIndices.includes(index) : false;
+}
+
+interface SplitResult {
+    points: Coordinate[];
+    riftIndices: number[];
+    cutPath?: Coordinate[]; // The actual split line segment
+}
+
+// Split polygon using polyline - returns [leftPolygon, rightPolygon] with rift info
+function splitPolygonWithPolyline(
+    polygonPoints: Coordinate[],
+    polylinePoints: Coordinate[],
+    existingRiftIndices?: number[]
+): [SplitResult, SplitResult] {
+    const defaultResult: [SplitResult, SplitResult] = [
+        { points: polygonPoints, riftIndices: existingRiftIndices || [] },
+        { points: [], riftIndices: [] }
+    ];
+
+    if (polylinePoints.length < 2 || polygonPoints.length < 3) {
+        return defaultResult;
+    }
+
+    // Find entry and exit points where polyline crosses polygon boundary
+    const crossings: { index: number; point: Coordinate; polylineIdx: number }[] = [];
+
+    for (let pi = 0; pi < polylinePoints.length - 1; pi++) {
+        const pStart = polylinePoints[pi];
+        const pEnd = polylinePoints[pi + 1];
+
+        for (let bi = 0; bi < polygonPoints.length; bi++) {
+            const bStart = polygonPoints[bi];
+            const bEnd = polygonPoints[(bi + 1) % polygonPoints.length];
+
+            const intersection = findSegmentIntersection(pStart, pEnd, bStart, bEnd);
+            if (intersection) {
+                crossings.push({ index: bi, point: intersection, polylineIdx: pi });
+            }
+        }
+    }
+
+    if (crossings.length < 2) {
+        return defaultResult;
+    }
+
+    // Sort crossings by polyline index (first along the cut)
+    crossings.sort((a, b) => a.polylineIdx - b.polylineIdx);
+
+    const firstCrossing = crossings[0];
+    const secondCrossing = crossings[crossings.length - 1];
+
+    // Get the polyline points between crossings
+    const cutSegment: Coordinate[] = [];
+    const intermediatePoints = polylinePoints.slice(
+        firstCrossing.polylineIdx + 1,
+        secondCrossing.polylineIdx + 1
+    );
+    cutSegment.push(...intermediatePoints);
+
+    // --- CONSTRUCT POLYGON A ---
+    const polyA: Coordinate[] = [];
+    const riftA: number[] = [];
+
+    // 1. First Crossing Point
+    polyA.push(firstCrossing.point);
+
+    // 2. Boundary Segment: From First Crossing -> Second Crossing
+    let idx = (firstCrossing.index + 1) % polygonPoints.length;
+
+    if (isRiftEdge(firstCrossing.index, existingRiftIndices)) {
+        riftA.push(polyA.length - 1);
+    }
+
+    while (idx !== (secondCrossing.index + 1) % polygonPoints.length) {
+        polyA.push(polygonPoints[idx]);
+        if (isRiftEdge(idx, existingRiftIndices)) {
+            riftA.push(polyA.length - 1);
+        }
+        idx = (idx + 1) % polygonPoints.length;
+    }
+
+    polyA.push(secondCrossing.point);
+
+    // 4. Cut Segment (Reversed) -> Closing Loop (NEW RIFT)
+    const cutRev = [...cutSegment].reverse();
+    riftA.push(polyA.length - 1);
+
+    for (const p of cutRev) {
+        polyA.push(p);
+        riftA.push(polyA.length - 1);
+    }
+    riftA.push(polyA.length - 1);
+
+
+    // --- CONSTRUCT POLYGON B ---
+    const polyB: Coordinate[] = [];
+    const riftB: number[] = [];
+
+    // 1. Second Crossing Point
+    polyB.push(secondCrossing.point);
+
+    // 2. Boundary Segment: From Second Crossing -> First Crossing
+    if (isRiftEdge(secondCrossing.index, existingRiftIndices)) {
+        riftB.push(polyB.length - 1);
+    }
+
+    idx = (secondCrossing.index + 1) % polygonPoints.length;
+    while (idx !== (firstCrossing.index + 1) % polygonPoints.length) {
+        polyB.push(polygonPoints[idx]);
+        if (isRiftEdge(idx, existingRiftIndices)) {
+            riftB.push(polyB.length - 1);
+        }
+        idx = (idx + 1) % polygonPoints.length;
+    }
+
+    polyB.push(firstCrossing.point);
+
+    // 4. Cut Segment (Forward) (NEW RIFT)
+    riftB.push(polyB.length - 1);
+
+    for (const p of cutSegment) {
+        polyB.push(p);
+        riftB.push(polyB.length - 1);
+    }
+    riftB.push(polyB.length - 1);
+
+    const fullCutPath = [firstCrossing.point, ...cutSegment, secondCrossing.point];
+
+    return [
+        { points: polyA, riftIndices: riftA, cutPath: fullCutPath },
+        { points: polyB, riftIndices: riftB, cutPath: fullCutPath }
+    ];
+
+}
+
+// --- HELPER: Motion Calculation (Duplicated from SimulationEngine due to isolation) ---
+// We need to bake the current position of the plate into the new "Initial State"
+// so that when the new plate is born, it starts at the current visual location.
+
+function getAccumulatedParentTransform(
+    p: TectonicPlate,
+    t: number,
+    allPlates: TectonicPlate[],
+    visited: Set<string>
+): { axis: Vector3; angle: number }[] {
+    if (!p.linkedToPlateId || visited.has(p.id)) return [];
+    visited.add(p.id);
+
+    const parent = allPlates.find(pl => pl.id === p.linkedToPlateId);
+    if (!parent) return [];
+
+    let transforms: { axis: Vector3; angle: number }[] = [];
+
+    // 1. Get grandparent transforms first (recursive)
+    transforms.push(...getAccumulatedParentTransform(parent, t, allPlates, visited));
+
+    // 2. Add this parent's motion if within link window
+    const isWithinLinkWindow =
+        (!p.linkTime || t >= p.linkTime) &&
+        (!p.unlinkTime || t < p.unlinkTime);
+
+    if (isWithinLinkWindow) {
+        const parentKeyframes = parent.motionKeyframes || [];
+        // Find child current active keyframe to know from when we inherit parent motion
+        const activeKF = (p.motionKeyframes || []).filter(k => k.time <= t).sort((a, b) => b.time - a.time)[0];
+        const linkStartTime = p.linkTime || (parentKeyframes[0]?.time ?? 0);
+        const motionStartTime = activeKF ? Math.max(linkStartTime, activeKF.time) : linkStartTime;
+
+        const relevantKeyframes = parentKeyframes.filter(kf => kf.time <= t);
+
+        if (relevantKeyframes.length > 0) {
+            relevantKeyframes.sort((a, b) => a.time - b.time);
+            let prevTime = motionStartTime;
+
+            for (let i = 0; i < relevantKeyframes.length; i++) {
+                const kf = relevantKeyframes[i];
+                if (kf.eulerPole && kf.eulerPole.rate !== 0) {
+                    const pole = kf.eulerPole;
+                    const axis = latLonToVector(pole.position);
+
+                    let segmentEnd = t;
+                    if (i + 1 < relevantKeyframes.length) {
+                        segmentEnd = Math.min(relevantKeyframes[i + 1].time, t);
+                    }
+
+                    const duration = segmentEnd - Math.max(kf.time, prevTime);
+                    if (duration > 0) {
+                        const angle = (pole.rate * duration) * (Math.PI / 180); // To Rad
+                        transforms.push({ axis, angle });
+                    }
+                    prevTime = segmentEnd;
+                }
+            }
+        }
+    }
+    return transforms;
+}
+
+// Helper to rotate vector by axis/angle
+function rotateVector(v: Vector3, axis: Vector3, angle: number): Vector3 {
+    // Rodriguez rotation formula
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    const crossProd = cross(axis, v);
+    const dotProd = dot(axis, v);
+
+    return {
+        x: v.x * cosA + crossProd.x * sinA + axis.x * dotProd * (1 - cosA),
+        y: v.y * cosA + crossProd.y * sinA + axis.y * dotProd * (1 - cosA),
+        z: v.z * cosA + crossProd.z * sinA + axis.z * dotProd * (1 - cosA)
+    };
+}
+
+function applyTransformToPolygons(plate: TectonicPlate, time: number, allPlates: TectonicPlate[]): Polygon[] {
+    const parentTransform = getAccumulatedParentTransform(plate, time, allPlates, new Set());
+
+    const keyframes = plate.motionKeyframes || [];
+    const activeKF = keyframes.filter(kf => kf.time <= time).sort((a, b) => b.time - a.time)[0];
+
+    // For Oceanic Strips (no keyframes), fall back to initialPolygons.
+    const sourcePolys = activeKF ? activeKF.snapshotPolygons : (plate.initialPolygons || plate.polygons);
+
+    // Calculate OWN motion (Differential from snapshot time to current time)
+    let ownAxis: Vector3 = { x: 0, y: 1, z: 0 };
+    let ownAngle = 0;
+
+    if (activeKF && activeKF.eulerPole && activeKF.eulerPole.rate !== 0) {
+        ownAxis = latLonToVector(activeKF.eulerPole.position);
+        const duration = time - activeKF.time;
+        // rate is usually deg/Ma. time is Ma.
+        ownAngle = (activeKF.eulerPole.rate * duration) * (Math.PI / 180);
+    }
+
+    const applyRotation = (coord: Coordinate): Coordinate => {
+        let v = latLonToVector(coord);
+
+        // 1. Apply Parent Transform (Global Drift)
+        for (const segment of parentTransform) {
+            v = rotateVector(v, segment.axis, segment.angle);
+        }
+
+        // 2. Apply Own Motion (Local Rotation)
+        if (ownAngle !== 0) {
+            v = rotateVector(v, ownAxis, ownAngle);
+        }
+
+        return vectorToLatLon(v);
+    };
+
+    return sourcePolys.map(poly => ({
+        ...poly,
+        points: poly.points.map(p => applyRotation(p))
+    }));
+}
+
+function applyTransformToFeatures(plate: TectonicPlate, time: number, allPlates: TectonicPlate[]): import('./types').Feature[] {
+    const parentTransform = getAccumulatedParentTransform(plate, time, allPlates, new Set());
+
+    const keyframes = plate.motionKeyframes || [];
+    const activeKF = keyframes.filter(kf => kf.time <= time).sort((a, b) => b.time - a.time)[0];
+

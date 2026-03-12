@@ -2802,6 +2802,8 @@ class TectoLiteApp {
             }
         }
 
+        this.updateEdgePropertiesPanel();
+
         if (!plate) return;
 
         const isRift = plate.type === 'rift';
@@ -3292,6 +3294,119 @@ class TectoLiteApp {
             this.timelineSystem.render(plate);
         }
     }
+
+    private updateEdgePropertiesPanel(): void {
+        const panel = document.getElementById('edge-properties-panel');
+        const content = document.getElementById('edge-properties-content');
+        if (!panel || !content) return;
+
+        const selectedEdge = this.state.world.selectedEdge;
+        if (!selectedEdge) {
+            panel.style.display = 'none';
+            return;
+        }
+
+        const plate = this.state.world.plates.find(p => p.id === selectedEdge.plateId);
+        if (!plate) {
+            panel.style.display = 'none';
+            return;
+        }
+
+        const poly = plate.polygons[selectedEdge.polyIndex];
+        if (!poly) {
+            panel.style.display = 'none';
+            return;
+        }
+
+        panel.style.display = 'flex';
+        panel.style.flexDirection = 'column';
+
+        const meta = poly.edgeMeta?.find(m => m.edgeIndex === selectedEdge.vertexIndex);
+
+        let html = `
+            <div class="property-group">
+                <label class="property-label">Plate</label>
+                <div class="property-value" style="font-size: 11px;">${plate.name}</div>
+            </div>
+            <div class="property-group">
+                <label class="property-label">Edge Index</label>
+                <div class="property-value" style="font-size: 11px;">${selectedEdge.vertexIndex} / ${poly.points.length}</div>
+            </div>
+        `;
+
+        if (meta) {
+            html += `
+                <div class="property-group">
+                    <label class="property-label">Edge Type</label>
+                    <div class="property-value" style="font-size: 11px; text-transform: capitalize;">${meta.type || 'Generic'}</div>
+                </div>
+            `;
+            if (meta.sourceId) {
+                 html += `
+                    <div class="property-group">
+                        <label class="property-label">Group ID</label>
+                        <div class="property-value" style="font-size: 11px; font-family: monospace;">${meta.sourceId.substring(0, 8)}...</div>
+                    </div>
+                `;
+            }
+
+            if (meta.siblings && meta.siblings.length > 0) {
+                html += `<div style="margin-top: 10px; font-weight: 600; font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Siblings</div>`;
+                meta.siblings.forEach((sib, i) => {
+                     const sibPlate = this.state.world.plates.find(p => p.id === sib.siblingPlateId);
+                     const sibName = sibPlate ? sibPlate.name : sib.siblingPlateId.substring(0, 8);
+                     html += `
+                        <div style="background: var(--bg-tertiary); padding: 6px; margin-top: 4px; border-radius: 4px; border: 1px solid var(--border-default);">
+                            <div style="font-size: 10px; display: flex; justify-content: space-between; margin-bottom: 4px;">
+                                <span style="font-family: monospace; color: var(--text-secondary);">${sib.groupId.substring(0,8)}...</span>
+                                <span style="font-weight: bold; color: ${sib.frozen ? 'var(--accent-warning)' : 'var(--accent-success)'};">${sib.frozen ? 'FROZEN' : 'ACTIVE'}</span>
+                            </div>
+                            <div style="font-size: 11px; color: var(--text-primary);">
+                                Plate: <b>${sibName}</b><br/>
+                                Edge: ${sib.siblingEdgeIndex}
+                            </div>
+                            <button class="btn btn-danger btn-delete-sibling" data-meta-index="${meta.edgeIndex}" data-sib-index="${i}" style="width: 100%; margin-top: 6px; padding: 2px; font-size: 10px;">Remove</button>
+                        </div>
+                     `;
+                });
+            } else {
+                 html += `<div style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">No sibling assignments.</div>`;
+            }
+        } else {
+             html += `<div style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">No metadata for this edge.</div>`;
+        }
+
+        content.innerHTML = html;
+
+        // Bind delete buttons
+        const delBtns = content.querySelectorAll('.btn-delete-sibling');
+        delBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const metaIdx = parseInt((e.target as HTMLElement).getAttribute('data-meta-index') || '-1');
+                const sibIdx = parseInt((e.target as HTMLElement).getAttribute('data-sib-index') || '-1');
+                if (metaIdx >= 0 && sibIdx >= 0) {
+                     this.state.world.plates = this.state.world.plates.map(p => {
+                         if (p.id !== plate.id) return p;
+                         const updatedPolys = [...p.polygons];
+                         const targetPoly = { ...updatedPolys[selectedEdge.polyIndex] };
+                         if (targetPoly.edgeMeta) {
+                             targetPoly.edgeMeta = targetPoly.edgeMeta.map(m => {
+                                 if (m.edgeIndex !== metaIdx || !m.siblings) return m;
+                                 const updatedSiblings = [...m.siblings];
+                                 updatedSiblings.splice(sibIdx, 1);
+                                 return { ...m, siblings: updatedSiblings };
+                             });
+                         }
+                         updatedPolys[selectedEdge.polyIndex] = targetPoly;
+                         return { ...p, polygons: updatedPolys };
+                     });
+                     this.updateEdgePropertiesPanel();
+                     this.canvasManager?.render();
+                }
+            });
+        });
+    }
+
     private getFeaturePropertiesHtml(plate: TectonicPlate): string {
         const { selectedFeatureId, selectedFeatureIds, currentTime } = this.state.world;
 

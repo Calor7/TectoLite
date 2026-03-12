@@ -1,0 +1,381 @@
+    // Calculate OWN motion
+    let ownAxis: Vector3 = { x: 0, y: 1, z: 0 };
+    let ownAngle = 0;
+
+    if (activeKF && activeKF.eulerPole && activeKF.eulerPole.rate !== 0) {
+        ownAxis = latLonToVector(activeKF.eulerPole.position);
+        const duration = time - activeKF.time;
+        ownAngle = (activeKF.eulerPole.rate * duration) * (Math.PI / 180);
+    }
+
+    const applyRotation = (coord: Coordinate): Coordinate => {
+        let v = latLonToVector(coord);
+
+        // 1. Apply Parent Transform
+        for (const segment of parentTransform) {
+            v = rotateVector(v, segment.axis, segment.angle);
+        }
+
+        // 2. Apply Own Motion
+        if (ownAngle !== 0) {
+            v = rotateVector(v, ownAxis, ownAngle);
+        }
+
+        return vectorToLatLon(v);
+    };
+
+    // Also include dynamic features generated after the keyframe/birth
+    // (SimulationEngine does extensive merging. Here we simplify: take all features that exist on the plate object)
+    // Actually, `plate.features` in state *should* contain the latest features added (like islands).
+    // BUT `plate.features` usually has their *original* position (if they have `originalPosition`).
+    // If we want to bake the current position, we must start from `originalPosition` and apply transform.
+
+    return plate.features.map(f => {
+        const startPos = f.originalPosition || f.position;
+        const newPos = applyRotation(startPos);
+        return {
+            ...f,
+            position: newPos,
+            originalPosition: newPos // BAKE IT
+        };
+    });
+}
+
+function getSplitFeatures(
+    originalFeatures: import('./types').Feature[],
+    leftPolygons: Polygon[],
+    rightPolygons: Polygon[],
+    polylinePoints: Coordinate[],
+    overallNormal: Vector3
+): { leftFeatures: import('./types').Feature[], rightFeatures: import('./types').Feature[] } {
+    const leftFeatures: import('./types').Feature[] = [];
+    const rightFeatures: import('./types').Feature[] = [];
+
+    // Helper: Split a trail (polyline) by the cut line
+    const splitTrail = (trail: Coordinate[], cutPolyline: Coordinate[]): Coordinate[][] => {
+        if (trail.length < 2) return [trail];
+        const segments: Coordinate[][] = [];
+        let currentSegment: Coordinate[] = [trail[0]];
+
+        for (let i = 0; i < trail.length - 1; i++) {
+            const p1 = trail[i];
+            const p2 = trail[i + 1];
+
+            // Check intersection with EACH segment of the cut line
+            let intersection: Coordinate | null = null;
+            // Find the CLOSEST intersection if multiple (simplified: just first found for now)
+            for (let j = 0; j < cutPolyline.length - 1; j++) {
+                const c1 = cutPolyline[j];
+                const c2 = cutPolyline[j + 1];
+                const hit = findSegmentIntersection(p1, p2, c1, c2);
+                if (hit) {
+                    intersection = hit;
+                    break;
+                }
+            }
+
+            if (intersection) {
+                currentSegment.push(intersection);
+                segments.push(currentSegment);
+                currentSegment = [intersection];
+            }
+
+            currentSegment.push(p2);
+        }
+        segments.push(currentSegment);
+        return segments;
+    };
+
+    for (const feat of originalFeatures) {
+        if (feat.type === 'rift') continue;
+
+        // --- POLYLINE / GRID LINE HANDLING ---
+        if (false) {
+            const subTrails = splitTrail([], polylinePoints);
+
+            for (const sub of subTrails) {
+                if (sub.length < 2) continue;
+
+                // Test midpoint
+                const midIdx = Math.floor(sub.length / 2);
+                const testPoint = sub[midIdx];
+
+                const inLeft = leftPolygons.some(poly => isPointInPolygon(testPoint, poly.points));
+                const inRight = rightPolygons.some(poly => isPointInPolygon(testPoint, poly.points));
+
+                const newFeat = {
+                    ...feat,
+                    id: generateId(), // New ID for split segment
+                    position: sub[0], // Update anchor to start of segment
+                    originalPosition: sub[0]
+                };
+
+                if (inLeft) leftFeatures.push(newFeat);
+                else if (inRight) rightFeatures.push(newFeat);
+                else {
+                    // Fallback
+                    const v = latLonToVector(testPoint);
+                    if (dot(v, overallNormal) > 0) leftFeatures.push(newFeat);
+                    else rightFeatures.push(newFeat);
+                }
+            }
+            continue;
+        }
+
+        // --- STANDARD POINT FEATURE LOGIC ---
+        const inLeft = leftPolygons.some(poly => isPointInPolygon(feat.position, poly.points));
+        const inRight = rightPolygons.some(poly => isPointInPolygon(feat.position, poly.points));
+
+        if (inLeft && !inRight) {
+            leftFeatures.push(feat);
+        } else if (inRight && !inLeft) {
+            rightFeatures.push(feat);
+        } else if (inLeft && inRight) {
+            // Edge case
+            const v = latLonToVector(feat.position);
+            if (dot(v, overallNormal) > 0) leftFeatures.push(feat);
+            else rightFeatures.push(feat);
+        } else {
+            // Not in either
+            const v = latLonToVector(feat.position);
+            if (dot(v, overallNormal) > 0) leftFeatures.push(feat);
+            else rightFeatures.push(feat);
+        }
+    }
+
+    return { leftFeatures, rightFeatures };
+}
+
+export function splitPlate(
+    state: AppState,
+    plateId: string,
+    splitLine: SplitLine | SplitPolyline,
+    inheritMomentum: boolean = false,
+    onlySelected: boolean = false
+): AppState {
+    let currentState = state;
+    const currentTime = state.world.currentTime;
+
+    // --- 0. PRE-PROCESS CONNECTED RIFTS (L-Shaped Junction Logic) ---
+    // When the split line intersects a connected rift:
+    // - The ORIGINAL rift stays unchanged (needed by the OTHER plate not being split).
+    // - 2 NEW L-shaped rifts are created from: (arm of original rift) + (segment of split line).
+    // - The plate being split is DISCONNECTED from the original rift and connected to its L-rift.
+
+    interface LRiftResult {
+        leftLRiftId: string;
+        rightLRiftId: string;
+        leftLRift: TectonicPlate;
+        rightLRift: TectonicPlate;
+        originalRiftId: string;
+    }
+    const lRiftResults: LRiftResult[] = [];
+
+    if (!onlySelected) {
+        const plateToCheck = currentState.world.plates.find(p => p.id === plateId);
+
+        // Convert split line to polyline format early for intersection checks
+        const splitPolyline: Coordinate[] = 'points' in splitLine
+            ? splitLine.points
+            : [splitLine.start, splitLine.end];
+
+        if (plateToCheck && plateToCheck.connectedRiftIds && plateToCheck.connectedRiftIds.length > 0 && splitPolyline.length >= 2) {
+            const riftsToCheck = plateToCheck.connectedRiftIds
+                .map(id => currentState.world.plates.find(p => p.id === id))
+                .filter((r): r is TectonicPlate => !!r && r.type === 'rift' && (r.deathTime === null || r.deathTime > currentTime));
+
+            for (const rift of riftsToCheck) {
+                // Get the rift's polyline (first polygon's points, which is an open polyline)
+                if (!rift.polygons || rift.polygons.length === 0 || rift.polygons[0].points.length < 2) continue;
+                const riftPolyline = rift.polygons[0].points;
+
+                // Find intersection between split line and rift polyline
+                let intersectionPoint: Coordinate | null = null;
+                let riftSegIdx = -1;
+                let splitSegIdx = -1;
+
+                for (let si = 0; si < splitPolyline.length - 1 && !intersectionPoint; si++) {
+                    for (let ri = 0; ri < riftPolyline.length - 1; ri++) {
+                        const ix = findSegmentIntersection(
+                            splitPolyline[si], splitPolyline[si + 1],
+                            riftPolyline[ri], riftPolyline[ri + 1]
+                        );
+                        if (ix) {
+                            intersectionPoint = ix;
+                            riftSegIdx = ri;
+                            splitSegIdx = si;
+                            break;
+                        }
+                    }
+                }
+
+                if (!intersectionPoint || riftSegIdx < 0 || splitSegIdx < 0) continue;
+
+                // --- Split rift polyline into 2 arms at intersection ---
+                // Arm A: from rift start → intersection point
+                const riftArmA: Coordinate[] = [...riftPolyline.slice(0, riftSegIdx + 1), intersectionPoint];
+                // Arm B: from intersection point → rift end
+                const riftArmB: Coordinate[] = [intersectionPoint, ...riftPolyline.slice(riftSegIdx + 1)];
+
+                // --- Split the SPLIT LINE into 2 segments at intersection ---
+                // Segment Left: from split start → intersection point
+                const splitSegLeft: Coordinate[] = [...splitPolyline.slice(0, splitSegIdx + 1), intersectionPoint];
+                // Segment Right: from intersection point → split end
+                const splitSegRight: Coordinate[] = [intersectionPoint, ...splitPolyline.slice(splitSegIdx + 1)];
+
+                // --- Determine which split segment is VALID (inside the plate) ---
+                // User Feedback: "Use the longer one". 
+                // A split line drawn across a plate will have a long segment inside and a short segment outside (overshoot).
+                // Or if drawn from outside, the long segment is the one crossing the plate.
+
+                const getPolylineLength = (coords: Coordinate[]): number => {
+                    let totalLen = 0;
+                    for (let i = 0; i < coords.length - 1; i++) {
+                        const v1 = latLonToVector(coords[i]);
+                        const v2 = latLonToVector(coords[i + 1]);
+                        // Chord length squared is faster, but we sum segments so need actual length.
+                        // Chord length: |v1 - v2|
+                        const dx = v1.x - v2.x;
+                        const dy = v1.y - v2.y;
+                        const dz = v1.z - v2.z;
+                        totalLen += Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    }
+                    return totalLen;
+                };
+
+                const lenLeft = getPolylineLength(splitSegLeft);
+                const lenRight = getPolylineLength(splitSegRight);
+
+                // Use the longer segment
+                const useLeftSeg = lenLeft >= lenRight;
+                let sharedSplitSeg = useLeftSeg ? splitSegLeft : splitSegRight;
+
+                // --- TRIM "Overarching" Segment ---
+                // User Feedback: "The split should also end at the end of the split plate"
+                // The split segment might extend outside the plate (from Start to Plate Boundary).
+                // We need to trim it so it starts at the Plate Boundary (First Tangent).
+
+                // Identify the "Outer" point (the one far from the rift intersection)
+                // Left Seg: Start -> Int. Outer is [0].
+                // Right Seg: Int -> End. Outer is [length-1].
+                const outerIndex = useLeftSeg ? 0 : sharedSplitSeg.length - 1;
+                const outerPoint = sharedSplitSeg[outerIndex];
+
+                // Check if Outer Point is OUTSIDE the plate
+                // If it's inside, we don't trim (split started inside).
+                // Note: isPointInPolygon might return false for points ON edge, but usually okay.
+                const isOuterInside = plateToCheck.polygons.some(poly => isPointInPolygon(outerPoint, poly.points));
+
+                if (!isOuterInside) {
+                    // It's outside. Find intersection with Plate Boundary.
+                    // We walk the segment from Intersection TOWARDS Outer Point to find the exit?
+                    // Or from Outer Point TOWARDS Intersection to find entry?
+                    // User said: "earliest point is the first tangent of plate and split line"
+                    // So we want the point where the line ENTERS the plate.
+                    // This is the intersection closest to the Outer Point that is NOT the Rift Intersection itself.
+
+                    let bestIntersection: Coordinate | null = null;
+                    let minDistToOuter = Infinity;
+
+                    // Flatten plate polygons into edge list
+                    // Warning: optimization needed if complex.
+                    for (const poly of plateToCheck.polygons) {
+                        for (let i = 0; i < poly.points.length; i++) {
+                            const p1 = poly.points[i];
+                            const p2 = poly.points[(i + 1) % poly.points.length];
+
+                            // Check intersection with sharedSplitSeg
+                            // sharedSplitSeg is a polyline.
+                            for (let j = 0; j < sharedSplitSeg.length - 1; j++) {
+                                const s1 = sharedSplitSeg[j];
+                                const s2 = sharedSplitSeg[j + 1];
+
+                                const hit = findSegmentIntersection(p1, p2, s1, s2);
+                                if (hit) {
+                                    // Ignore if hit is exactly the Rift Intersection (we are trimming the other end)
+                                    // Dist to Rift Int
+                                    const dRift = Math.abs(hit[0] - intersectionPoint[0]) + Math.abs(hit[1] - intersectionPoint[1]);
+                                    if (dRift < 1e-6) continue;
+
+                                    // Check distance to Outer Point
+                                    const dOuter = Math.abs(hit[0] - outerPoint[0]) + Math.abs(hit[1] - outerPoint[1]);
+
+                                    // We want the intersection CLOSEST to the Outer Point (First Tangent from outside)
+                                    // Wait, if line goes Outside -> Plate -> Outside -> Plate -> Int
+                                    // We want the one closest to Int? Or furthest?
+                                    // "Split should end at the end of the split plate". 
+                                    // We want the segment CONNECTED to the Rift Intersection.
+                                    // So we want the intersection furthest from Int (closest to Outer) that is still connected to Int via Inside path?
+                                    // Actually, if we assume convex-ish or simple crossing:
+                                    // There is one entry point.
+                                    // We want the intersection closest to Outer Point.
+                                    if (dOuter < minDistToOuter) {
+                                        minDistToOuter = dOuter;
+                                        bestIntersection = hit;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (bestIntersection) {
+                        // Trim sharedSplitSeg
+
+                        // Find which segment index contained the intersection
+                        for (let j = 0; j < sharedSplitSeg.length - 1; j++) {
+                            const s1 = sharedSplitSeg[j];
+                            const s2 = sharedSplitSeg[j + 1];
+
+                            // Check if bestIntersection is on this segment via distance check
+                            // Dist(start, hit) + Dist(hit, end) == Dist(start, end)
+                            const d1 = Math.sqrt(Math.pow(bestIntersection[0] - s1[0], 2) + Math.pow(bestIntersection[1] - s1[1], 2));
+                            const d2 = Math.sqrt(Math.pow(bestIntersection[0] - s2[0], 2) + Math.pow(bestIntersection[1] - s2[1], 2));
+                            const segLen = Math.sqrt(Math.pow(s1[0] - s2[0], 2) + Math.pow(s1[1] - s2[1], 2));
+
+                            if (Math.abs((d1 + d2) - segLen) < 1e-5) {
+                                // Found the segment containing the intersection.
+
+                                if (useLeftSeg) {
+                                    // Left Seg Order: Start(0) -> ... -> End(Int).
+                                    // Outer is 0. We want to discard 0..j and start from bestIntersection.
+                                    // The new segment should be: [bestIntersection, ...points from j+1 to end]
+                                    sharedSplitSeg = [bestIntersection, ...sharedSplitSeg.slice(j + 1)];
+                                } else {
+                                    // Right Seg Order: Start(Int) -> ... -> End(length-1).
+                                    // Outer is End. We want to discard j+1..end and end at bestIntersection.
+                                    // The new segment should be: [...points from 0 to j, bestIntersection]
+                                    sharedSplitSeg = [...sharedSplitSeg.slice(0, j + 1), bestIntersection];
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // --- Construct L-Rifts using the Shared Split Segment ---
+
+                let lRiftAPolyline: Coordinate[];
+                let lRiftBPolyline: Coordinate[];
+
+                if (useLeftSeg) {
+                    // Shared Segment goes: Start -> Intersection
+
+                    // L-Rift A: RiftArmA (Start->Int) + Shared (Start->Int reversed -> Int->Start)
+                    lRiftAPolyline = [...riftArmA, ...sharedSplitSeg.slice(0, -1).reverse()];
+
+                    // L-Rift B: RiftArmB reversed (End->Int) + Shared reversed (Int->Start)
+                    // riftArmB is Int->End. We want End->Int.
+                    // sharedSplitSeg is Start->Int. We want Int->Start.
+                    // But sharedSplitSeg ends at Int.
+                    // So: End->Int + Int->Start.
+                    lRiftBPolyline = [...riftArmB.slice(1).reverse(), intersectionPoint, ...sharedSplitSeg.slice(0, -1).reverse()];
+                } else {
+                    // Shared Segment goes: Intersection -> End
+
+                    // L-Rift A: RiftArmA (Start->Int) + Shared (Int->End)
+                    lRiftAPolyline = [...riftArmA, ...sharedSplitSeg.slice(1)];
+
+                    // L-Rift B: RiftArmB reversed (End->Int) + Shared (Int->End)
+                    lRiftBPolyline = [...riftArmB.slice(1).reverse(), intersectionPoint, ...sharedSplitSeg.slice(1)];
+                }
+
