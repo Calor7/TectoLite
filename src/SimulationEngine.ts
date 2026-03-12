@@ -653,6 +653,23 @@ export class SimulationEngine {
                         ? lastStrip.birthTime + interval
                         : (Math.floor(groupBirth / interval) + 1) * interval;
 
+                    // Returns the previous strip's midline moved to currentTime for both plates.
+                    // forQ is reversed so it matches the top-to-bottom winding needed by strip B.
+                    const getPrevMidline = (prevGenTime: number): { forP: Coordinate[], forQ: Coordinate[] } | null => {
+                        const pAtPrev = this.calculatePlateAtTime(plate, prevGenTime, currentPlates);
+                        const qAtPrev = this.calculatePlateAtTime(qPlate, prevGenTime, currentPlates);
+                        const pPrevPoly = pAtPrev.polygons[polyIdx];
+                        const qPrevPoly = qAtPrev.polygons[qPolyIndex];
+                        if (!pPrevPoly || !qPrevPoly) return null;
+                        const rawPEdgePrev = getEdgePoints(pPrevPoly, pEdges);
+                        const rawQEdgePrev = getEdgePoints(qPrevPoly, qEdges);
+                        const rawMidlinePrev = computeMidlinePts(rawPEdgePrev, rawQEdgePrev);
+                        return {
+                            forP: rawMidlinePrev.map(p => this.applyPlateMotion(p, plate, prevGenTime, currentTime, currentPlates)),
+                            forQ: [...rawMidlinePrev.map(p => this.applyPlateMotion(p, qPlate, prevGenTime, currentTime, currentPlates))].reverse()
+                        };
+                    };
+
                     while (nextGenerationTime <= currentTime) {
                         const generationTime = nextGenerationTime;
                         nextGenerationTime += interval;
@@ -666,7 +683,6 @@ export class SimulationEngine {
 
                         const pAtBirth = this.calculatePlateAtTime(plate, generationTime, currentPlates);
                         const qAtBirth = this.calculatePlateAtTime(qPlate, generationTime, currentPlates);
-
                         const pBirthPoly = pAtBirth.polygons[polyIdx];
                         const qBirthPoly = qAtBirth.polygons[qPolyIndex];
                         if (!pBirthPoly || !qBirthPoly) continue;
@@ -675,19 +691,26 @@ export class SimulationEngine {
                         const rawQEdge = getEdgePoints(qBirthPoly, qEdges);
                         if (rawPEdge.length < 2 || rawQEdge.length < 2) continue;
 
-                        // Rift midline at generationTime (world coords), split symmetrically
+                        // Inner boundary: rift midline at generationTime
                         const rawMidline = computeMidlinePts(rawPEdge, rawQEdge);
-
-                        // Strip A — rift edge of P → midline, moves with plate P
-                        const pEdgeCurr = rawPEdge.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
                         const midlinePCurr = rawMidline.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
-                        const ringA = [...pEdgeCurr, ...[...midlinePCurr].reverse(), pEdgeCurr[0]];
-
-                        // Strip B — midline → rift edge of Q, moves with plate Q
-                        const stripIdB = `${qPlate.id}_${groupId}_strip_${generationTime}`;
-                        const qEdgeCurr = rawQEdge.map(p => this.applyPlateMotion(p, qPlate, generationTime, currentTime, currentPlates));
                         const midlineQCurr = rawMidline.map(p => this.applyPlateMotion(p, qPlate, generationTime, currentTime, currentPlates));
-                        const ringB = [...qEdgeCurr, ...midlineQCurr, qEdgeCurr[0]];
+
+                        // Outer boundary: previous strip's midline if one exists, else the plate's rift edge
+                        let outerA: Coordinate[];
+                        let outerB: Coordinate[];
+                        if (lastStrip) {
+                            const prev = getPrevMidline(lastStrip.birthTime);
+                            outerA = prev?.forP ?? rawPEdge.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
+                            outerB = prev?.forQ ?? rawQEdge.map(p => this.applyPlateMotion(p, qPlate, generationTime, currentTime, currentPlates));
+                        } else {
+                            outerA = rawPEdge.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
+                            outerB = rawQEdge.map(p => this.applyPlateMotion(p, qPlate, generationTime, currentTime, currentPlates));
+                        }
+
+                        const stripIdB = `${qPlate.id}_${groupId}_strip_${generationTime}`;
+                        const ringA = [...outerA, ...[...midlinePCurr].reverse(), outerA[0]];
+                        const ringB = [...outerB, ...midlineQCurr, outerB[0]];
 
                         const crustColor = this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6';
 
@@ -744,15 +767,27 @@ export class SimulationEngine {
                         });
                     }
 
-                    // Growing strips — active rift zone since last permanent strip
+                    // Growing strips — from last permanent midline (or rift edge) to the live midline
                     const pCurrentPts = getEdgePoints(poly, pEdges);
                     const qCurrentPts = getEdgePoints(qPoly, qEdges);
 
                     if (pCurrentPts.length >= 2 && qCurrentPts.length >= 2) {
                         const midlineCurrent = computeMidlinePts(pCurrentPts, qCurrentPts);
 
-                        const ringGA = [...pCurrentPts, ...[...midlineCurrent].reverse(), pCurrentPts[0]];
-                        const ringGB = [...qCurrentPts, ...midlineCurrent, qCurrentPts[0]];
+                        const latestPerm = getLatestPermanentStrip();
+                        let growOuterA: Coordinate[];
+                        let growOuterB: Coordinate[];
+                        if (latestPerm) {
+                            const prev = getPrevMidline(latestPerm.birthTime);
+                            growOuterA = prev?.forP ?? pCurrentPts;
+                            growOuterB = prev?.forQ ?? qCurrentPts;
+                        } else {
+                            growOuterA = pCurrentPts;
+                            growOuterB = qCurrentPts;
+                        }
+
+                        const ringGA = [...growOuterA, ...[...midlineCurrent].reverse(), growOuterA[0]];
+                        const ringGB = [...growOuterB, ...midlineCurrent, growOuterB[0]];
 
                         newStrips.push({
                             id: generateId(),
