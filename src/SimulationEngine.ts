@@ -6,6 +6,7 @@ import {
     vectorToLatLon,
     rotateVector,
     rotatePoint,
+    normalize,
     calculateSphericalCentroid,
     Vector3
 } from './utils/sphericalMath';
@@ -608,6 +609,9 @@ export class SimulationEngine {
 
                     qEdges.sort((a, b) => a.edgeIndex - b.edgeIndex);
 
+                    // Process each sibling pair only once (from the plate with the smaller id)
+                    if (plate.id >= qPlate.id) continue;
+
                     const getEdgePoints = (polygon: import('./types').Polygon, edges: import('./types').EdgeMeta[]): Coordinate[] => {
                         const pts: Coordinate[] = [];
                         for (const edge of edges) {
@@ -618,6 +622,16 @@ export class SimulationEngine {
                             pts.push(polygon.points[(lastEdge + 1) % polygon.points.length]);
                         }
                         return this.interpolatePoints(pts, RIFT_GRID_RESOLUTION);
+                    };
+
+                    // Midline between two antiparallel edge arrays (pts2 runs in reverse order)
+                    const computeMidlinePts = (pts1: Coordinate[], pts2: Coordinate[]): Coordinate[] => {
+                        const n = Math.min(pts1.length, pts2.length);
+                        return Array.from({ length: n }, (_, i) => {
+                            const v1 = latLonToVector(pts1[i]);
+                            const v2 = latLonToVector(pts2[n - 1 - i]);
+                            return vectorToLatLon(normalize({ x: (v1.x + v2.x) / 2, y: (v1.y + v2.y) / 2, z: (v1.z + v2.z) / 2 }));
+                        });
                     };
 
                     const getLatestPermanentStrip = () => {
@@ -644,131 +658,55 @@ export class SimulationEngine {
                         nextGenerationTime += interval;
 
                         if (generationTime <= groupBirth) continue;
-                        const stripId = `${plate.id}_${groupId}_strip_${generationTime}`;
-                        const alreadyExists = currentPlates.some(p => p.slabId === stripId) || newStrips.some(p => p.slabId === stripId);
+                        const stripIdA = `${plate.id}_${groupId}_strip_${generationTime}`;
+                        const alreadyExists = currentPlates.some(p => p.slabId === stripIdA) || newStrips.some(p => p.slabId === stripIdA);
                         if (alreadyExists) continue;
 
                         lastStrip = getLatestPermanentStrip();
 
-                        // 1. Get History of this plate (P) and sibling plate (Q) at Generation Time
                         const pAtBirth = this.calculatePlateAtTime(plate, generationTime, currentPlates);
                         const qAtBirth = this.calculatePlateAtTime(qPlate, generationTime, currentPlates);
 
                         const pBirthPoly = pAtBirth.polygons[polyIdx];
                         const qBirthPoly = qAtBirth.polygons[qPolyIndex];
-                        
                         if (!pBirthPoly || !qBirthPoly) continue;
-                        
-                        const rawOldEdgePts = getEdgePoints(pBirthPoly, pEdges);
-                        const rawYoungEdgePts = getEdgePoints(qBirthPoly, qEdges);
 
-                        const oldEdge = rawOldEdgePts.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
-                        const youngEdgeP = rawYoungEdgePts.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
+                        const rawPEdge = getEdgePoints(pBirthPoly, pEdges);
+                        const rawQEdge = getEdgePoints(qBirthPoly, qEdges);
+                        if (rawPEdge.length < 2 || rawQEdge.length < 2) continue;
 
-                        if (youngEdgeP.length < 2 || oldEdge.length < 2) continue;
+                        // Rift midline at generationTime (world coords), split symmetrically
+                        const rawMidline = computeMidlinePts(rawPEdge, rawQEdge);
 
-                        const ring = [...oldEdge, ...[...youngEdgeP].reverse(), oldEdge[0]];
-                        const numOldPoints = oldEdge.length;
-                        const numYoungPoints = youngEdgeP.length;
+                        // Strip A — rift edge of P → midline, moves with plate P
+                        const pEdgeCurr = rawPEdge.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
+                        const midlinePCurr = rawMidline.map(p => this.applyPlateMotion(p, plate, generationTime, currentTime, currentPlates));
+                        const ringA = [...pEdgeCurr, ...[...midlinePCurr].reverse(), pEdgeCurr[0]];
 
-                        const pFacingEdgeMeta: import('./types').EdgeMeta[] = [];
-                        for(let i=0; i < numOldPoints - 1; i++) {
-                            pFacingEdgeMeta.push({
-                                edgeIndex: i,
-                                type: 'rift',
-                                sourceId: groupId,
-                                siblings: [{
-                                    id: generateId(),
-                                    siblingPlateId: plate.id,
-                                    siblingPolyIndex: polyIdx,
-                                    siblingEdgeIndex: pEdges[Math.min(i, pEdges.length - 1)].edgeIndex,
-                                    groupId,
-                                    frozen: true,
-                                    createdAt: generationTime
-                                }]
-                            });
-                        }
-                        
-                        const qFacingEdgeMeta: import('./types').EdgeMeta[] = [];
-                        for(let i=0; i < numYoungPoints - 1; i++) {
-                           const edgeIndex = numOldPoints + i;
-                           const qEdgeMatch = qEdges[qEdges.length - 1 - Math.min(i, qEdges.length - 1)];
-                           
-                           qFacingEdgeMeta.push({
-                               edgeIndex: edgeIndex,
-                               type: 'rift',
-                               sourceId: groupId,
-                               siblings: [{
-                                   id: generateId(),
-                                   siblingPlateId: qPlate.id,
-                                   siblingPolyIndex: qPolyIndex,
-                                   siblingEdgeIndex: qEdgeMatch.edgeIndex,
-                                   groupId,
-                                   frozen: false,
-                                   createdAt: generationTime
-                               }]
-                           });
-                           
-                           const targetQEdge = qPoly.edgeMeta!.find(e => e.edgeIndex === qEdgeMatch.edgeIndex);
-                           if (targetQEdge) {
-                               const targetQSib = targetQEdge.siblings?.find(s => s.groupId === groupId && !s.frozen);
-                               if (targetQSib) {
-                                   targetQSib.siblingPlateId = stripId;
-                                   targetQSib.siblingPolyIndex = 0;
-                                   targetQSib.siblingEdgeIndex = edgeIndex;
-                               }
-                           }
-                        }
-                        
-                        for (const pEdge of pEdges) {
-                            const targetPSib = pEdge.siblings?.find(s => s.groupId === groupId && !s.frozen);
-                            if (targetPSib) {
-                                targetPSib.frozen = true;
-                            }
-                        }
+                        // Strip B — midline → rift edge of Q, moves with plate Q
+                        const stripIdB = `${qPlate.id}_${groupId}_strip_${generationTime}`;
+                        const qEdgeCurr = rawQEdge.map(p => this.applyPlateMotion(p, qPlate, generationTime, currentTime, currentPlates));
+                        const midlineQCurr = rawMidline.map(p => this.applyPlateMotion(p, qPlate, generationTime, currentTime, currentPlates));
+                        const ringB = [...qEdgeCurr, ...midlineQCurr, qEdgeCurr[0]];
 
-                        const newPlateId = generateId();
-                        for (let qi=0; qi < qPlate.polygons.length; qi++) {
-                            const qp = qPlate.polygons[qi];
-                            if (qp.edgeMeta) {
-                                for(const qmeta of qp.edgeMeta) {
-                                    if (qmeta.siblings) {
-                                        for(const qsib of qmeta.siblings) {
-                                            if (qsib.groupId === groupId && qsib.siblingPlateId === stripId) {
-                                                qsib.siblingPlateId = newPlateId;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        const crustColor = this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6';
 
                         newStrips.push({
-                            id: newPlateId,
-                            slabId: stripId,
+                            id: generateId(),
+                            slabId: stripIdA,
                             name: `${plate.name} Crust ${generationTime}Ma`,
                             type: 'oceanic',
                             polygonType: 'oceanic_plate',
-                            color: this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6',
+                            color: crustColor,
                             zIndex: (plate.zIndex || 0) - 1,
                             birthTime: generationTime,
                             deathTime: null,
                             visible: true,
                             locked: false,
-                            center: calculateSphericalCentroid(ring),
-                            polygons: [{
-                                id: generateId(),
-                                points: ring,
-                                closed: true,
-                                edgeMeta: [...pFacingEdgeMeta, ...qFacingEdgeMeta]
-                            }],
+                            center: calculateSphericalCentroid(ringA),
+                            polygons: [{ id: generateId(), points: ringA, closed: true, edgeMeta: [] }],
                             features: [],
-                            initialPolygons: [{
-                                id: generateId(),
-                                points: ring,
-                                closed: true,
-                                edgeMeta: [...pFacingEdgeMeta, ...qFacingEdgeMeta]
-                            }],
+                            initialPolygons: [{ id: generateId(), points: ringA, closed: true }],
                             initialFeatures: [],
                             motion: createDefaultMotion(),
                             motionKeyframes: [],
@@ -778,17 +716,48 @@ export class SimulationEngine {
                             connectedRiftIds: [],
                             siblingSystem: true
                         });
+
+                        newStrips.push({
+                            id: generateId(),
+                            slabId: stripIdB,
+                            name: `${qPlate.name} Crust ${generationTime}Ma`,
+                            type: 'oceanic',
+                            polygonType: 'oceanic_plate',
+                            color: crustColor,
+                            zIndex: (qPlate.zIndex || 0) - 1,
+                            birthTime: generationTime,
+                            deathTime: null,
+                            visible: true,
+                            locked: false,
+                            center: calculateSphericalCentroid(ringB),
+                            polygons: [{ id: generateId(), points: ringB, closed: true, edgeMeta: [] }],
+                            features: [],
+                            initialPolygons: [{ id: generateId(), points: ringB, closed: true }],
+                            initialFeatures: [],
+                            motion: createDefaultMotion(),
+                            motionKeyframes: [],
+                            events: [],
+                            linkedToPlateId: qPlate.id,
+                            linkTime: currentTime,
+                            connectedRiftIds: [],
+                            siblingSystem: true
+                        });
                     }
 
+                    // Growing strips — active rift zone since last permanent strip
                     const pCurrentPts = getEdgePoints(poly, pEdges);
                     const qCurrentPts = getEdgePoints(qPoly, qEdges);
 
                     if (pCurrentPts.length >= 2 && qCurrentPts.length >= 2) {
-                        const ring = [...pCurrentPts, ...[...qCurrentPts].reverse(), pCurrentPts[0]];
+                        const midlineCurrent = computeMidlinePts(pCurrentPts, qCurrentPts);
+
+                        const ringGA = [...pCurrentPts, ...[...midlineCurrent].reverse(), pCurrentPts[0]];
+                        const ringGB = [...qCurrentPts, ...midlineCurrent, qCurrentPts[0]];
+
                         newStrips.push({
                             id: generateId(),
                             slabId: `${plate.id}_${groupId}_growing`,
-                            name: `${plate.name} Active Crust`,
+                            name: `${plate.name} Active Rift`,
                             type: 'oceanic',
                             polygonType: 'oceanic_plate',
                             color: '#60a5fa',
@@ -797,24 +766,41 @@ export class SimulationEngine {
                             deathTime: null,
                             visible: true,
                             locked: false,
-                            center: calculateSphericalCentroid(ring),
-                            polygons: [{
-                                id: generateId(),
-                                points: ring,
-                                closed: true,
-                                edgeMeta: []
-                            }],
+                            center: calculateSphericalCentroid(ringGA),
+                            polygons: [{ id: generateId(), points: ringGA, closed: true, edgeMeta: [] }],
                             features: [],
-                            initialPolygons: [{
-                                id: generateId(),
-                                points: ring,
-                                closed: true
-                            }],
+                            initialPolygons: [{ id: generateId(), points: ringGA, closed: true }],
                             initialFeatures: [],
                             motion: createDefaultMotion(),
                             motionKeyframes: [],
                             events: [],
                             linkedToPlateId: plate.id,
+                            linkTime: currentTime,
+                            connectedRiftIds: [],
+                            siblingSystem: true
+                        });
+
+                        newStrips.push({
+                            id: generateId(),
+                            slabId: `${qPlate.id}_${groupId}_growing`,
+                            name: `${qPlate.name} Active Rift`,
+                            type: 'oceanic',
+                            polygonType: 'oceanic_plate',
+                            color: '#60a5fa',
+                            zIndex: (qPlate.zIndex || 0) - 1,
+                            birthTime: currentTime,
+                            deathTime: null,
+                            visible: true,
+                            locked: false,
+                            center: calculateSphericalCentroid(ringGB),
+                            polygons: [{ id: generateId(), points: ringGB, closed: true, edgeMeta: [] }],
+                            features: [],
+                            initialPolygons: [{ id: generateId(), points: ringGB, closed: true }],
+                            initialFeatures: [],
+                            motion: createDefaultMotion(),
+                            motionKeyframes: [],
+                            events: [],
+                            linkedToPlateId: qPlate.id,
                             linkTime: currentTime,
                             connectedRiftIds: [],
                             siblingSystem: true
