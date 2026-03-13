@@ -1282,7 +1282,19 @@ export function splitPlate(
                 // Determine which side res1 is on
                 const tempPoly1: Polygon = { ...poly, points: res1.points, id: 'temp' };
                 const side1 = getSide([tempPoly1]);
-                if (side1 === 'left') {
+
+                if (child.type === 'oceanic') {
+                    // Oceanic strips must NOT get new rift sibling relationships on the cut edges —
+                    // that would cause generateSiblingCrust to treat the strip halves as a new rift
+                    // and generate more ocean between them. Preserve only the original edgeMeta.
+                    if (side1 === 'left') {
+                        childLeftPolys.push({ ...poly, id: generateId(), points: res1.points, riftEdgeIndices: res1.riftIndices, edgeMeta: poly.edgeMeta ?? [] });
+                        childRightPolys.push({ ...poly, id: generateId(), points: res2.points, riftEdgeIndices: res2.riftIndices, edgeMeta: poly.edgeMeta ?? [] });
+                    } else {
+                        childRightPolys.push({ ...poly, id: generateId(), points: res1.points, riftEdgeIndices: res1.riftIndices, edgeMeta: poly.edgeMeta ?? [] });
+                        childLeftPolys.push({ ...poly, id: generateId(), points: res2.points, riftEdgeIndices: res2.riftIndices, edgeMeta: poly.edgeMeta ?? [] });
+                    }
+                } else if (side1 === 'left') {
                     const { metaA, metaB } = assignSplitEdgeMeta(poly, res1, res2, childLeftPlateId, childRightPlateId, currentTime, childLeftPolys.length, childRightPolys.length);
                     childLeftPolys.push({ ...poly, id: generateId(), points: res1.points, riftEdgeIndices: res1.riftIndices, edgeMeta: metaA });
                     childRightPolys.push({ ...poly, id: generateId(), points: res2.points, riftEdgeIndices: res2.riftIndices, edgeMeta: metaB });
@@ -1397,18 +1409,67 @@ export function splitPlate(
         ...processedChildren
     ];
 
+    // Reroute sibling pointers in OTHER plates that still reference the now-dead plateId.
+    // After split, the rift edge lives on one of the new child plates; the sibling on the
+    // opposite plate must be updated or generateSiblingCrust will fail to find its qPlate.
+    const rerouteSiblings = (p: TectonicPlate): TectonicPlate => {
+        const needsUpdate = p.polygons.some(poly =>
+            poly.edgeMeta?.some(m => m.siblings?.some(s => s.siblingPlateId === plateId))
+        );
+        if (!needsUpdate) return p;
+
+        return {
+            ...p,
+            polygons: p.polygons.map(poly => {
+                if (!poly.edgeMeta?.some(m => m.siblings?.some(s => s.siblingPlateId === plateId))) return poly;
+                return {
+                    ...poly,
+                    edgeMeta: poly.edgeMeta!.map(meta => {
+                        if (!meta.siblings?.some(s => s.siblingPlateId === plateId)) return meta;
+                        return {
+                            ...meta,
+                            siblings: meta.siblings!.map(s => {
+                                if (s.siblingPlateId !== plateId) return s;
+                                // Find which new plate has an active (non-frozen) rift edge for this groupId
+                                const newSiblingPlate = newPlates.find(np =>
+                                    np.type !== 'oceanic' &&
+                                    np.polygons.some(npPoly =>
+                                        npPoly.edgeMeta?.some(m2 =>
+                                            m2.siblings?.some(ns => ns.groupId === s.groupId && !ns.frozen)
+                                        )
+                                    )
+                                );
+                                if (!newSiblingPlate) return s; // fallback: keep stale (deathTime guard still catches it)
+                                const newPolyIdx = newSiblingPlate.polygons.findIndex(npPoly =>
+                                    npPoly.edgeMeta?.some(m2 =>
+                                        m2.siblings?.some(ns => ns.groupId === s.groupId && !ns.frozen)
+                                    )
+                                );
+                                return {
+                                    ...s,
+                                    siblingPlateId: newSiblingPlate.id,
+                                    siblingPolyIndex: Math.max(0, newPolyIdx),
+                                };
+                            })
+                        };
+                    })
+                };
+            })
+        };
+    };
+
     // Update World State
     return {
         ...currentState,
         world: {
             ...currentState.world,
             plates: [
-                // Mark old plate and old children as dead
+                // Mark old plate and old children as dead; reroute sibling refs in surviving plates
                 ...currentState.world.plates.map(p => {
                     if (p.id === plateId || originalChildIds.has(p.id)) {
                         return { ...p, deathTime: currentTime };
                     }
-                    return p;
+                    return rerouteSiblings(p);
                 }),
 
                 // Add new plates

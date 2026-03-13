@@ -559,8 +559,40 @@ export class SimulationEngine {
         const newStrips: TectonicPlate[] = [];
         const RIFT_GRID_RESOLUTION = 2.0;
 
+        // Pure helpers — hoisted so both the rift-strip pass and the junction-fill pass can use them.
+        const getEdgePoints = (polygon: import('./types').Polygon, edges: import('./types').EdgeMeta[]): Coordinate[] => {
+            const pts: Coordinate[] = [];
+            for (const edge of edges) pts.push(polygon.points[edge.edgeIndex]);
+            if (edges.length > 0) {
+                const lastEdge = edges[edges.length - 1].edgeIndex;
+                pts.push(polygon.points[(lastEdge + 1) % polygon.points.length]);
+            }
+            return this.interpolatePoints(pts, RIFT_GRID_RESOLUTION);
+        };
+        const computeMidlinePts = (pts1: Coordinate[], pts2: Coordinate[]): Coordinate[] => {
+            const n = Math.min(pts1.length, pts2.length);
+            return Array.from({ length: n }, (_, i) => {
+                const v1 = latLonToVector(pts1[i]);
+                const v2 = latLonToVector(pts2[n - 1 - i]);
+                return vectorToLatLon(normalize({ x: (v1.x + v2.x) / 2, y: (v1.y + v2.y) / 2, z: (v1.z + v2.z) / 2 }));
+            });
+        };
+
+        // Rift arm data collected during Pass 1, keyed by plate.id (the corner plate).
+        // Used in Pass 2 to detect junction pairs and generate triangular fills.
+        type RiftArmInfo = {
+            groupId: string; plate: TectonicPlate; polyIdx: number;
+            pEdges: import('./types').EdgeMeta[]; qPlate: TectonicPlate;
+            qPolyIndex: number; qEdges: import('./types').EdgeMeta[];
+            groupBirth: number; currentEdgePts: Coordinate[]; currentMidline: Coordinate[];
+        };
+        const riftArmsByPlate = new Map<string, RiftArmInfo[]>();
+
         const activePlates = currentPlates.filter(p =>
-            p.siblingSystem && p.birthTime <= currentTime && (p.deathTime === null || p.deathTime > currentTime)
+            p.siblingSystem &&
+            p.type !== 'oceanic' &&
+            p.birthTime <= currentTime &&
+            (p.deathTime === null || p.deathTime > currentTime)
         );
 
         for (const plate of activePlates) {
@@ -612,28 +644,6 @@ export class SimulationEngine {
                     // Process each sibling pair only once (from the plate with the smaller id)
                     if (plate.id >= qPlate.id) continue;
 
-                    const getEdgePoints = (polygon: import('./types').Polygon, edges: import('./types').EdgeMeta[]): Coordinate[] => {
-                        const pts: Coordinate[] = [];
-                        for (const edge of edges) {
-                            pts.push(polygon.points[edge.edgeIndex]);
-                        }
-                        if (edges.length > 0) {
-                            const lastEdge = edges[edges.length - 1].edgeIndex;
-                            pts.push(polygon.points[(lastEdge + 1) % polygon.points.length]);
-                        }
-                        return this.interpolatePoints(pts, RIFT_GRID_RESOLUTION);
-                    };
-
-                    // Midline between two antiparallel edge arrays (pts2 runs in reverse order)
-                    const computeMidlinePts = (pts1: Coordinate[], pts2: Coordinate[]): Coordinate[] => {
-                        const n = Math.min(pts1.length, pts2.length);
-                        return Array.from({ length: n }, (_, i) => {
-                            const v1 = latLonToVector(pts1[i]);
-                            const v2 = latLonToVector(pts2[n - 1 - i]);
-                            return vectorToLatLon(normalize({ x: (v1.x + v2.x) / 2, y: (v1.y + v2.y) / 2, z: (v1.z + v2.z) / 2 }));
-                        });
-                    };
-
                     const getLatestPermanentStrip = () => {
                         const candidates = [...currentPlates, ...newStrips]
                             .filter(p =>
@@ -676,7 +686,14 @@ export class SimulationEngine {
 
                         if (generationTime <= groupBirth) continue;
                         const stripIdA = `${plate.id}_${groupId}_strip_${generationTime}`;
-                        const alreadyExists = currentPlates.some(p => p.slabId === stripIdA) || newStrips.some(p => p.slabId === stripIdA);
+                        // Use semantic check: match by parent plate, rift group, and age — not by the
+                        // slabId prefix (which changes after a re-split re-links strips to a new plate).
+                        const alreadyExists = [...currentPlates, ...newStrips].some(p =>
+                            p.type === 'oceanic' &&
+                            p.linkedToPlateId === plate.id &&
+                            p.slabId?.includes(`_${groupId}_`) &&
+                            p.birthTime === generationTime
+                        );
                         if (alreadyExists) continue;
 
                         lastStrip = getLatestPermanentStrip();
@@ -774,6 +791,17 @@ export class SimulationEngine {
                     if (pCurrentPts.length >= 2 && qCurrentPts.length >= 2) {
                         const midlineCurrent = computeMidlinePts(pCurrentPts, qCurrentPts);
 
+                        // Collect for junction fill Pass 2 (both plates are corners of this rift).
+                        for (const cornerId of [plate.id, qPlate.id]) {
+                            if (!riftArmsByPlate.has(cornerId)) riftArmsByPlate.set(cornerId, []);
+                            riftArmsByPlate.get(cornerId)!.push({
+                                groupId, plate, polyIdx, pEdges,
+                                qPlate, qPolyIndex, qEdges, groupBirth,
+                                currentEdgePts: cornerId === plate.id ? pCurrentPts : qCurrentPts,
+                                currentMidline: midlineCurrent,
+                            });
+                        }
+
                         const latestPerm = getLatestPermanentStrip();
                         let growOuterA: Coordinate[];
                         let growOuterB: Coordinate[];
@@ -844,6 +872,169 @@ export class SimulationEngine {
                 }
             }
         }
+
+        // ── Pass 2: Junction fills ────────────────────────────────────────────────────────────────
+        // For each plate that is a corner of 2+ active rifts, detect shared rift-edge endpoints
+        // (within ~0.5° tolerance) and generate triangular oceanic fill for the fan-shaped gap.
+        const JUNCTION_TOL = 1 - Math.cos(0.5 * Math.PI / 180); // dot-product threshold ≈ 0.5°
+        const dotCoord = (a: Coordinate, b: Coordinate) => {
+            const va = latLonToVector(a); const vb = latLonToVector(b);
+            return va.x * vb.x + va.y * vb.y + va.z * vb.z;
+        };
+
+        for (const [pid, arms] of riftArmsByPlate) {
+            if (arms.length < 2) continue;
+            const cornerPlate = currentPlates.find(p => p.id === pid);
+            if (!cornerPlate) continue;
+            const crustColor = this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6';
+
+            for (let i = 0; i < arms.length; i++) {
+                for (let j = i + 1; j < arms.length; j++) {
+                    const armA = arms[i];
+                    const armB = arms[j];
+                    if (armA.groupId === armB.groupId) continue; // same rift, different corner
+
+                    // Find which endpoint of each arm's rift edge is the shared junction vertex.
+                    type Ep = { pt: Coordinate; midEnd: Coordinate; atStart: boolean };
+                    const epsA: Ep[] = [
+                        { pt: armA.currentEdgePts[0], midEnd: armA.currentMidline[0], atStart: true },
+                        { pt: armA.currentEdgePts[armA.currentEdgePts.length - 1], midEnd: armA.currentMidline[armA.currentMidline.length - 1], atStart: false },
+                    ];
+                    const epsB: Ep[] = [
+                        { pt: armB.currentEdgePts[0], midEnd: armB.currentMidline[0], atStart: true },
+                        { pt: armB.currentEdgePts[armB.currentEdgePts.length - 1], midEnd: armB.currentMidline[armB.currentMidline.length - 1], atStart: false },
+                    ];
+
+                    let junctionPt: Coordinate | null = null;
+                    let midEndA: Coordinate | null = null;
+                    let midEndB: Coordinate | null = null;
+                    let junctionAtStartA = true;
+                    let junctionAtStartB = true;
+
+                    outer: for (const epA of epsA) {
+                        for (const epB of epsB) {
+                            if (dotCoord(epA.pt, epB.pt) > 1 - JUNCTION_TOL) {
+                                junctionPt = epA.pt; midEndA = epA.midEnd; midEndB = epB.midEnd;
+                                junctionAtStartA = epA.atStart; junctionAtStartB = epB.atStart;
+                                break outer;
+                            }
+                        }
+                    }
+                    if (!junctionPt || !midEndA || !midEndB) continue;
+
+                    // Helper: midline endpoint for arm at a past time, advanced to currentTime.
+                    const getMidEndAtTime = (arm: RiftArmInfo, atStart: boolean, time: number): Coordinate | null => {
+                        const pAtT = this.calculatePlateAtTime(arm.plate, time, currentPlates);
+                        const qAtT = this.calculatePlateAtTime(arm.qPlate, time, currentPlates);
+                        const pPoly = pAtT.polygons[arm.polyIdx];
+                        const qPoly = qAtT.polygons[arm.qPolyIndex];
+                        if (!pPoly || !qPoly) return null;
+                        const pPts = getEdgePoints(pPoly, arm.pEdges);
+                        const qPts = getEdgePoints(qPoly, arm.qEdges);
+                        if (pPts.length < 2 || qPts.length < 2) return null;
+                        const mid = computeMidlinePts(pPts, qPts);
+                        const rawEnd = atStart ? mid[0] : mid[mid.length - 1];
+                        return this.applyPlateMotion(rawEnd, arm.plate, time, currentTime, currentPlates);
+                    };
+
+                    // Canonical slabId prefix — sort groupIds so A-B and B-A produce the same key.
+                    const [gMin, gMax] = [armA.groupId, armB.groupId].sort();
+                    const jPrefix = `${pid}_junction_${gMin}_${gMax}`;
+                    const groupBirthJ = Math.max(armA.groupBirth, armB.groupBirth);
+
+                    // Find last existing permanent junction fill.
+                    const existingPerms = [...currentPlates, ...newStrips]
+                        .filter(p => p.type === 'oceanic' && p.linkedToPlateId === pid &&
+                            p.slabId?.startsWith(jPrefix) && !p.slabId.endsWith('_growing'))
+                        .sort((a, b) => b.birthTime - a.birthTime);
+                    let lastPermTime: number | null = existingPerms.length > 0 ? existingPerms[0].birthTime : null;
+
+                    let nextPermTime = lastPermTime !== null
+                        ? lastPermTime + interval
+                        : (Math.floor(groupBirthJ / interval) + 1) * interval;
+
+                    // Permanent banded junction fills.
+                    while (nextPermTime <= currentTime) {
+                        const T = nextPermTime;
+                        nextPermTime += interval;
+                        if (T <= groupBirthJ) continue;
+                        const already = [...currentPlates, ...newStrips].some(p =>
+                            p.type === 'oceanic' && p.linkedToPlateId === pid &&
+                            p.slabId?.startsWith(jPrefix) && p.birthTime === T && !p.slabId.endsWith('_growing')
+                        );
+                        if (already) continue;
+
+                        const midEndA_curr = getMidEndAtTime(armA, junctionAtStartA, T);
+                        const midEndB_curr = getMidEndAtTime(armB, junctionAtStartB, T);
+                        if (!midEndA_curr || !midEndB_curr) continue;
+
+                        let ring: Coordinate[];
+                        if (lastPermTime === null) {
+                            // First band: triangle from junction vertex at T to both midline endpoints.
+                            const pAtT = this.calculatePlateAtTime(armA.plate, T, currentPlates);
+                            const pPoly = pAtT.polygons[armA.polyIdx];
+                            if (!pPoly) continue;
+                            const pPtsAtT = getEdgePoints(pPoly, armA.pEdges);
+                            const rawJ = junctionAtStartA ? pPtsAtT[0] : pPtsAtT[pPtsAtT.length - 1];
+                            const jMoved = this.applyPlateMotion(rawJ, armA.plate, T, currentTime, currentPlates);
+                            ring = [jMoved, midEndA_curr, midEndB_curr, jMoved];
+                        } else {
+                            // Subsequent bands: quad between previous and current midline endpoints.
+                            const midEndA_prev = getMidEndAtTime(armA, junctionAtStartA, lastPermTime);
+                            const midEndB_prev = getMidEndAtTime(armB, junctionAtStartB, lastPermTime);
+                            if (!midEndA_prev || !midEndB_prev) continue;
+                            ring = [midEndA_prev, midEndA_curr, midEndB_curr, midEndB_prev, midEndA_prev];
+                        }
+                        lastPermTime = T;
+
+                        newStrips.push({
+                            id: generateId(), slabId: `${jPrefix}_${T}`,
+                            name: `Junction Crust ${T}Ma`, type: 'oceanic', polygonType: 'oceanic_plate',
+                            color: crustColor, zIndex: (cornerPlate.zIndex || 0) - 1,
+                            birthTime: T, deathTime: null, visible: true, locked: false,
+                            center: calculateSphericalCentroid(ring),
+                            polygons: [{ id: generateId(), points: ring, closed: true, edgeMeta: [] }],
+                            features: [], initialPolygons: [{ id: generateId(), points: ring, closed: true }],
+                            initialFeatures: [], motion: createDefaultMotion(), motionKeyframes: [],
+                            events: [], linkedToPlateId: pid, linkTime: currentTime,
+                            connectedRiftIds: [], siblingSystem: true,
+                        });
+                    }
+
+                    // Growing junction fill — from last permanent boundary to current live midline endpoints.
+                    const latestPermJ = [...currentPlates, ...newStrips]
+                        .filter(p => p.type === 'oceanic' && p.linkedToPlateId === pid &&
+                            p.slabId?.startsWith(jPrefix) && !p.slabId.endsWith('_growing'))
+                        .sort((a, b) => b.birthTime - a.birthTime)[0];
+
+                    let growRing: Coordinate[];
+                    if (latestPermJ) {
+                        const outerA = getMidEndAtTime(armA, junctionAtStartA, latestPermJ.birthTime);
+                        const outerB = getMidEndAtTime(armB, junctionAtStartB, latestPermJ.birthTime);
+                        growRing = (outerA && outerB)
+                            ? [outerA, midEndA, midEndB, outerB, outerA]
+                            : [junctionPt, midEndA, midEndB, junctionPt];
+                    } else {
+                        growRing = [junctionPt, midEndA, midEndB, junctionPt];
+                    }
+
+                    newStrips.push({
+                        id: generateId(), slabId: `${jPrefix}_growing`,
+                        name: `Junction Active`, type: 'oceanic', polygonType: 'oceanic_plate',
+                        color: '#60a5fa', zIndex: (cornerPlate.zIndex || 0) - 1,
+                        birthTime: currentTime, deathTime: null, visible: true, locked: false,
+                        center: calculateSphericalCentroid(growRing),
+                        polygons: [{ id: generateId(), points: growRing, closed: true, edgeMeta: [] }],
+                        features: [], initialPolygons: [{ id: generateId(), points: growRing, closed: true }],
+                        initialFeatures: [], motion: createDefaultMotion(), motionKeyframes: [],
+                        events: [], linkedToPlateId: pid, linkTime: currentTime,
+                        connectedRiftIds: [], siblingSystem: true,
+                    });
+                }
+            }
+        }
+        // ── End Pass 2 ───────────────────────────────────────────────────────────────────────────
+
         return newStrips;
     }
 
