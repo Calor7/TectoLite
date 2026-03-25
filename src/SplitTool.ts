@@ -6,7 +6,8 @@ import {
     Coordinate,
     generateId,
     MotionKeyframe,
-    createDefaultMotion
+    createDefaultMotion,
+    RiftAxis
 } from './types';
 import {
     Vector3,
@@ -492,7 +493,7 @@ function assignSplitEdgeMeta(
     currentTime: number,
     polyIndexA: number,
     polyIndexB: number
-): { metaA: EdgeMeta[], metaB: EdgeMeta[] } {
+): { metaA: EdgeMeta[], metaB: EdgeMeta[], groupId: string } {
     const groupId = generateId(); // Unique ID for this specific split cut
 
     const metaA: EdgeMeta[] = [];
@@ -572,7 +573,7 @@ function assignSplitEdgeMeta(
         }
     }
 
-    return { metaA, metaB };
+    return { metaA, metaB, groupId };
 }
 
 export function splitPlate(
@@ -982,6 +983,7 @@ export function splitPlate(
     const leftPolygons: Polygon[] = [];
     const rightPolygons: Polygon[] = [];
     const allCutPaths: Coordinate[][] = [];
+    const newRiftAxes: { groupId: string; cutPath: Coordinate[] }[] = [];
 
     // Helper to calculate centroid and side based on NEAREST polyline segment
     const getSide = (polys: Polygon[]): 'left' | 'right' => {
@@ -1027,7 +1029,7 @@ export function splitPlate(
             const side1 = getSide([tempPoly1]);
 
             if (side1 === 'left') {
-                const { metaA, metaB } = assignSplitEdgeMeta(poly, res1, res2, leftPlateId, rightPlateId, currentTime, leftPolygons.length, rightPolygons.length);
+                const { metaA, metaB, groupId } = assignSplitEdgeMeta(poly, res1, res2, leftPlateId, rightPlateId, currentTime, leftPolygons.length, rightPolygons.length);
                 leftPolygons.push({
                     ...poly,
                     id: generateId(),
@@ -1042,8 +1044,9 @@ export function splitPlate(
                     riftEdgeIndices: res2.riftIndices,
                     edgeMeta: metaB
                 });
+                if (res1.cutPath) newRiftAxes.push({ groupId, cutPath: res1.cutPath });
             } else {
-                const { metaA, metaB } = assignSplitEdgeMeta(poly, res1, res2, rightPlateId, leftPlateId, currentTime, rightPolygons.length, leftPolygons.length);
+                const { metaA, metaB, groupId } = assignSplitEdgeMeta(poly, res1, res2, rightPlateId, leftPlateId, currentTime, rightPolygons.length, leftPolygons.length);
                 rightPolygons.push({
                     ...poly,
                     id: generateId(),
@@ -1058,6 +1061,7 @@ export function splitPlate(
                     riftEdgeIndices: res2.riftIndices,
                     edgeMeta: metaB
                 });
+                if (res1.cutPath) newRiftAxes.push({ groupId, cutPath: res1.cutPath });
             }
 
             if (res1.cutPath) {
@@ -1458,6 +1462,72 @@ export function splitPlate(
         };
     };
 
+    // --- CREATE RIFT AXES for the new split ---
+    const createdRiftAxes: RiftAxis[] = newRiftAxes.map(({ groupId, cutPath }) => ({
+        id: generateId(),
+        groupId,
+        plateIdA: leftPlateId,
+        plateIdB: rightPlateId,
+        birthPolyline: cutPath,
+        birthTime: currentTime,
+        state: 'active' as const,
+        lastGenerationTime: currentTime,
+    }));
+
+    // --- RE-ROUTE EXISTING RIFT AXES that reference the dying plate ---
+    const existingAxes = (currentState.world.riftAxes || []);
+    const reroutedAxes: RiftAxis[] = [];
+    const additionalAxes: RiftAxis[] = []; // For axes that need splitting
+
+    for (const axis of existingAxes) {
+        if (axis.state === 'dead') {
+            reroutedAxes.push(axis);
+            continue;
+        }
+
+        const refsA = axis.plateIdA === plateId;
+        const refsB = axis.plateIdB === plateId;
+        if (!refsA && !refsB) {
+            reroutedAxes.push(axis);
+            continue;
+        }
+
+        // Find which child(ren) inherited this axis's rift edges
+        const childWithEdge = (child: TectonicPlate) =>
+            child.polygons.some(p => p.edgeMeta?.some(e => e.sourceId === axis.groupId && e.type === 'rift'));
+
+        const leftHasEdge = childWithEdge(leftPlate);
+        const rightHasEdge = childWithEdge(rightPlate);
+
+        if (leftHasEdge && rightHasEdge) {
+            // Edge case: split cuts ACROSS the existing rift edge — split the axis into two
+            const axisLeft: RiftAxis = {
+                ...axis,
+                id: generateId(),
+                ...(refsA ? { plateIdA: leftPlateId } : { plateIdB: leftPlateId }),
+            };
+            const axisRight: RiftAxis = {
+                ...axis,
+                id: generateId(),
+                ...(refsA ? { plateIdA: rightPlateId } : { plateIdB: rightPlateId }),
+            };
+            additionalAxes.push(axisLeft, axisRight);
+        } else if (leftHasEdge) {
+            reroutedAxes.push({
+                ...axis,
+                ...(refsA ? { plateIdA: leftPlateId } : { plateIdB: leftPlateId }),
+            });
+        } else if (rightHasEdge) {
+            reroutedAxes.push({
+                ...axis,
+                ...(refsA ? { plateIdA: rightPlateId } : { plateIdB: rightPlateId }),
+            });
+        } else {
+            // Neither child has the edge — mark axis dead (rift edge was lost)
+            reroutedAxes.push({ ...axis, state: 'dead', deathTime: currentTime });
+        }
+    }
+
     // Update World State
     return {
         ...currentState,
@@ -1474,6 +1544,11 @@ export function splitPlate(
 
                 // Add new plates
                 ...newPlates
+            ],
+            riftAxes: [
+                ...reroutedAxes,
+                ...additionalAxes,
+                ...createdRiftAxes
             ],
             selectedPlateId: rightPlate.id // Select one of the new plates
         }

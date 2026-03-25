@@ -340,6 +340,37 @@ export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
 export type LineType = 'rift' | 'trench' | 'fault' | 'suture' | 'generic';
 export type PolygonType = 'generic' | 'continental_crust' | 'island' | 'continental_plate' | 'oceanic_plate' | 'craton';
 
+// ============================================================================
+// RIFT AXIS — Mid-ocean ridge / spreading center (first-class entity)
+// ============================================================================
+
+export type RiftAxisState = 'active' | 'frozen' | 'dead';
+
+/** A rift axis represents the spreading center between two diverging plates.
+ *  Ocean crust grows outward from the axis in concentric rings (isochrons). */
+export interface RiftAxis {
+  id: string;
+  groupId: string;              // Same groupId as the split that created it (matches EdgeMeta.sourceId)
+
+  plateIdA: string;             // Plate on "A" side (left plate from the split)
+  plateIdB: string;             // Plate on "B" side (right plate from the split)
+
+  birthPolyline: Coordinate[];  // The original split line geometry (axis position at birth)
+  birthTime: number;            // Geological time of the split
+
+  // Lifecycle
+  state: RiftAxisState;
+  frozenTime?: number;          // When spreading stopped (if frozen)
+  deathTime?: number;           // When axis was destroyed (if dead)
+
+  // Generation tracking
+  lastGenerationTime: number;   // Birth time of most recent permanent ring (starts at birthTime)
+}
+
+export function getActiveRiftAxes(axes: RiftAxis[]): RiftAxis[] {
+  return axes.filter(a => a.state === 'active');
+}
+
 export type DrawMode = 'polygon' | 'line';
 
 export interface TectonicPlate {
@@ -361,6 +392,7 @@ export interface TectonicPlate {
   age?: number;          // Creation time (Ma) for oceanic slabs
   generatedBy?: string;  // ID of the parent plate that generated this slab
   slabId?: string;       // Unique ID for the slab (e.g. parentId_timeStep)
+  riftAxisId?: string;   // Which RiftAxis generated this strip (axis-based path)
   elevation?: number; // Base elevation
 
   // Current Visual State (Calculated from keyframes)
@@ -469,6 +501,9 @@ export interface WorldState {
     oceanicCrustColor?: string;              // Default color for new oceanic crust
     oceanicCrustOpacity?: number;            // Opacity for oceanic crust rendering (0-1)
   };
+
+  // Rift Axis system (mid-ocean ridge entities)
+  riftAxes?: RiftAxis[];        // All rift axes (active, frozen, dead)
 
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
@@ -593,6 +628,8 @@ export function createDefaultWorldState(): WorldState {
       oceanicCrustColor: '#3b82f6', // Default blue
       oceanicCrustOpacity: 0.5,      // Default 50% opacity
     },
+    // Rift axis defaults
+    riftAxes: [],
     // Event system defaults
     tectonicEvents: [],
     pendingEventId: null

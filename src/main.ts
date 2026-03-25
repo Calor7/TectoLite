@@ -3714,6 +3714,20 @@ class TectoLiteApp {
         const descendantIds = getDescendants(plateId, this.state.world.plates);
         const affectedPlateIds = new Set([plateId, ...descendantIds]);
 
+        // --- OCEAN STRIP PRESERVATION ---
+        // Before applying the motion change, snapshot past ocean strips at currentTime
+        // using the OLD parent motion. This preserves their positions when the parent's
+        // motion history changes retroactively.
+        const pastOceanSnapshots = new Map<string, import('./types').Polygon[]>();
+        for (const p of this.state.world.plates) {
+            if (p.type !== 'oceanic') continue;
+            if (!p.linkedToPlateId || !affectedPlateIds.has(p.linkedToPlateId)) continue;
+            if (p.birthTime >= currentTime) continue; // future strips get deleted anyway
+            if (p.slabId?.endsWith('_growing')) continue;
+            // Calculate the strip's current polygons using OLD motion
+            const calculated = this.simulation!.calculatePlateAtTime(p, currentTime, this.state.world.plates);
+            pastOceanSnapshots.set(p.id, calculated.polygons);
+        }
 
         const plates = this.state.world.plates.map(p => {
             let processedPlate = p;
@@ -3799,6 +3813,26 @@ class TectoLiteApp {
                 if (processedPlate.linkedToPlateId && affectedPlateIds.has(processedPlate.linkedToPlateId)) {
                     return null; // DELETE THIS PLATE
                 }
+            }
+
+            // 3. OCEAN STRIP PRESERVATION: Snapshot past ocean strips so they survive the motion change.
+            // We set linkTime = currentTime so the strip only inherits NEW parent motion from here on,
+            // and insert a keyframe with the strip's pre-change polygon positions.
+            const snapshot = pastOceanSnapshots.get(processedPlate.id);
+            if (snapshot) {
+                const updated = { ...processedPlate };
+                updated.linkTime = currentTime;
+                const kf: import('./types').MotionKeyframe = {
+                    time: currentTime,
+                    eulerPole: { position: [0, 90], rate: 0 },
+                    snapshotPolygons: snapshot,
+                    snapshotFeatures: updated.features || []
+                };
+                let kfs = [...(updated.motionKeyframes || [])];
+                kfs = kfs.filter(k => Math.abs(k.time - currentTime) > 0.001);
+                kfs.push(kf);
+                updated.motionKeyframes = kfs.sort((a, b) => a.time - b.time);
+                return updated;
             }
 
             return processedPlate;

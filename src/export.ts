@@ -307,6 +307,15 @@ export async function exportToJSON(state: AppState): Promise<void> {
                         generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
                         deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
                     }))
+                })),
+            riftAxes: (state.world.riftAxes || [])
+                .filter(a => state.world.currentTime >= a.birthTime && a.state !== 'dead')
+                .map(a => ({
+                    ...a,
+                    birthTime: Math.max(0, a.birthTime + timeOffset),
+                    lastGenerationTime: Math.max(0, a.lastGenerationTime + timeOffset),
+                    frozenTime: a.frozenTime !== undefined ? a.frozenTime + timeOffset : undefined,
+                    deathTime: a.deathTime !== undefined ? a.deathTime + timeOffset : undefined,
                 }))
         };
     }

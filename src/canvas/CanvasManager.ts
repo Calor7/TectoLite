@@ -779,6 +779,66 @@ export class CanvasManager {
         this.ctx.lineWidth = 2;
         this.ctx.setLineDash([12, 4]);
 
+        // ── Axis-based rift lines (new system) ──────────────────────────
+        const riftAxes = state.world.riftAxes || [];
+        const axisGroupIds = new Set<string>();
+        for (const axis of riftAxes) {
+            if (axis.state !== 'active') continue;
+            axisGroupIds.add(axis.groupId);
+
+            const plateA = state.world.plates.find(p =>
+                p.id === axis.plateIdA && p.birthTime <= state.world.currentTime &&
+                (p.deathTime === null || p.deathTime > state.world.currentTime)
+            );
+            const plateB = state.world.plates.find(p =>
+                p.id === axis.plateIdB && p.birthTime <= state.world.currentTime &&
+                (p.deathTime === null || p.deathTime > state.world.currentTime)
+            );
+            if (!plateA || !plateB) continue;
+
+            const findEdgePts = (plate: import('../types').TectonicPlate): Coordinate[] | null => {
+                for (const poly of plate.polygons) {
+                    if (!poly.edgeMeta) continue;
+                    const edges = poly.edgeMeta.filter(e => e.sourceId === axis.groupId && e.type === 'rift');
+                    if (edges.length === 0) continue;
+                    edges.sort((a, b) => a.edgeIndex - b.edgeIndex);
+                    const pts: Coordinate[] = [];
+                    for (const edge of edges) pts.push(poly.points[edge.edgeIndex]);
+                    if (edges.length > 0) {
+                        pts.push(poly.points[(edges[edges.length - 1].edgeIndex + 1) % poly.points.length]);
+                    }
+                    return pts;
+                }
+                return null;
+            };
+
+            const ptsA = findEdgePts(plateA);
+            const ptsB = findEdgePts(plateB);
+            if (!ptsA || !ptsB || ptsA.length < 2 || ptsB.length < 2) continue;
+
+            const midpoints: Coordinate[] = [];
+            const ptsRev = [...ptsB].reverse();
+            for (let i = 0; i < Math.min(ptsA.length, ptsRev.length); i++) {
+                const pV = latLonToVector(ptsA[i]);
+                const qV = latLonToVector(ptsRev[i]);
+                const midV = normalize({ x: (pV.x + qV.x) / 2, y: (pV.y + qV.y) / 2, z: (pV.z + qV.z) / 2 });
+                midpoints.push(vectorToLatLon(midV));
+            }
+
+            if (midpoints.length >= 2) {
+                // Skip degenerate midlines that collapse to a point
+                const v0 = latLonToVector(midpoints[0]);
+                const vN = latLonToVector(midpoints[midpoints.length - 1]);
+                const span = Math.acos(Math.min(1, Math.max(-1, v0.x * vN.x + v0.y * vN.y + v0.z * vN.z)));
+                if (span >= 0.01) { // >= ~0.6° arc
+                    this.ctx.beginPath();
+                    path({ type: 'LineString', coordinates: midpoints });
+                    this.ctx.stroke();
+                }
+            }
+        }
+
+        // ── Legacy sibling-based rift lines (skip groups handled by axis) ──
         for (const plate of state.world.plates) {
             if (!plate.siblingSystem || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
             
@@ -799,9 +859,12 @@ export class CanvasManager {
                 }
                  
                 for (const groupId of activeGroupIds) {
+                    // Skip groups handled by the RiftAxis system
+                    if (axisGroupIds.has(groupId)) continue;
+
                     const pEdges = poly.edgeMeta.filter(m => m.siblings?.some(s => s.groupId === groupId && !s.frozen));
                     if (pEdges.length === 0) continue;
-                      
+
                     const qId = pEdges[0].siblings!.find(s => s.groupId === groupId && !s.frozen)!.siblingPlateId;
                     const qPlate = state.world.plates.find(p => p.id === qId);
                     if (!qPlate || (qPlate.deathTime !== null && state.world.currentTime >= qPlate.deathTime)) continue;
@@ -848,6 +911,12 @@ export class CanvasManager {
                     }
                       
                     if (midpoints.length >= 2) {
+                        // Skip degenerate midlines that collapse to a point
+                        const v0 = latLonToVector(midpoints[0]);
+                        const vN = latLonToVector(midpoints[midpoints.length - 1]);
+                        const span = Math.acos(Math.min(1, Math.max(-1, v0.x * vN.x + v0.y * vN.y + v0.z * vN.z)));
+                        if (span < 0.01) continue; // < ~0.6° arc
+
                         this.ctx.beginPath();
                         path({ type: 'LineString', coordinates: midpoints });
                         this.ctx.stroke();

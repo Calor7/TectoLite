@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(find /c/GIT/TectoLite/src -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(npx vite:*)",
+      "Bash(find C:UsersCHRIST~1AppDataLocalTempclaudec--GIT-TectoLite -type f -name *.output -o -name *.md)"
     ]
   }
 }
