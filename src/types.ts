@@ -346,6 +346,12 @@ export type PolygonType = 'generic' | 'continental_crust' | 'island' | 'continen
 
 export type RiftAxisState = 'active' | 'frozen' | 'dead';
 
+/** A midline snapshot recorded at a specific geological time (absolute coordinates). */
+export interface Isochron {
+  time: number;            // geological time when this midline was recorded
+  polyline: Coordinate[];  // absolute position of the midline at this time
+}
+
 /** A rift axis represents the spreading center between two diverging plates.
  *  Ocean crust grows outward from the axis in concentric rings (isochrons). */
 export interface RiftAxis {
@@ -363,8 +369,8 @@ export interface RiftAxis {
   frozenTime?: number;          // When spreading stopped (if frozen)
   deathTime?: number;           // When axis was destroyed (if dead)
 
-  // Generation tracking
-  lastGenerationTime: number;   // Birth time of most recent permanent ring (starts at birthTime)
+  // Isochron history — midline snapshots at creation time, ordered oldest-first
+  isochrons: Isochron[];
 }
 
 export function getActiveRiftAxes(axes: RiftAxis[]): RiftAxis[] {

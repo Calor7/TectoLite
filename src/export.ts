@@ -313,9 +313,11 @@ export async function exportToJSON(state: AppState): Promise<void> {
                 .map(a => ({
                     ...a,
                     birthTime: Math.max(0, a.birthTime + timeOffset),
-                    lastGenerationTime: Math.max(0, a.lastGenerationTime + timeOffset),
                     frozenTime: a.frozenTime !== undefined ? a.frozenTime + timeOffset : undefined,
                     deathTime: a.deathTime !== undefined ? a.deathTime + timeOffset : undefined,
+                    isochrons: a.isochrons
+                        .map(iso => ({ time: iso.time + timeOffset, polyline: iso.polyline }))
+                        .filter(iso => iso.time >= 0),
                 }))
         };
     }

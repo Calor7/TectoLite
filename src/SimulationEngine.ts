@@ -1,4 +1,4 @@
-import { AppState, TectonicPlate, Coordinate, Feature, generateId, createDefaultMotion, RiftAxis } from './types';
+import { AppState, TectonicPlate, Coordinate, Feature, generateId, createDefaultMotion, RiftAxis, Isochron } from './types';
 
 import {
     toRad,
@@ -100,7 +100,7 @@ export class SimulationEngine {
         this.setState(state => {
             const { globalOptions } = state.world;
             // Recalculate ALL plates at the new time
-            const newPlates = state.world.plates.map(plate => {
+            let newPlates = state.world.plates.map(plate => {
                 const isBorn = time >= plate.birthTime;
                 const isDead = plate.deathTime !== null && time >= plate.deathTime;
 
@@ -108,6 +108,16 @@ export class SimulationEngine {
 
                 return this.calculatePlateAtTime(plate, time, state.world.plates);
             });
+
+            // Re-derive axis-based ocean rings (same logic as update loop)
+            let updatedRiftAxes = [...(state.world.riftAxes || [])];
+            if (globalOptions.enableExpandingRifts !== false) {
+                newPlates = newPlates.filter(p => !p.riftAxisId);
+                const derivedRings = this.deriveOceanRings(updatedRiftAxes, newPlates, time);
+                if (derivedRings.length > 0) {
+                    newPlates = [...newPlates, ...derivedRings];
+                }
+            }
 
             // Calculate Boundaries if enabled
             // ALWAYS update boundaries if Visualization OR Guided Creation is enabled.
@@ -124,6 +134,7 @@ export class SimulationEngine {
                 world: {
                     ...state.world,
                     plates: newPlates,
+                    riftAxes: updatedRiftAxes,
                     boundaries: boundaries,
                     currentTime: time
                 }
@@ -196,28 +207,26 @@ export class SimulationEngine {
             });
 
             // --- AUTOMATED OCEANIC CRUST "EXPANDING RIFT" GENERATION ---
-            let updatedRiftAxes = state.world.riftAxes || [];
+            let updatedRiftAxes: RiftAxis[] = [...(state.world.riftAxes || [])];
             if (globalOptions.enableExpandingRifts !== false) { // Default true
-                // CLEANUP: Remove old "growing" strips (active gap fillers) so they can be regenerated fresh
-                // This prevents duplicates and ensures the active strip always matches current rift position
-                newPlates = newPlates.filter(p => !p.slabId?.endsWith('_growing'));
-
                 const interval = globalOptions.oceanicGenerationInterval || 25;
-                const currentRiftAxes = state.world.riftAxes || [];
 
-                // AXIS PATH: rift-axis-based (for rifts that have a RiftAxis entity)
-                const axisResult = this.generateAxisCrust(newPlates, currentRiftAxes, newTime, interval);
-                updatedRiftAxes = axisResult.updatedAxes;
+                // ISOCHRON PATH: Remove all axis-derived ephemeral ocean plates, then re-derive
+                newPlates = newPlates.filter(p => !p.riftAxisId);
+                this.recordIsochrons(updatedRiftAxes, newPlates, newTime, interval);
+                const derivedRings = this.deriveOceanRings(updatedRiftAxes, newPlates, newTime);
 
                 // SIBLING PATH: sibling-based (skip groups that have a RiftAxis)
-                const siblingSlabs = this.generateSiblingCrust(newPlates, newTime, interval, currentRiftAxes);
+                // Also remove old sibling growing strips so they can be regenerated fresh
+                newPlates = newPlates.filter(p => !p.slabId?.endsWith('_growing'));
+                const siblingSlabs = this.generateSiblingCrust(newPlates, newTime, interval, updatedRiftAxes);
 
                 // LEGACY PATH: rift-based (for old plates without siblingSystem flag)
                 const legacySlabs = this.generateRiftCrust(
                     newPlates.filter(p => !p.siblingSystem), newTime, interval
                 );
 
-                const allNewSlabs = [...axisResult.newStrips, ...siblingSlabs, ...legacySlabs];
+                const allNewSlabs = [...derivedRings, ...siblingSlabs, ...legacySlabs];
                 if (allNewSlabs.length > 0) {
                     newPlates = [...newPlates, ...allNewSlabs];
                 }
@@ -1115,313 +1124,251 @@ export class SimulationEngine {
     }
 
     // ══════════════════════════════════════════════════════════════════════════════════════════
-    // RIFT-AXIS-BASED OCEAN GENERATION — "Tree Ring" model
+    // ISOCHRON-BASED OCEAN GENERATION — GPlates-inspired derived geometry
     // ══════════════════════════════════════════════════════════════════════════════════════════
 
-    private generateAxisCrust(
+    private readonly RIFT_GRID_RESOLUTION = 2.0;
+
+    /** Extract rift-edge points from a plate polygon by groupId. */
+    private getAxisEdgePoints(polygon: import('./types').Polygon, edges: import('./types').EdgeMeta[]): Coordinate[] {
+        const pts: Coordinate[] = [];
+        for (const edge of edges) pts.push(polygon.points[edge.edgeIndex]);
+        if (edges.length > 0) {
+            const lastEdge = edges[edges.length - 1].edgeIndex;
+            pts.push(polygon.points[(lastEdge + 1) % polygon.points.length]);
+        }
+        return this.interpolatePoints(pts, this.RIFT_GRID_RESOLUTION);
+    }
+
+    /** Compute midline between two edge-point arrays (second array is reversed for correspondence). */
+    private computeAxisMidline(pts1: Coordinate[], pts2: Coordinate[]): Coordinate[] {
+        const n = Math.min(pts1.length, pts2.length);
+        return Array.from({ length: n }, (_, i) => {
+            const v1 = latLonToVector(pts1[i]);
+            const v2 = latLonToVector(pts2[n - 1 - i]);
+            return vectorToLatLon(normalize({ x: (v1.x + v2.x) / 2, y: (v1.y + v2.y) / 2, z: (v1.z + v2.z) / 2 }));
+        });
+    }
+
+    /** Find rift edges on a plate by groupId (no edge index references). */
+    private findAxisRiftEdges(plate: TectonicPlate, groupId: string): { poly: import('./types').Polygon; edges: import('./types').EdgeMeta[] } | null {
+        for (const poly of plate.polygons) {
+            if (!poly.edgeMeta) continue;
+            const edges = poly.edgeMeta.filter(e => e.sourceId === groupId && e.type === 'rift');
+            if (edges.length > 0) {
+                edges.sort((a, b) => a.edgeIndex - b.edgeIndex);
+                return { poly, edges };
+            }
+        }
+        return null;
+    }
+
+    /** Find a plate alive at a given time. */
+    private findAliveAt(plates: TectonicPlate[], plateId: string, time: number): TectonicPlate | undefined {
+        return plates.find(p =>
+            p.id === plateId && p.birthTime <= time &&
+            (p.deathTime === null || p.deathTime > time)
+        );
+    }
+
+    /**
+     * Record new isochrons on active rift axes.
+     * Each isochron is a midline snapshot stored in absolute coordinates at creation time.
+     */
+    private recordIsochrons(
+        axes: RiftAxis[],
         currentPlates: TectonicPlate[],
-        riftAxes: RiftAxis[],
         currentTime: number,
         interval: number
-    ): { newStrips: TectonicPlate[]; updatedAxes: RiftAxis[] } {
-        const newStrips: TectonicPlate[] = [];
-        const updatedAxes = riftAxes.map(a => ({ ...a })); // shallow copy for mutation
-        const RIFT_GRID_RESOLUTION = 2.0;
-
-        // Helpers (same logic as generateSiblingCrust)
-        const getEdgePoints = (polygon: import('./types').Polygon, edges: import('./types').EdgeMeta[]): Coordinate[] => {
-            const pts: Coordinate[] = [];
-            for (const edge of edges) pts.push(polygon.points[edge.edgeIndex]);
-            if (edges.length > 0) {
-                const lastEdge = edges[edges.length - 1].edgeIndex;
-                pts.push(polygon.points[(lastEdge + 1) % polygon.points.length]);
-            }
-            return this.interpolatePoints(pts, RIFT_GRID_RESOLUTION);
-        };
-
-        const computeMidlinePts = (pts1: Coordinate[], pts2: Coordinate[]): Coordinate[] => {
-            const n = Math.min(pts1.length, pts2.length);
-            return Array.from({ length: n }, (_, i) => {
-                const v1 = latLonToVector(pts1[i]);
-                const v2 = latLonToVector(pts2[n - 1 - i]);
-                return vectorToLatLon(normalize({ x: (v1.x + v2.x) / 2, y: (v1.y + v2.y) / 2, z: (v1.z + v2.z) / 2 }));
-            });
-        };
-
-        // Find rift edges on a plate by groupId (no edge index references!)
-        const findRiftEdges = (plate: TectonicPlate, groupId: string): { poly: import('./types').Polygon; polyIdx: number; edges: import('./types').EdgeMeta[] } | null => {
-            for (let pi = 0; pi < plate.polygons.length; pi++) {
-                const poly = plate.polygons[pi];
-                if (!poly.edgeMeta) continue;
-                const edges = poly.edgeMeta.filter(e => e.sourceId === groupId && e.type === 'rift');
-                if (edges.length > 0) {
-                    edges.sort((a, b) => a.edgeIndex - b.edgeIndex);
-                    return { poly, polyIdx: pi, edges };
-                }
-            }
-            return null;
-        };
-
-        const crustColor = this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6';
-
-        for (const axis of updatedAxes) {
+    ): void {
+        for (const axis of axes) {
             if (axis.state !== 'active') continue;
 
-            // Find both plates alive at currentTime
-            const plateA = currentPlates.find(p =>
-                p.id === axis.plateIdA && p.birthTime <= currentTime &&
-                (p.deathTime === null || p.deathTime > currentTime)
-            );
-            const plateB = currentPlates.find(p =>
-                p.id === axis.plateIdB && p.birthTime <= currentTime &&
-                (p.deathTime === null || p.deathTime > currentTime)
-            );
+            const plateA = this.findAliveAt(currentPlates, axis.plateIdA, currentTime);
+            const plateB = this.findAliveAt(currentPlates, axis.plateIdB, currentTime);
             if (!plateA || !plateB) {
-                // Auto-death: one of the plates no longer exists
                 axis.state = 'dead';
                 axis.deathTime = currentTime;
                 continue;
             }
 
-            // Find rift edges via groupId
-            const infoA = findRiftEdges(plateA, axis.groupId);
-            const infoB = findRiftEdges(plateB, axis.groupId);
-            if (!infoA || !infoB) continue;
+            const lastTime = axis.isochrons.length > 0
+                ? axis.isochrons[axis.isochrons.length - 1].time
+                : axis.birthTime;
 
-            // Current edge points and midline (live positions at currentTime)
-            const ptsA = getEdgePoints(infoA.poly, infoA.edges);
-            const ptsB = getEdgePoints(infoB.poly, infoB.edges);
-            if (ptsA.length < 2 || ptsB.length < 2) continue;
-            const currentMidline = computeMidlinePts(ptsA, ptsB);
-
-            // Helper: compute midline at a given time, then advect to currentTime for each plate side
-            const getMidlineAtTime = (genTime: number): { midlineForA: Coordinate[]; midlineForB: Coordinate[] } | null => {
-                const pAtT = this.calculatePlateAtTime(plateA, genTime, currentPlates);
-                const qAtT = this.calculatePlateAtTime(plateB, genTime, currentPlates);
-                const infoAatT = findRiftEdges(pAtT, axis.groupId);
-                const infoBatT = findRiftEdges(qAtT, axis.groupId);
-                if (!infoAatT || !infoBatT) return null;
-                const rawPtsA = getEdgePoints(infoAatT.poly, infoAatT.edges);
-                const rawPtsB = getEdgePoints(infoBatT.poly, infoBatT.edges);
-                if (rawPtsA.length < 2 || rawPtsB.length < 2) return null;
-                const rawMidline = computeMidlinePts(rawPtsA, rawPtsB);
-                return {
-                    midlineForA: rawMidline.map(p => this.applyPlateMotion(p, plateA, genTime, currentTime, currentPlates)),
-                    midlineForB: [...rawMidline.map(p => this.applyPlateMotion(p, plateB, genTime, currentTime, currentPlates))].reverse(),
-                };
-            };
-
-            // Helper: get outer boundary for the first ring (birth polyline advected by plate)
-            const getBirthEdge = (): { forA: Coordinate[]; forB: Coordinate[] } => {
-                const birth = this.interpolatePoints(axis.birthPolyline, RIFT_GRID_RESOLUTION);
-                return {
-                    forA: birth.map(p => this.applyPlateMotion(p, plateA, axis.birthTime, currentTime, currentPlates)),
-                    forB: [...birth.map(p => this.applyPlateMotion(p, plateB, axis.birthTime, currentTime, currentPlates))].reverse(),
-                };
-            };
-
-            // Find latest existing permanent strip for this axis (or sibling-generated for same group)
-            const getLatestPermStrip = (): TectonicPlate | undefined => {
-                return [...currentPlates, ...newStrips]
-                    .filter(p =>
-                        p.type === 'oceanic' &&
-                        !p.slabId?.endsWith('_growing') &&
-                        (p.riftAxisId === axis.id || p.slabId?.includes(`_${axis.groupId}_`))
-                    )
-                    .sort((a, b) => b.birthTime - a.birthTime)[0];
-            };
-
-            // ── Generate permanent rings ──────────────────────────────────────
-            let nextGenTime = axis.lastGenerationTime + interval;
-
-            while (nextGenTime <= currentTime) {
-                const genTime = nextGenTime;
-                nextGenTime += interval;
-                if (genTime <= axis.birthTime) continue;
-
-                // Check if already exists (axis-generated OR sibling-generated for same group)
-                const alreadyExists = [...currentPlates, ...newStrips].some(p =>
-                    p.type === 'oceanic' &&
-                    !p.slabId?.endsWith('_growing') &&
-                    Math.abs(p.birthTime - genTime) < 0.01 &&
-                    (p.riftAxisId === axis.id || p.slabId?.includes(`_${axis.groupId}_`))
-                );
-                if (alreadyExists) continue;
-
-                // Inner boundary: midline at genTime, advected to currentTime
-                const inner = getMidlineAtTime(genTime);
-                if (!inner) continue;
-
-                // Outer boundary: previous midline or birth edge
-                const latestPerm = getLatestPermStrip();
-                let outerA: Coordinate[];
-                let outerB: Coordinate[];
-                if (latestPerm) {
-                    const prev = getMidlineAtTime(latestPerm.birthTime);
-                    if (prev) {
-                        outerA = prev.midlineForA;
-                        outerB = prev.midlineForB;
-                    } else {
-                        const birth = getBirthEdge();
-                        outerA = birth.forA;
-                        outerB = birth.forB;
+            let nextTime = lastTime + interval;
+            while (nextTime <= currentTime) {
+                // When isochron time predates a child plate's birth (after re-split),
+                // use the parent plate that was alive at that time instead.
+                const resolveForTime = (plate: TectonicPlate, t: number): TectonicPlate | undefined => {
+                    if (t >= plate.birthTime) return plate;
+                    if (plate.parentPlateId) {
+                        const parent = currentPlates.find(p => p.id === plate.parentPlateId);
+                        if (parent) return resolveForTime(parent, t);
                     }
-                } else {
-                    const birth = getBirthEdge();
-                    outerA = birth.forA;
-                    outerB = birth.forB;
+                    return undefined;
+                };
+                const effectiveA = resolveForTime(plateA, nextTime);
+                const effectiveB = resolveForTime(plateB, nextTime);
+                if (!effectiveA || !effectiveB) { nextTime += interval; continue; }
+
+                // Compute plate positions at the isochron time
+                const plateAatT = this.calculatePlateAtTime(effectiveA, nextTime, currentPlates);
+                const plateBatT = this.calculatePlateAtTime(effectiveB, nextTime, currentPlates);
+
+                const infoA = this.findAxisRiftEdges(plateAatT, axis.groupId);
+                const infoB = this.findAxisRiftEdges(plateBatT, axis.groupId);
+                if (!infoA || !infoB) { nextTime += interval; continue; }
+
+                const ptsA = this.getAxisEdgePoints(infoA.poly, infoA.edges);
+                const ptsB = this.getAxisEdgePoints(infoB.poly, infoB.edges);
+                if (ptsA.length < 2 || ptsB.length < 2) { nextTime += interval; continue; }
+
+                const midline = this.computeAxisMidline(ptsA, ptsB);
+                axis.isochrons.push({ time: nextTime, polyline: midline });
+                nextTime += interval;
+            }
+        }
+    }
+
+    /**
+     * Derive ephemeral ocean ring TectonicPlate objects from isochron history.
+     * These are destroyed and recreated each frame — no persistent state.
+     */
+    private deriveOceanRings(
+        axes: RiftAxis[],
+        currentPlates: TectonicPlate[],
+        currentTime: number
+    ): TectonicPlate[] {
+        const rings: TectonicPlate[] = [];
+        const crustColor = this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6';
+        const MIN_AREA = 1e-4;
+
+        for (const axis of axes) {
+            // Skip dead axes with no isochrons (nothing to render)
+            if (axis.isochrons.length === 0 && axis.state === 'dead') continue;
+
+            const plateA = this.findAliveAt(currentPlates, axis.plateIdA, currentTime);
+            const plateB = this.findAliveAt(currentPlates, axis.plateIdB, currentTime);
+            // Need at least one plate to derive rings (the other side may have been subducted)
+            if (!plateA && !plateB) continue;
+
+            // Build the boundary chain: birthPolyline, isochrons, [current midline]
+            const boundaries: Isochron[] = [
+                { time: axis.birthTime, polyline: this.interpolatePoints(axis.birthPolyline, this.RIFT_GRID_RESOLUTION) }
+            ];
+            for (const iso of axis.isochrons) {
+                // Only include isochrons that exist at or before currentTime
+                if (iso.time <= currentTime) {
+                    boundaries.push(iso);
+                }
+            }
+
+            // If active, add current live midline as the final boundary
+            let isGrowingRing = false;
+            if (axis.state === 'active' && plateA && plateB) {
+                const infoA = this.findAxisRiftEdges(plateA, axis.groupId);
+                const infoB = this.findAxisRiftEdges(plateB, axis.groupId);
+                if (infoA && infoB) {
+                    const ptsA = this.getAxisEdgePoints(infoA.poly, infoA.edges);
+                    const ptsB = this.getAxisEdgePoints(infoB.poly, infoB.edges);
+                    if (ptsA.length >= 2 && ptsB.length >= 2) {
+                        const currentMidline = this.computeAxisMidline(ptsA, ptsB);
+                        boundaries.push({ time: currentTime, polyline: currentMidline });
+                        isGrowingRing = true;
+                    }
+                }
+            }
+
+            // Build rings between consecutive boundaries
+            for (let i = 1; i < boundaries.length; i++) {
+                const outer = boundaries[i - 1]; // older, further from axis
+                const inner = boundaries[i];      // younger, closer to axis
+                const isGrowing = isGrowingRing && i === boundaries.length - 1;
+                const ringColor = isGrowing ? '#60a5fa' : crustColor;
+
+                // Side A
+                if (plateA) {
+                    const outerA = outer.polyline.map(p => this.applyPlateMotion(p, plateA, outer.time, currentTime, currentPlates));
+                    const innerA = inner.polyline.map(p => this.applyPlateMotion(p, plateA, inner.time, currentTime, currentPlates));
+                    const ringPoly = this.buildRing(outerA, innerA);
+                    if (ringPoly && this.sphericalArea(ringPoly) >= MIN_AREA) {
+                        rings.push(this.createEphemeralOceanPlate(ringPoly, plateA, axis, inner.time, currentTime, ringColor, 'A', isGrowing));
+                    }
                 }
 
-                const ringA = this.buildRing(outerA, inner.midlineForA);
-                const ringB = this.buildRing(outerB, inner.midlineForB);
-                if (!ringA || !ringB) continue;
-                // Reject degenerate slivers (< ~0.01 sr ≈ 0.03% of sphere)
-                const MIN_AREA = 1e-4;
-                if (this.sphericalArea(ringA) < MIN_AREA || this.sphericalArea(ringB) < MIN_AREA) continue;
-
-                const stripIdA = `${axis.id}_${axis.groupId}_axis_${genTime}`;
-                const stripIdB = `${axis.id}_${axis.groupId}_axis_B_${genTime}`;
-
-                newStrips.push({
-                    id: generateId(),
-                    slabId: stripIdA,
-                    riftAxisId: axis.id,
-                    name: `${plateA.name} Crust ${genTime}Ma`,
-                    type: 'oceanic',
-                    polygonType: 'oceanic_plate',
-                    color: crustColor,
-                    zIndex: (plateA.zIndex || 0) - 1,
-                    birthTime: genTime,
-                    deathTime: null,
-                    visible: true,
-                    locked: false,
-                    center: calculateSphericalCentroid(ringA),
-                    polygons: [{ id: generateId(), points: ringA, closed: true, edgeMeta: [] }],
-                    features: [],
-                    initialPolygons: [{ id: generateId(), points: ringA, closed: true }],
-                    initialFeatures: [],
-                    motion: createDefaultMotion(),
-                    motionKeyframes: [],
-                    events: [],
-                    linkedToPlateId: plateA.id,
-                    linkTime: currentTime,
-                    connectedRiftIds: [],
-                    siblingSystem: true,
-                });
-
-                newStrips.push({
-                    id: generateId(),
-                    slabId: stripIdB,
-                    riftAxisId: axis.id,
-                    name: `${plateB.name} Crust ${genTime}Ma`,
-                    type: 'oceanic',
-                    polygonType: 'oceanic_plate',
-                    color: crustColor,
-                    zIndex: (plateB.zIndex || 0) - 1,
-                    birthTime: genTime,
-                    deathTime: null,
-                    visible: true,
-                    locked: false,
-                    center: calculateSphericalCentroid(ringB),
-                    polygons: [{ id: generateId(), points: ringB, closed: true, edgeMeta: [] }],
-                    features: [],
-                    initialPolygons: [{ id: generateId(), points: ringB, closed: true }],
-                    initialFeatures: [],
-                    motion: createDefaultMotion(),
-                    motionKeyframes: [],
-                    events: [],
-                    linkedToPlateId: plateB.id,
-                    linkTime: currentTime,
-                    connectedRiftIds: [],
-                    siblingSystem: true,
-                });
-
-                axis.lastGenerationTime = genTime;
+                // Side B
+                if (plateB) {
+                    const outerB = [...outer.polyline].reverse().map(p => this.applyPlateMotion(p, plateB, outer.time, currentTime, currentPlates));
+                    const innerB = [...inner.polyline].reverse().map(p => this.applyPlateMotion(p, plateB, inner.time, currentTime, currentPlates));
+                    const ringPoly = this.buildRing(outerB, innerB);
+                    if (ringPoly && this.sphericalArea(ringPoly) >= MIN_AREA) {
+                        rings.push(this.createEphemeralOceanPlate(ringPoly, plateB, axis, inner.time, currentTime, ringColor, 'B', isGrowing));
+                    }
+                }
             }
-
-            // ── Growing ring (active spreading) ──────────────────────────────
-            // The growing ring fills from the last permanent ring's INNER edge to the live midline.
-            // A permanent ring's inner boundary = midline at its own genTime (= its birthTime).
-            const latestPerm2 = getLatestPermStrip();
-            let growOuterA: Coordinate[];
-            let growOuterB: Coordinate[];
-            if (latestPerm2) {
-                const permInner = getMidlineAtTime(latestPerm2.birthTime);
-                growOuterA = permInner?.midlineForA ?? ptsA;
-                growOuterB = permInner?.midlineForB ?? [...ptsB].reverse();
-            } else {
-                const birth = getBirthEdge();
-                growOuterA = birth.forA;
-                growOuterB = birth.forB;
-            }
-
-            // Inner boundary is the current live midline — but each side needs its "half"
-            // Side A: from outerA to midline (midline is already at current positions)
-            // Side B: from outerB to midline (reversed for correct winding)
-            const growRingA = this.buildRing(growOuterA, currentMidline);
-            const growRingB = this.buildRing(growOuterB, [...currentMidline].reverse());
-            if (!growRingA || !growRingB) continue;
-
-            newStrips.push({
-                id: generateId(),
-                slabId: `${axis.id}_${axis.groupId}_axis_growing`,
-                riftAxisId: axis.id,
-                name: `${plateA.name} Active Rift`,
-                type: 'oceanic',
-                polygonType: 'oceanic_plate',
-                color: '#60a5fa',
-                zIndex: (plateA.zIndex || 0) - 1,
-                birthTime: currentTime,
-                deathTime: null,
-                visible: true,
-                locked: false,
-                center: calculateSphericalCentroid(growRingA),
-                polygons: [{ id: generateId(), points: growRingA, closed: true, edgeMeta: [] }],
-                features: [],
-                initialPolygons: [{ id: generateId(), points: growRingA, closed: true }],
-                initialFeatures: [],
-                motion: createDefaultMotion(),
-                motionKeyframes: [],
-                events: [],
-                linkedToPlateId: plateA.id,
-                linkTime: currentTime,
-                connectedRiftIds: [],
-                siblingSystem: true,
-            });
-
-            newStrips.push({
-                id: generateId(),
-                slabId: `${axis.id}_${axis.groupId}_axis_B_growing`,
-                riftAxisId: axis.id,
-                name: `${plateB.name} Active Rift`,
-                type: 'oceanic',
-                polygonType: 'oceanic_plate',
-                color: '#60a5fa',
-                zIndex: (plateB.zIndex || 0) - 1,
-                birthTime: currentTime,
-                deathTime: null,
-                visible: true,
-                locked: false,
-                center: calculateSphericalCentroid(growRingB),
-                polygons: [{ id: generateId(), points: growRingB, closed: true, edgeMeta: [] }],
-                features: [],
-                initialPolygons: [{ id: generateId(), points: growRingB, closed: true }],
-                initialFeatures: [],
-                motion: createDefaultMotion(),
-                motionKeyframes: [],
-                events: [],
-                linkedToPlateId: plateB.id,
-                linkTime: currentTime,
-                connectedRiftIds: [],
-                siblingSystem: true,
-            });
         }
 
-        return { newStrips, updatedAxes };
+        return rings;
     }
+
+    /** Create an ephemeral TectonicPlate for an ocean ring (destroyed each frame). */
+    private createEphemeralOceanPlate(
+        ringPoly: Coordinate[],
+        parentPlate: TectonicPlate,
+        axis: RiftAxis,
+        ringTime: number,
+        currentTime: number,
+        color: string,
+        side: 'A' | 'B',
+        isGrowing: boolean
+    ): TectonicPlate {
+        const suffix = isGrowing ? `_${side}_growing` : `_${side}_${ringTime}`;
+        return {
+            id: generateId(),
+            slabId: `${axis.id}_${axis.groupId}_iso${suffix}`,
+            riftAxisId: axis.id,
+            name: isGrowing ? `${parentPlate.name} Active Rift` : `${parentPlate.name} Crust ${ringTime}Ma`,
+            type: 'oceanic',
+            polygonType: 'oceanic_plate',
+            color,
+            zIndex: (parentPlate.zIndex || 0) - 1,
+            birthTime: ringTime,
+            deathTime: null,
+            visible: true,
+            locked: false,
+            center: calculateSphericalCentroid(ringPoly),
+            polygons: [{ id: generateId(), points: ringPoly, closed: true, edgeMeta: [] }],
+            features: [],
+            initialPolygons: [{ id: generateId(), points: ringPoly, closed: true }],
+            initialFeatures: [],
+            motion: createDefaultMotion(),
+            motionKeyframes: [],
+            events: [],
+            linkedToPlateId: parentPlate.id,
+            linkTime: currentTime,
+            connectedRiftIds: [],
+            siblingSystem: true,
+        };
+    }
+
+    // (generateAxisCrust removed — replaced by isochron-based recordIsochrons + deriveOceanRings)
 
     // Helper to move a point forward in time according to a plate's motion history
     private applyPlateMotion(point: Coordinate, plate: TectonicPlate, fromTime: number, toTime: number, allPlates: TectonicPlate[]): Coordinate {
+        // Handle pre-birth times by delegating to parent plate's motion.
+        // After a split, the child plate has no motion history before its birth —
+        // its parent (now dead) has the full keyframe history for the pre-split period.
+        if (fromTime < plate.birthTime && plate.parentPlateId) {
+            const parent = allPlates.find(p => p.id === plate.parentPlateId);
+            if (parent) {
+                const handoffTime = Math.min(plate.birthTime, toTime);
+                point = this.applyPlateMotion(point, parent, fromTime, handoffTime, allPlates);
+                fromTime = handoffTime;
+                if (fromTime >= toTime) return point;
+            }
+        }
+
         let currentP = point;
         let time = fromTime;
 

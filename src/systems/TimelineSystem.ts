@@ -440,45 +440,10 @@ export class TimelineSystem {
     private updateKeyframe(kf: MotionKeyframe, event: TimelineEventItem, changes: Partial<{ rate: number, position: Coordinate }>) {
         this.pushHistory();
 
-        // Snapshot past ocean strips BEFORE mutating the keyframe
-        const currentTime = this.app?.state?.world?.currentTime ?? 0;
-        const plates = (this.app?.state?.world?.plates || []) as TectonicPlate[];
-        const pastOceanSnapshots = new Map<string, import('../types').Polygon[]>();
-        if (this.simulationEngine && event.plateId) {
-            for (const p of plates) {
-                if (p.type !== 'oceanic') continue;
-                if (p.linkedToPlateId !== event.plateId) continue;
-                if (p.birthTime >= currentTime) continue;
-                if (p.slabId?.endsWith('_growing')) continue;
-                const calculated = this.simulationEngine.calculatePlateAtTime(p, currentTime, plates);
-                pastOceanSnapshots.set(p.id, calculated.polygons);
-            }
-        }
-
         if (changes.rate !== undefined) kf.eulerPole.rate = changes.rate;
         if (changes.position !== undefined) kf.eulerPole.position = changes.position;
 
-        // Apply snapshots to past ocean strips (preserve positions through the motion change)
-        if (pastOceanSnapshots.size > 0 && this.app?.state?.world?.plates) {
-            const allPlates = this.app.state.world.plates as TectonicPlate[];
-            for (let i = 0; i < allPlates.length; i++) {
-                const snapshot = pastOceanSnapshots.get(allPlates[i].id);
-                if (!snapshot) continue;
-                const strip = { ...allPlates[i] };
-                strip.linkTime = currentTime;
-                const snapKf: MotionKeyframe = {
-                    time: currentTime,
-                    eulerPole: { position: [0, 90] as Coordinate, rate: 0 },
-                    snapshotPolygons: snapshot,
-                    snapshotFeatures: strip.features || []
-                };
-                let kfs = [...(strip.motionKeyframes || [])];
-                kfs = kfs.filter(k => Math.abs(k.time - currentTime) > 0.001);
-                kfs.push(snapKf);
-                strip.motionKeyframes = kfs.sort((a, b) => a.time - b.time);
-                allPlates[i] = strip;
-            }
-        }
+        // Ocean strips are now isochron-derived (ephemeral) — no snapshot preservation needed.
 
         const targetPlate = this.app?.state.world.plates.find((p: TectonicPlate) => p.id === event.plateId);
         this.triggerUpdate(kf.time, targetPlate);

@@ -290,21 +290,37 @@ function rotateVector(v: Vector3, axis: Vector3, angle: number): Vector3 {
 function applyTransformToPolygons(plate: TectonicPlate, time: number, allPlates: TectonicPlate[]): Polygon[] {
     const parentTransform = getAccumulatedParentTransform(plate, time, allPlates, new Set());
 
-    const keyframes = plate.motionKeyframes || [];
-    const activeKF = keyframes.filter(kf => kf.time <= time).sort((a, b) => b.time - a.time)[0];
+    const keyframes = (plate.motionKeyframes || []).filter(kf => kf.time <= time).sort((a, b) => a.time - b.time);
 
-    // For Oceanic Strips (no keyframes), fall back to initialPolygons.
-    const sourcePolys = activeKF ? activeKF.snapshotPolygons : (plate.initialPolygons || plate.polygons);
+    // Use earliest keyframe's snapshot as the source polygons, or initialPolygons for strips without keyframes
+    const sourceKF = keyframes.length > 0 ? keyframes[0] : null;
+    const sourcePolys = sourceKF ? sourceKF.snapshotPolygons : (plate.initialPolygons || plate.polygons);
 
-    // Calculate OWN motion (Differential from snapshot time to current time)
-    let ownAxis: Vector3 = { x: 0, y: 1, z: 0 };
-    let ownAngle = 0;
-
-    if (activeKF && activeKF.eulerPole && activeKF.eulerPole.rate !== 0) {
-        ownAxis = latLonToVector(activeKF.eulerPole.position);
-        const duration = time - activeKF.time;
-        // rate is usually deg/Ma. time is Ma.
-        ownAngle = (activeKF.eulerPole.rate * duration) * (Math.PI / 180);
+    // Accumulate OWN rotation segments across ALL keyframes (not just the last one).
+    // Each segment applies the euler pole from that keyframe's time to the next keyframe's time (or `time`).
+    const ownSegments: { axis: Vector3; angle: number }[] = [];
+    for (let i = 0; i < keyframes.length; i++) {
+        const kf = keyframes[i];
+        if (!kf.eulerPole || kf.eulerPole.rate === 0) continue;
+        const segmentStart = kf.time;
+        const segmentEnd = (i + 1 < keyframes.length) ? Math.min(keyframes[i + 1].time, time) : time;
+        const duration = segmentEnd - segmentStart;
+        if (duration > 0) {
+            ownSegments.push({
+                axis: latLonToVector(kf.eulerPole.position),
+                angle: (kf.eulerPole.rate * duration) * (Math.PI / 180)
+            });
+        }
+    }
+    // Fallback: if no keyframes, use legacy motion
+    if (keyframes.length === 0 && plate.motion?.eulerPole && plate.motion.eulerPole.rate !== 0) {
+        const duration = time - plate.birthTime;
+        if (duration > 0) {
+            ownSegments.push({
+                axis: latLonToVector(plate.motion.eulerPole.position),
+                angle: (plate.motion.eulerPole.rate * duration) * (Math.PI / 180)
+            });
+        }
     }
 
     const applyRotation = (coord: Coordinate): Coordinate => {
@@ -315,9 +331,9 @@ function applyTransformToPolygons(plate: TectonicPlate, time: number, allPlates:
             v = rotateVector(v, segment.axis, segment.angle);
         }
 
-        // 2. Apply Own Motion (Local Rotation)
-        if (ownAngle !== 0) {
-            v = rotateVector(v, ownAxis, ownAngle);
+        // 2. Apply Own Motion segments (Local Rotations, in chronological order)
+        for (const segment of ownSegments) {
+            v = rotateVector(v, segment.axis, segment.angle);
         }
 
         return vectorToLatLon(v);
@@ -332,17 +348,32 @@ function applyTransformToPolygons(plate: TectonicPlate, time: number, allPlates:
 function applyTransformToFeatures(plate: TectonicPlate, time: number, allPlates: TectonicPlate[]): import('./types').Feature[] {
     const parentTransform = getAccumulatedParentTransform(plate, time, allPlates, new Set());
 
-    const keyframes = plate.motionKeyframes || [];
-    const activeKF = keyframes.filter(kf => kf.time <= time).sort((a, b) => b.time - a.time)[0];
+    const keyframes = (plate.motionKeyframes || []).filter(kf => kf.time <= time).sort((a, b) => a.time - b.time);
 
-    // Calculate OWN motion
-    let ownAxis: Vector3 = { x: 0, y: 1, z: 0 };
-    let ownAngle = 0;
-
-    if (activeKF && activeKF.eulerPole && activeKF.eulerPole.rate !== 0) {
-        ownAxis = latLonToVector(activeKF.eulerPole.position);
-        const duration = time - activeKF.time;
-        ownAngle = (activeKF.eulerPole.rate * duration) * (Math.PI / 180);
+    // Accumulate OWN rotation segments across ALL keyframes (not just the last one)
+    const ownSegments: { axis: Vector3; angle: number }[] = [];
+    for (let i = 0; i < keyframes.length; i++) {
+        const kf = keyframes[i];
+        if (!kf.eulerPole || kf.eulerPole.rate === 0) continue;
+        const segmentStart = kf.time;
+        const segmentEnd = (i + 1 < keyframes.length) ? Math.min(keyframes[i + 1].time, time) : time;
+        const duration = segmentEnd - segmentStart;
+        if (duration > 0) {
+            ownSegments.push({
+                axis: latLonToVector(kf.eulerPole.position),
+                angle: (kf.eulerPole.rate * duration) * (Math.PI / 180)
+            });
+        }
+    }
+    // Fallback: if no keyframes, use legacy motion
+    if (keyframes.length === 0 && plate.motion?.eulerPole && plate.motion.eulerPole.rate !== 0) {
+        const duration = time - plate.birthTime;
+        if (duration > 0) {
+            ownSegments.push({
+                axis: latLonToVector(plate.motion.eulerPole.position),
+                angle: (plate.motion.eulerPole.rate * duration) * (Math.PI / 180)
+            });
+        }
     }
 
     const applyRotation = (coord: Coordinate): Coordinate => {
@@ -353,9 +384,9 @@ function applyTransformToFeatures(plate: TectonicPlate, time: number, allPlates:
             v = rotateVector(v, segment.axis, segment.angle);
         }
 
-        // 2. Apply Own Motion
-        if (ownAngle !== 0) {
-            v = rotateVector(v, ownAxis, ownAngle);
+        // 2. Apply Own Motion segments
+        for (const segment of ownSegments) {
+            v = rotateVector(v, segment.axis, segment.angle);
         }
 
         return vectorToLatLon(v);
@@ -1257,7 +1288,8 @@ export function splitPlate(
     const processedChildren: TectonicPlate[] = [];
     const children = onlySelected ? [] : currentState.world.plates.filter(p =>
         p.linkedToPlateId === plateId &&
-        (p.deathTime === null || p.deathTime > currentTime)
+        (p.deathTime === null || p.deathTime > currentTime) &&
+        !p.riftAxisId  // Skip axis-derived ocean plates — they're ephemeral (re-derived each frame)
     );
     const originalChildIds = new Set(children.map(c => c.id));
 
@@ -1471,7 +1503,7 @@ export function splitPlate(
         birthPolyline: cutPath,
         birthTime: currentTime,
         state: 'active' as const,
-        lastGenerationTime: currentTime,
+        isochrons: [],
     }));
 
     // --- RE-ROUTE EXISTING RIFT AXES that reference the dying plate ---
@@ -1500,18 +1532,24 @@ export function splitPlate(
         const rightHasEdge = childWithEdge(rightPlate);
 
         if (leftHasEdge && rightHasEdge) {
-            // Edge case: split cuts ACROSS the existing rift edge — split the axis into two
-            const axisLeft: RiftAxis = {
-                ...axis,
-                id: generateId(),
-                ...(refsA ? { plateIdA: leftPlateId } : { plateIdB: leftPlateId }),
+            // Split cuts ACROSS the existing rift edge — both children got portions.
+            // Pick the child with more rift edges as the primary; reroute the axis to it.
+            // Duplicating the axis with full-width birthPolyline on both copies would cause
+            // geometry mismatch (full polyline paired with partial rift edges → deformed rings).
+            const countEdges = (plate: TectonicPlate, gId: string): number => {
+                let count = 0;
+                for (const poly of plate.polygons) {
+                    if (poly.edgeMeta) count += poly.edgeMeta.filter(e => e.sourceId === gId && e.type === 'rift').length;
+                }
+                return count;
             };
-            const axisRight: RiftAxis = {
+            const leftCount = countEdges(leftPlate, axis.groupId);
+            const rightCount = countEdges(rightPlate, axis.groupId);
+            const primaryId = leftCount >= rightCount ? leftPlateId : rightPlateId;
+            reroutedAxes.push({
                 ...axis,
-                id: generateId(),
-                ...(refsA ? { plateIdA: rightPlateId } : { plateIdB: rightPlateId }),
-            };
-            additionalAxes.push(axisLeft, axisRight);
+                ...(refsA ? { plateIdA: primaryId } : { plateIdB: primaryId }),
+            });
         } else if (leftHasEdge) {
             reroutedAxes.push({
                 ...axis,
