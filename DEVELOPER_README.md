@@ -1,21 +1,22 @@
 # TectoLite — Developer Guide
 
-> **⚠️ Keep this file up to date!** When adding, moving, or removing files, update the structure below. This is the single source of truth for project architecture.
+> Keep this file up to date when the active architecture changes. Historical delivery docs in the repo may describe earlier states that no longer match the current runtime.
 
 ## Quick Start
 
 ```bash
 npm install        # Install dependencies
 npm run dev        # Start dev server (Vite)
+npm run typecheck  # Fast TypeScript verification
 npm run build      # Production build (tsc && vite build)
-npx tsc --noEmit   # Type-check without emitting (use for quick verification)
+npm run verify     # Type-check + production build
 ```
 
 ---
 
 ## Project Structure
 
-```
+```text
 src/
 ├── main.ts                          # App entry point — TectoLiteApp class (orchestrator)
 ├── types.ts                         # All shared types, interfaces, ID generation, defaults
@@ -39,11 +40,11 @@ src/
 │   ├── ProjectionManager.ts         #   Map projections (orthographic, equirect, etc.)
 │   └── featureIcons.ts              #   SVG icon definitions for geological features
 │
-├── systems/                         # Simulation & automation engines
+├── systems/                         # Simulation and export support systems
 │   ├── TimelineSystem.ts            #   Timeline UI + keyframe management
-│   ├── EventSystem.ts               #   Geological event detection (rifts, collisions, etc.)
+│   ├── EventSystem.ts               #   Geological event model and event creation hooks
 │   ├── EventEffectsProcessor.ts     #   Visual/state effects from geological events
-│   ├── GeologicalAutomation.ts      #   Automated feature generation
+│   ├── GeologicalAutomation.ts      #   Legacy hotspot automation path, partially retired
 │   └── HeightmapGenerator.ts        #   Heightmap rasterization for export
 │
 ├── utils/                           # Pure utility functions
@@ -56,12 +57,22 @@ src/
 
 ---
 
+## Current state notes
+
+- The current app is a canvas-heavy Electron/Vite desktop application with a single central `AppState`.
+- Historical docs mention additional systems such as `ElevationSystem.ts` and `TimeTransformationUtils.ts`; those files are not present in the current `src/` tree.
+- `TimeControls.ts` still exposes wrapper functions for display/input time handling, but the active behavior is effectively direct internal time handling.
+- `GeologicalAutomation.ts` remains in the repo, but the main simulation loop has retired parts of the older automation flow.
+- Heightmap and GeoPackage exports are active code paths.
+
 ## Architecture Principles
 
 ### 1. Single orchestrator pattern
+
 `main.ts` contains the `TectoLiteApp` class which owns all state and wires everything together. Extracted modules in `ui/` are **stateless pure functions** that receive state as arguments.
 
 ### 2. How UI modules work
+
 Each extracted module exports functions (not classes). They receive the state they need as parameters and return results or mutate DOM directly:
 
 ```ts
@@ -73,6 +84,7 @@ export function updatePlayButton(isPlaying: boolean): void
 ```
 
 The `main.ts` class methods delegate to these with thin wrappers:
+
 ```ts
 private applySpeedToSelected(rate: number): void {
     _applySpeed(this.state, rate, { updatePanel: () => this.updatePropertiesPanel(), ... });
@@ -80,12 +92,14 @@ private applySpeedToSelected(rate: number): void {
 ```
 
 ### 3. State ownership
+
 - **`AppState`** (defined in `types.ts`) is the single source of truth
 - `main.ts` owns the instance: `private state: AppState`
 - Services (`CanvasManager`, `SimulationEngine`) receive state via getter callbacks `() => this.state`
 - Never duplicate state — always reference from the single `AppState`
 
 ### 4. No framework dependencies
+
 The app uses **vanilla TypeScript + Vite**. No React, no Angular, no framework. DOM manipulation is direct. CSS is vanilla.
 
 ---
@@ -93,6 +107,7 @@ The app uses **vanilla TypeScript + Vite**. No React, no Angular, no framework. 
 ## Workflows
 
 ### Adding a new tool
+
 1. Add the tool type to `ToolType` in `types.ts`
 2. Add the tool button HTML in `ui/AppTemplate.ts`
 3. Add the handler method in `main.ts`
@@ -102,6 +117,7 @@ The app uses **vanilla TypeScript + Vite**. No React, no Angular, no framework. 
 7. Add hotkey binding in the `keydown` handler in `setupEventListeners()`
 
 ### Adding a new global option
+
 1. Add the field to `GlobalOptions` in `types.ts`
 2. Add the UI control in `ui/AppTemplate.ts` (usually in the Settings dropdown)
 3. Add the event listener in `setupEventListeners()` in `main.ts`
@@ -109,22 +125,27 @@ The app uses **vanilla TypeScript + Vite**. No React, no Angular, no framework. 
 
 ---
 
-## Oceanic Crust System
+## Simulation notes
 
-The application supports two modes of oceanic crust generation, toggled via **Settings > Oceanic Crust**:
+The simulation layer contains a mix of active systems and legacy compatibility paths.
 
-### 1. Expanding Rifts (New System)
-- **Logic**: `SimulationEngine.generateRiftCrust()`
-- **Mechanism**: Continuously creates new "crust strips" (polygons) at divergent boundaries.
-- **Behavior**: New strips push older strips away, simulating seafloor spreading.
-- **Styles**: Uses `oceanicCrustColor` and `oceanicCrustOpacity` from global options.
+### Oceanic crust behavior
 
-### 2. Flowlines (Legacy)
-- **Logic**: `SimulationEngine.updateFlowlines()`
-- **Mechanism**: Generates crust based on flowline paths from motion history.
-- **Status**: Deprecated but maintained for compatibility.
+- `SimulationEngine.ts` still contains seafloor spreading and flowline-related logic.
+- Legacy comments and compatibility branches exist, so confirm behavior in code before relying on historical docs.
+
+### Automation status
+
+- `GeologicalAutomation.ts` is not the primary simulation driver.
+- Hotspot-related behavior remains, while older orogeny-oriented automation is marked deprecated.
+
+### Elevation status
+
+- `HeightmapGenerator.ts` is active for export generation.
+- A mesh-editing runtime path is not currently wired into the app.
 
 ### Adding a new feature type
+
 1. Add to `FeatureType` union in `types.ts`
 2. Add icon in `canvas/featureIcons.ts`
 3. Add rendering in `CanvasManager.ts`
@@ -133,15 +154,19 @@ The application supports two modes of oceanic crust generation, toggled via **Se
 6. Add properties display in `updatePropertiesPanel()` / `getFeaturePropertiesHtml()` in `main.ts`
 
 ### Building for deployment
+
 ```bash
 npm run build     # Outputs to dist/
 ```
+
 The `dist/` folder is the deployable static site.
 
 ### Type-checking only (no build output)
+
 ```bash
 npx tsc --noEmit
 ```
+
 Use this for fast verification during refactoring.
 
 ---
@@ -149,11 +174,11 @@ Use this for fast verification during refactoring.
 ## Key Files to Know
 
 | File | Lines | What it does |
-|---|---|---|
-| `main.ts` | ~3,460 | App orchestrator — state, event listeners, UI panels, tool handlers |
-| `CanvasManager.ts` | ~2,300 | All canvas rendering, mouse/touch input, tool modes |
-| `SimulationEngine.ts` | ~800 | Time-step simulation, plate motion, keyframe interpolation |
-| `types.ts` | ~550 | Every interface and type in the app |
+| --- | --- | --- |
+| `main.ts` | ~3,476 | App orchestrator — state, event listeners, UI panels, tool handlers |
+| `CanvasManager.ts` | ~1,209 | Canvas rendering, mouse/touch input, tool modes |
+| `SimulationEngine.ts` | ~1,645 | Time-step simulation, plate motion, crust/event logic |
+| `types.ts` | ~592 | Shared interfaces, unions, defaults, and state models |
 | `SplitTool.ts` | ~1,270 | Complex polygon splitting, Rift Triple Junctions, L-Rift logic |
 | `export.ts` | ~900 | JSON/PNG import/export, dialogs |
 | `AppTemplate.ts` | ~490 | Full HTML template string |
@@ -162,10 +187,10 @@ Use this for fast verification during refactoring.
 
 ## Norms
 
-- **Always run `npx tsc --noEmit` after changes** to verify type safety
+- **Always run `npm run typecheck` after changes** to verify type safety
 - **Keep `types.ts` as the single type source** — don't define interfaces in random files
 - **Extracted modules are pure functions** — they don't hold state or reference the class
-- **Update this README** when you add, move, or remove files
+- **Update this README** when the active code architecture changes
 
 ---
 
@@ -174,20 +199,24 @@ Use this for fast verification during refactoring.
 The `SplitTool.ts` implements advanced logic for creating geological triple junctions.
 
 ### 1. L-Shaped Rifts
+
 When a User splits a plate connected to a Rift, the tool detects the intersection and splits the Rift itself into two "arms".
+
 - **Old Rift** becomes two new L-shaped rifts.
-- **Each L-Rift** consists of:
-    - One arm of the original Rift.
-    - A segment of the new Split Line (shared boundary).
+- **Each L-Rift** consists of one arm of the original Rift plus a segment of the new Split Line (shared boundary).
 
 ### 2. Heuristics
+
 Because valid geometry input can be varied (drawing lines from outside, crossing borders), the tool uses robust heuristics:
+
 - **"First Tangent" Trimming**: If a split line starts outside the plate, the tool trims the segment to start exactly at the plate boundary (First Tangent).
 - **"Longest Segment" Selection**: When a split line crosses a plate, it creates an "inside" segment and an "overshoot" segment. The tool automatically detects and uses the **longer** segment as the valid boundary for the new rift.
 - **Side Determination**: `getSideOfSplitLine` uses cross-product logic relative to the first segment of the split line to correctly assign L-Rifts to the new plate halves.
 
 ### 3. Conveyor Belt Crust
+
 The new Oceanic Crust system (`oceanic-strip` type plates) works by "accretion":
+
 - **Trigger**: Every X million years (configurable).
 - **Action**: New strip is created at the Rift Axis.
 - **Motion**: Strip is linked to the diverging continent, moving with it.

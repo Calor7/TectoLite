@@ -29,7 +29,6 @@ import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
 import { exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog } from './export';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
-import { GeoPackageExporter } from './GeoPackageExporter';
 import { TimelineSystem } from './systems/TimelineSystem';
 import { geoArea, geoCentroid } from 'd3-geo';
 import {
@@ -57,6 +56,8 @@ import {
 } from './ui/ModalSystem';
 import { getAppHTML } from './ui/AppTemplate';
 import { TutorialOverlay } from './ui/TutorialOverlay';
+
+type UnifiedExportOptions = NonNullable<Awaited<ReturnType<typeof showUnifiedExportDialog>>>;
 
 
 
@@ -243,6 +244,59 @@ class TectoLiteApp {
         } else {
             hint.style.display = 'none';
         }
+    }
+
+    private async handleUnifiedExport(): Promise<void> {
+        try {
+            const options = await showUnifiedExportDialog({
+                projection: this.state.world.projection,
+                showGrid: this.state.world.showGrid,
+                includeFeatures: this.state.world.showFeatures
+            });
+            if (!options) return;
+
+            if (options.format === 'png') {
+                const pngOptions = {
+                    projection: options.projection || 'orthographic',
+                    waterMode: 'color' as const,
+                    plateColorMode: 'native' as const,
+                    showGrid: options.showGrid ?? this.state.world.showGrid,
+                    includeFeatures: options.includeFeatures ?? this.state.world.showFeatures
+                };
+                exportToPNG(this.state, pngOptions, options.width || 1920, options.height || 1080);
+                return;
+            }
+
+            if (options.format === 'heightmap') {
+                const dataUrl = await HeightmapGenerator.generate(this.state, {
+                    width: options.width || 4096,
+                    height: options.height || 2048,
+                    projection: options.projection || 'equirectangular',
+                    smooth: true
+                });
+                const link = document.createElement('a');
+                link.download = `tectolite-heightmap-${Date.now()}.png`;
+                link.href = dataUrl;
+                link.click();
+                return;
+            }
+
+            await this.exportGeoPackage(options);
+        } catch (e) {
+            console.error('Export failed', e);
+            alert(`Export failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        }
+    }
+
+    private async exportGeoPackage(options: UnifiedExportOptions): Promise<void> {
+        const { GeoPackageExporter } = await import('./GeoPackageExporter');
+        const exporter = new GeoPackageExporter(this.state, {
+            width: options.width || 2048,
+            height: options.height || 1024,
+            projection: options.projection || 'equirectangular',
+            includeHeightmap: options.includeHeightmap ?? true
+        });
+        await exporter.export();
     }
 
     private setupEventListeners(): void {
@@ -1162,51 +1216,8 @@ class TectoLiteApp {
         });
 
         // Unified Export Handler
-        document.getElementById('btn-export')?.addEventListener('click', async () => {
-            try {
-                const options = await showUnifiedExportDialog({
-                    projection: this.state.world.projection,
-                    showGrid: this.state.world.showGrid,
-                    includeFeatures: this.state.world.showFeatures
-                });
-                if (!options) return;
-
-                if (options.format === 'png') {
-                    // PNG Export
-                    const pngOptions = {
-                        projection: options.projection || 'orthographic',
-                        waterMode: 'color' as const,
-                        plateColorMode: 'native' as const,
-                        showGrid: options.showGrid ?? this.state.world.showGrid,
-                        includeFeatures: options.includeFeatures ?? this.state.world.showFeatures
-                    };
-                    exportToPNG(this.state, pngOptions, options.width || 1920, options.height || 1080);
-                } else if (options.format === 'heightmap') {
-                    // Heightmap Export
-                    const dataUrl = await HeightmapGenerator.generate(this.state, {
-                        width: options.width || 4096,
-                        height: options.height || 2048,
-                        projection: options.projection || 'equirectangular',
-                        smooth: true
-                    });
-                    const link = document.createElement('a');
-                    link.download = `tectolite-heightmap-${Date.now()}.png`;
-                    link.href = dataUrl;
-                    link.click();
-                } else if (options.format === 'qgis') {
-                    // GeoPackage (QGIS) Export
-                    const exporter = new GeoPackageExporter(this.state, {
-                        width: options.width || 2048,
-                        height: options.height || 1024,
-                        projection: options.projection || 'equirectangular',
-                        includeHeightmap: options.includeHeightmap ?? true
-                    });
-                    await exporter.export();
-                }
-            } catch (e) {
-                console.error('Export failed', e);
-                alert(`Export failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-            }
+        document.getElementById('btn-export')?.addEventListener('click', () => {
+            void this.handleUnifiedExport();
         });
 
         // Split control buttons

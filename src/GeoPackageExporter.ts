@@ -1,6 +1,58 @@
 import { AppState, GeoPackageExportOptions, TectonicPlate } from './types';
 import { HeightmapGenerator, HeightmapOptions } from './systems/HeightmapGenerator';
-import initSqlJs, { Database } from 'sql.js';
+import type { Database } from 'sql.js';
+
+type InitSqlJs = typeof import('sql.js')['default'];
+type SqlJsDatabaseFactory = Awaited<ReturnType<InitSqlJs>>;
+type SqlJsWindow = Window & typeof globalThis & { initSqlJs?: InitSqlJs };
+
+let sqlJsFactoryPromise: Promise<SqlJsDatabaseFactory> | null = null;
+
+function getSqlJsAssetUrl(fileName: 'sql-wasm.js' | 'sql-wasm.wasm'): string {
+  return `${import.meta.env.BASE_URL}vendor/sql.js/${fileName}`;
+}
+
+async function ensureSqlJsScript(): Promise<InitSqlJs> {
+  const globalWindow = window as SqlJsWindow;
+  if (globalWindow.initSqlJs) {
+    return globalWindow.initSqlJs;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector('script[data-sqljs-loader="true"]') as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('Failed to load sql.js script')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = getSqlJsAssetUrl('sql-wasm.js');
+    script.async = true;
+    script.dataset.sqljsLoader = 'true';
+    script.addEventListener('load', () => resolve(), { once: true });
+    script.addEventListener('error', () => reject(new Error('Failed to load sql.js script')), { once: true });
+    document.head.appendChild(script);
+  });
+
+  if (!globalWindow.initSqlJs) {
+    throw new Error('sql.js loaded without exposing initSqlJs');
+  }
+
+  return globalWindow.initSqlJs;
+}
+
+async function loadSqlJsFactory(): Promise<SqlJsDatabaseFactory> {
+  if (!sqlJsFactoryPromise) {
+    sqlJsFactoryPromise = ensureSqlJsScript().then((initSqlJsFn) =>
+      initSqlJsFn({
+        locateFile: () => getSqlJsAssetUrl('sql-wasm.wasm')
+      })
+    );
+  }
+
+  return sqlJsFactoryPromise;
+}
 
 /**
  * GeoPackageExporter: Serializes TectoLite data to OGC GeoPackage format (.gpkg)
@@ -26,11 +78,9 @@ export class GeoPackageExporter {
    */
   public async export(): Promise<void> {
     try {
-      // Initialize sql.js with proper WASM path
-      const SQL = await initSqlJs({
-        locateFile: (file: string) => `https://sql.js.org/dist/${file}`
-      });
+      const SQL = await loadSqlJsFactory();
       this.db = new SQL.Database();
+      const db = this.db;
 
       // Initialize GeoPackage structure
       this.initializeGeoPackageSchema();
@@ -48,7 +98,7 @@ export class GeoPackageExporter {
       this.downloadGeoPackage();
 
       console.log(
-        `✅ GeoPackage export complete: tectolite-qgis-${Date.now()}.gpkg (${(this.db.export().length / 1024).toFixed(2)} KB)`
+        `✅ GeoPackage export complete: tectolite-qgis-${Date.now()}.gpkg (${(db.export().length / 1024).toFixed(2)} KB)`
       );
     } catch (error) {
       console.error('❌ GeoPackage export failed:', error);

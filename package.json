@@ -9,7 +9,9 @@
   "homepage": "./",
   "scripts": {
     "dev": "vite",
+    "typecheck": "tsc --noEmit",
     "build": "tsc && vite build",
+    "verify": "npm run typecheck && npm run build",
     "preview": "vite preview",
     "electron-dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
     "electron-build": "npm run build && electron-builder",

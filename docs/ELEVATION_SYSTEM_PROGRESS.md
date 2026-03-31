@@ -1,59 +1,45 @@
-# Elevation System Implementation Progress
+# Elevation System Status Note
 
-## ✅ Completed Phases
+Last reviewed: March 31, 2026
 
-### Phase 1: Data Model Refactoring
-- ✅ Added `CrustVertex` interface (id, pos, elevation, sediment)
-- ✅ Added `ElevationViewMode` type ('off' | 'overlay' | 'absolute')
-- ✅ Added `crustMesh` to TectonicPlate interface
-- ✅ Added elevation options to GlobalOptions (upliftRate, erosionRate, meshResolution, etc.)
-- ✅ Added `mesh_edit` to ToolType union
-- ✅ Added vertex selection state to WorldState
+This document is preserved as historical planning context. It does not describe the current runtime accurately.
 
-### Phase 2: Core System Implementation  
-- ✅ Created `ElevationSystem.ts` with full physics simulation
-- ✅ Hex grid mesh generation (~150km resolution)
-- ✅ Uplift simulation at convergent boundaries
-- ✅ Transport-based erosion using Delaunay neighbor graphs
-- ✅ Global elevation decay (0.1% per Ma)
-- ✅ Installed d3-delaunay package
+## Current reality
 
-### Phase 3: Integration
-- ✅ Integrated ElevationSystem into SimulationEngine
-- ✅ Added update calls in both tick locations
-- ✅ Proper deltaT calculation for time-based physics
+- The repository does not currently contain `src/systems/ElevationSystem.ts`.
+- A mesh-editing elevation workflow is not wired into the active application runtime.
+- `HeightmapGenerator.ts` is present and active for export-oriented raster generation.
+- Some elevation-related language remains in types, comments, and older docs, but it should be treated as partial or historical unless verified directly in `src/`.
 
-### Phase 4: Visualization
-- ✅ Added elevation rendering to CanvasManager
-- ✅ Delaunay triangulation for mesh faces
-- ✅ Topographic color scale (Green->Brown->Grey->White)
-- ✅ Support for overlay and absolute view modes
-- ✅ Alpha blending for overlay mode
+## What this means
 
-## 🚧 In Progress
+- Do not use this file as the source of truth for active feature status.
+- Treat the phase lists that used to live here as an earlier implementation plan rather than a current completion report.
+- Any future elevation work should begin with a fresh architecture decision: either restore a real runtime elevation system or remove the stale references and keep elevation export-only.
 
-### Phase 5: Mesh Interaction & Editing
-- ⏳ Add mesh_edit tool to main.ts
-- ⏳ Implement vertex hit testing in CanvasManager
-- ⏳ Add vertex selection highlighting
-- ⏳ Create Vertex Inspector UI panel
-- ⏳ Add elevation editing handlers
+## Historical plan summary
 
-### Phase 6: UI Polish
-- ⏳ Add Elevation System settings panel
-- ⏳ Add toolbar button for mesh_edit tool
-- ⏳ Add keyboard shortcut (M key)
-- ⏳ Add tooltips and documentation
-- ⏳ Add status messages
+The earlier elevation plan aimed to cover:
 
-## Next Steps
-1. Add UI controls in main.ts
-2. Wire up mesh_edit tool handlers
-3. Test full workflow (generate mesh -> simulate -> edit)
-4. Add deprecation warnings for old orogeny system
+1. Data model support for crust and elevation state.
+2. A dedicated runtime elevation simulation system.
+3. Integration into the simulation loop.
+4. Visualization and editing tools.
+5. UI polish and workflow integration.
 
-## Build Status
-✅ **Compilation: PASSING**
-- All TypeScript types valid
-- All imports resolved
-- Vite build successful
+That plan is not fully represented in the current codebase.
+
+## Recommended next step for elevation work
+
+Before implementing anything new, audit these files first:
+
+- [src/types.ts](../src/types.ts)
+- [src/main.ts](../src/main.ts)
+- [src/canvas/CanvasManager.ts](../src/canvas/CanvasManager.ts)
+- [src/SimulationEngine.ts](../src/SimulationEngine.ts)
+- [src/systems/HeightmapGenerator.ts](../src/systems/HeightmapGenerator.ts)
+
+Then choose one of two directions:
+
+1. Reintroduce a real elevation runtime path and wire it end to end.
+2. Officially retire the mesh-editing plan and document elevation as export-only.
