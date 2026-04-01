@@ -1,8 +1,103 @@
 const { app, BrowserWindow, Menu } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const isDev = require('electron-is-dev');
 
 let mainWindow;
+const smokeExportEnabled = process.argv.includes('--smoke-export');
+
+function finishSmokeExport(code, message) {
+  console.log(message);
+  setTimeout(() => app.exit(code), 0);
+}
+
+function setupSmokeExport(window) {
+  const smokeTimeoutMs = Number(process.env.TECTOLITE_SMOKE_TIMEOUT_MS || 30000);
+  const smokeDir = process.env.TECTOLITE_SMOKE_DIR || path.join(app.getPath('temp'), 'tectolite-smoke');
+  const downloadPath = path.join(smokeDir, `tectolite-smoke-${Date.now()}.gpkg`);
+  let finished = false;
+
+  const finish = (code, message) => {
+    if (finished) return;
+    finished = true;
+    finishSmokeExport(code, message);
+  };
+
+  fs.mkdirSync(smokeDir, { recursive: true });
+
+  const timeout = setTimeout(async () => {
+    try {
+      const rendererError = await window.webContents.executeJavaScript('window.__TECTOLITE_SMOKE_LAST_ERROR__ ?? null', true);
+      if (rendererError) {
+        finish(1, `[smoke-export] renderer error: ${rendererError}`);
+        return;
+      }
+    } catch (error) {
+      finish(1, `[smoke-export] timeout while reading renderer state: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+
+    finish(1, `[smoke-export] timed out after ${smokeTimeoutMs}ms without a completed download`);
+  }, smokeTimeoutMs);
+
+  window.webContents.session.once('will-download', (event, item) => {
+    item.setSavePath(downloadPath);
+    item.once('done', () => {
+      clearTimeout(timeout);
+
+      if (!fs.existsSync(downloadPath)) {
+        finish(1, '[smoke-export] download reported complete but no file was written');
+        return;
+      }
+
+      const stats = fs.statSync(downloadPath);
+      if (stats.size <= 0) {
+        finish(1, '[smoke-export] downloaded GeoPackage file is empty');
+        return;
+      }
+
+      finish(0, `[smoke-export] success: ${downloadPath} (${stats.size} bytes)`);
+    });
+  });
+
+  window.webContents.once('did-finish-load', async () => {
+    try {
+      await window.webContents.executeJavaScript(`
+        window.__TECTOLITE_SMOKE_LAST_ERROR__ = null;
+        new Promise((resolve, reject) => {
+          const deadline = Date.now() + 10000;
+          const triggerExport = () => {
+            const button = document.getElementById('btn-export');
+            if (button) {
+              window.__TECTOLITE_SMOKE_EXPORT__ = {
+                format: 'qgis',
+                width: 512,
+                height: 256,
+                projection: 'equirectangular',
+                includeHeightmap: true
+              };
+              button.click();
+              resolve(true);
+              return;
+            }
+
+            if (Date.now() > deadline) {
+              reject(new Error('btn-export not found'));
+              return;
+            }
+
+            setTimeout(triggerExport, 100);
+          };
+
+          triggerExport();
+        });
+      `, true);
+    } catch (error) {
+      clearTimeout(timeout);
+      finish(1, `[smoke-export] failed to trigger export: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -25,8 +120,12 @@ function createWindow() {
   mainWindow.loadURL(startUrl);
 
   // Open DevTools in development
-  if (isDev) {
+  if (isDev && !smokeExportEnabled) {
     mainWindow.webContents.openDevTools();
+  }
+
+  if (smokeExportEnabled) {
+    setupSmokeExport(mainWindow);
   }
 
   mainWindow.on('closed', () => {

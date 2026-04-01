@@ -59,6 +59,13 @@ import { TutorialOverlay } from './ui/TutorialOverlay';
 
 type UnifiedExportOptions = NonNullable<Awaited<ReturnType<typeof showUnifiedExportDialog>>>;
 
+declare global {
+    interface Window {
+        __TECTOLITE_SMOKE_EXPORT__?: UnifiedExportOptions | null;
+        __TECTOLITE_SMOKE_LAST_ERROR__?: string | null;
+    }
+}
+
 
 
 class TectoLiteApp {
@@ -248,7 +255,12 @@ class TectoLiteApp {
 
     private async handleUnifiedExport(): Promise<void> {
         try {
-            const options = await showUnifiedExportDialog({
+            const smokeOptions = window.__TECTOLITE_SMOKE_EXPORT__ ?? null;
+            if (smokeOptions) {
+                window.__TECTOLITE_SMOKE_EXPORT__ = null;
+            }
+
+            const options = smokeOptions ?? await showUnifiedExportDialog({
                 projection: this.state.world.projection,
                 showGrid: this.state.world.showGrid,
                 includeFeatures: this.state.world.showFeatures
@@ -282,8 +294,10 @@ class TectoLiteApp {
             }
 
             await this.exportGeoPackage(options);
+            window.__TECTOLITE_SMOKE_LAST_ERROR__ = null;
         } catch (e) {
             console.error('Export failed', e);
+            window.__TECTOLITE_SMOKE_LAST_ERROR__ = e instanceof Error ? e.message : 'Unknown error';
             alert(`Export failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
         }
     }
