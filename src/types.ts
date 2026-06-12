@@ -514,6 +514,7 @@ export interface WorldState {
 
     // Visual Options
     showLinks?: boolean;                    // Show plate-to-plate and landmass-to-plate links
+    showPredictionFlowlines?: boolean;      // Preview movement arcs while dragging a plate (Drag Landmass mode)
     showHiddenPlates?: boolean;             // Reveal plates even if plate.visible is false
     gridOnTop?: boolean;                    // Render grid above plates instead of below
     plateOpacity?: number;                  // Plate transparency (0-1, default 1.0)
@@ -642,6 +643,8 @@ export function createDefaultWorldState(): WorldState {
 
       // Visual defaults
       showLinks: true,          // Show links by default
+      showPredictionFlowlines: true, // Show predicted movement arcs while dragging
+
       showHiddenPlates: false,  // Hide invisible plates by default
       gridOnTop: false,         // Grid below plates by default
       plateOpacity: 1.0,        // Full opacity

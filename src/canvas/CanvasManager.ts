@@ -30,7 +30,7 @@ export class CanvasManager {
     private isDragging = false;
     private lastMousePos: Point = { x: 0, y: 0 };
     // private currentMouseGeo: Coordinate | null = null; // Unused
-    private interactionMode: 'pan' | 'modify_velocity' | 'drag_target' | 'none' = 'none';
+    private interactionMode: 'pan' | 'modify_velocity' | 'drag_target' | 'spin_ghost' | 'none' = 'none';
 
     // Motion state
     private dragStartGeo: Coordinate | null = null;
@@ -38,8 +38,7 @@ export class CanvasManager {
     private ghostRotation: { plateId: string, axis: Vector3, angle: number } | null = null;
     private isFineTuning = false;
     private ghostSpin = 0;
-    // private isSpinning = false; // Unused
-    // private lastSpinAngle = 0; // Unused, logic moved to EditTool? No, drawRotationWidget uses ghostSpin.
+    private lastSpinAngle = 0; // screen angle (deg) of the cursor around the ghost center while spinning
     // EditTool handles its own spinning state. CanvasManager only handles 'drag_target' spinning.
     private dragBaseQuat: Quaternion | null = null;
 
@@ -255,17 +254,22 @@ export class CanvasManager {
         this.drawTool.forceComplete();
     }
 
+    /** Total pending ghost transform (drag + spin) as a single quaternion. */
+    private getGhostTotalQuat(plateCenter: Coordinate): Quaternion | null {
+        if (!this.ghostRotation) return null;
+        const vCenter = latLonToVector(plateCenter);
+        const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
+        const qDrag = quatFromAxisAngle(this.ghostRotation.axis, this.ghostRotation.angle);
+        const qSpin = quatFromAxisAngle(vRotCenter, -this.ghostSpin * Math.PI / 180);
+        return quatMultiply(qSpin, qDrag);
+    }
+
     public applyMotion(): void {
         if (this.isFineTuning && this.ghostRotation && this.onDragTargetRequest) {
             const state = this.getState();
             const plate = state.world.plates.find(p => p.id === this.ghostRotation!.plateId);
             if (plate) {
-                const vCenter = latLonToVector(plate.center);
-                const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
-                const qDrag = quatFromAxisAngle(this.ghostRotation.axis, this.ghostRotation.angle);
-                const spinRad = -this.ghostSpin * Math.PI / 180;
-                const qSpin = quatFromAxisAngle(vRotCenter, spinRad);
-                const qTotal = quatMultiply(qSpin, qDrag);
+                const qTotal = this.getGhostTotalQuat(plate.center)!;
                 const { axis, angle } = axisAngleFromQuat(qTotal);
                 this.onDragTargetRequest(this.ghostRotation.plateId, axis, angle);
             }
@@ -404,6 +408,22 @@ export class CanvasManager {
             return;
         }
 
+        // Drag-target fine-tuning: grab the yellow rotation ring to spin the ghost.
+        // Must run before the selection tool, which would otherwise restart the drag.
+        if (e.button === 0 && this.isFineTuning && this.ghostRotation) {
+            const center = this.getGhostCenterScreen();
+            if (center) {
+                const dist = Math.hypot(screen.x - center[0], screen.y - center[1]);
+                if (Math.abs(dist - 60) < 12) { // ring radius 60 (see drawRotationWidget)
+                    this.lastSpinAngle = Math.atan2(screen.y - center[1], screen.x - center[0]) * 180 / Math.PI;
+                    this.isDragging = true;
+                    this.interactionMode = 'spin_ghost';
+                    this.canvas.style.cursor = 'grabbing';
+                    return;
+                }
+            }
+        }
+
         if (this.motionGizmo.isActive() && state.activeTool === 'select') {
             const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
             if (selectedPlate && !selectedPlate.locked) {
@@ -438,6 +458,8 @@ export class CanvasManager {
                 if (res && this.onGizmoUpdate && res.rate !== undefined) this.onGizmoUpdate(res.rate);
             } else if (this.interactionMode === 'drag_target') {
                 this.updateDragTarget(e);
+            } else if (this.interactionMode === 'spin_ghost') {
+                this.updateGhostSpin(screen);
             }
         }
 
@@ -526,15 +548,55 @@ export class CanvasManager {
         this.render();
     }
 
+    /** Projected screen position of the ghost plate's (rotated) center during fine-tuning. */
+    private getGhostCenterScreen(): [number, number] | null {
+        if (!this.ghostPlateId || !this.ghostRotation) return null;
+        const plate = this.getState().world.plates.find(p => p.id === this.ghostPlateId);
+        if (!plate) return null;
+        const vCenter = latLonToVector(plate.center);
+        const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
+        return this.projectionManager.project(vectorToLatLon(vRotCenter));
+    }
+
+    /** Accumulate spin from cursor movement around the ghost center (rotation ring drag). */
+    private updateGhostSpin(screen: Point) {
+        const center = this.getGhostCenterScreen();
+        if (!center) return;
+        const curr = Math.atan2(screen.y - center[1], screen.x - center[0]) * 180 / Math.PI;
+        let delta = curr - this.lastSpinAngle;
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+        this.ghostSpin += delta;
+        this.lastSpinAngle = curr;
+        this.render();
+    }
+
     private startDragTarget(plateId: string, geo: Coordinate) {
         const state = this.getState();
         const plate = state.world.plates.find(p => p.id === plateId);
         if (plate?.locked) return; // Prevent dragging locked plates
 
+        // Re-dragging while fine-tuning the same plate: continue from the current
+        // ghost position (fold drag + spin into the base quaternion) instead of
+        // silently resetting the adjustment back to the plate's real position.
+        let baseQuat: Quaternion = { w: 1, x: 0, y: 0, z: 0 };
+        if (this.isFineTuning && this.ghostPlateId === plateId && this.ghostRotation && plate) {
+            const vCenter = latLonToVector(plate.center);
+            const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
+            const qDrag = quatFromAxisAngle(this.ghostRotation.axis, this.ghostRotation.angle);
+            const qSpin = quatFromAxisAngle(vRotCenter, -this.ghostSpin * Math.PI / 180);
+            baseQuat = quatMultiply(qSpin, qDrag);
+            const { axis, angle } = axisAngleFromQuat(baseQuat);
+            this.ghostRotation = { plateId, axis, angle };
+        } else {
+            this.ghostRotation = { plateId, axis: { x: 0, y: 0, z: 1 }, angle: 0 };
+        }
+
         this.ghostPlateId = plateId;
-        this.ghostRotation = { plateId, axis: { x: 0, y: 0, z: 1 }, angle: 0 };
         this.dragStartGeo = geo;
-        this.dragBaseQuat = { w: 1, x: 0, y: 0, z: 0 };
+        this.dragBaseQuat = baseQuat;
+        this.ghostSpin = 0;
+        this.isFineTuning = false; // re-enabled on mouseup
         this.isDragging = true;
         this.interactionMode = 'drag_target';
         this.canvas.style.cursor = 'grabbing';
@@ -598,6 +660,8 @@ export class CanvasManager {
         if (state.activeTool === 'edit') {
             this.drawEditHighlights();
         }
+
+        this.drawPredictionFlowlines(state, path);
 
         if (this.isFineTuning && this.ghostPlateId) {
             const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
@@ -1075,6 +1139,72 @@ export class CanvasManager {
                 }
             }
         }
+        this.ctx.restore();
+    }
+
+    /**
+     * Prediction flowlines for Drag Landmass mode: while dragging or fine-tuning,
+     * draw the great-circle arcs that sample points of the plate will travel along
+     * under the pending rotation (drag + spin composed — exactly what Apply commits).
+     */
+    private drawPredictionFlowlines(state: AppState, path: any): void {
+        if (state.world.globalOptions.showPredictionFlowlines === false) return;
+        if (!this.ghostPlateId || !this.ghostRotation) return;
+
+        const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
+        if (!plate) return;
+
+        const qTotal = this.getGhostTotalQuat(plate.center);
+        if (!qTotal) return;
+        const { axis, angle } = axisAngleFromQuat(qTotal);
+        if (angle < 0.005) return; // nothing meaningful to predict yet
+
+        // Sample points: plate center + up to 7 evenly spaced boundary vertices
+        const samples: Coordinate[] = [plate.center];
+        const boundaryPts = plate.polygons.flatMap(p => p.points);
+        if (boundaryPts.length > 0) {
+            const step = Math.max(1, Math.floor(boundaryPts.length / 7));
+            for (let i = 0; i < boundaryPts.length && samples.length < 8; i += step) {
+                samples.push(boundaryPts[i]);
+            }
+        }
+
+        const segs = 24;
+        this.ctx.save();
+        this.ctx.setLineDash([6, 4]);
+        this.ctx.lineWidth = 1.5;
+        this.ctx.strokeStyle = '#fbbf24'; // amber, distinct from plate + gizmo colors
+        this.ctx.globalAlpha = 0.75;
+
+        for (const pt of samples) {
+            const v = latLonToVector(pt);
+            const coords: Coordinate[] = [];
+            for (let i = 0; i <= segs; i++) {
+                coords.push(vectorToLatLon(rotateVector(v, axis, (angle * i) / segs)));
+            }
+
+            // Arc, projected with proper clipping
+            this.ctx.beginPath();
+            path({ type: 'LineString', coordinates: coords });
+            this.ctx.stroke();
+
+            // Arrowhead at the destination end (screen space)
+            const end = this.projectionManager.project(coords[segs]);
+            const prev = this.projectionManager.project(coords[segs - 1]);
+            if (end && prev) {
+                const a = Math.atan2(end[1] - prev[1], end[0] - prev[0]);
+                const headLen = 7;
+                this.ctx.beginPath();
+                this.ctx.setLineDash([]);
+                this.ctx.moveTo(end[0], end[1]);
+                this.ctx.lineTo(end[0] - headLen * Math.cos(a - Math.PI / 6), end[1] - headLen * Math.sin(a - Math.PI / 6));
+                this.ctx.moveTo(end[0], end[1]);
+                this.ctx.lineTo(end[0] - headLen * Math.cos(a + Math.PI / 6), end[1] - headLen * Math.sin(a + Math.PI / 6));
+                this.ctx.stroke();
+                this.ctx.setLineDash([6, 4]);
+            }
+        }
+
         this.ctx.restore();
     }
 

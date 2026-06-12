@@ -655,6 +655,11 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
+        document.getElementById('check-prediction-flowlines')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.showPredictionFlowlines = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
         document.getElementById('check-show-hidden-plates')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.showHiddenPlates = (e.target as HTMLInputElement).checked;
             this.updateExplorer(); // Refreshes the eye icons in explorer if needed
@@ -1504,6 +1509,9 @@ class TectoLiteApp {
         if (checkExpandingRifts) checkExpandingRifts.checked = g.enableExpandingRifts === true;
         const checkAutoOceanic = document.getElementById('check-auto-oceanic') as HTMLInputElement | null;
         if (checkAutoOceanic) checkAutoOceanic.checked = g.enableAutoOceanicCrust === true;
+
+        const checkPredictionFlowlines = document.getElementById('check-prediction-flowlines') as HTMLInputElement | null;
+        if (checkPredictionFlowlines) checkPredictionFlowlines.checked = g.showPredictionFlowlines !== false;
         // For now, assume it's not state-persisted or I need to add it.
 
         const radiusInput = document.getElementById('global-planet-radius') as HTMLInputElement;

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npm run verify; \"VERIFY=$LASTEXITCODE\"; npx eslint src --quiet; \"LINT=$LASTEXITCODE\")"
+    ]
+  }
+}
