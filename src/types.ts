@@ -419,6 +419,11 @@ export interface TectonicPlate {
   junctionId?: string;   // Which TripleJunction generated this wedge fill (ephemeral, axis-based path)
   elevation?: number; // Base elevation
 
+  // Keyframe-less motion model (authoritative when present; legacy keyframes are
+  // converted on the fly via RotationModel.fromLegacyKeyframes during migration)
+  motionSegments?: MotionSegment[];
+  geometryStages?: GeometryStage[];
+
   // Current Visual State (Calculated from keyframes)
   polygons: Polygon[];
   features: Feature[];
@@ -579,6 +584,25 @@ export interface AppState {
   activeLineType: LineType; // Line sub-type when drawMode is 'line'
   activePolygonType: PolygonType; // Polygon sub-type when drawMode is 'polygon'
   viewport: Viewport;
+}
+
+// ── Keyframe-less motion model (rotation tree) ─────────────────────────────────
+// See docs/PLAN_rotation_model.md. Plates are migrating from snapshot-baking
+// keyframes to derived geometry: motion stored as piecewise-constant pole
+// segments, geometry stored only at the times it actually changed.
+
+/** Piecewise-constant motion: this pole is active from `time` until the next segment. */
+export interface MotionSegment {
+  time: number;
+  eulerPole: EulerPole;
+}
+
+/** A geometry definition valid from `time` (birth, or a shape edit), stored in
+ *  absolute coordinates at `time`. Position at any later t is derived by rotation. */
+export interface GeometryStage {
+  time: number;
+  polygons: Polygon[];
+  features: Feature[];
 }
 
 /** A named, saved camera position (persisted in project files, not part of undo history). */

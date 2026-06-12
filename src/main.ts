@@ -26,10 +26,11 @@ import { SimulationEngine } from './SimulationEngine';
 import { exportToPNG, exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog } from './export';
 import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
-import { vectorToLatLon, latLonToVector, rotateVector, Vector3 } from './utils/sphericalMath';
+import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
 import { remapImportedWorld } from './importHelpers';
+import { pointPositionAt, ensureMotionModel, getMotionModel } from './motion/RotationModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
 import { geoArea, geoCentroid } from 'd3-geo';
@@ -937,67 +938,43 @@ class TectoLiteApp {
                         copy.center = geoCentroid(geoJson);
 
                         if (mode === 'generation') {
-                            // --- REWRITE HISTORY STRATEGY ---
-                            const dt = this.state.world.currentTime - p.birthTime;
-                            const rate = p.motion.eulerPole.rate;
-                            const angleDeg = rate * dt;
-                            const angleRad = angleDeg * Math.PI / 180;
-
-                            const poleVec = latLonToVector(p.motion.eulerPole.position);
-                            const invAngleRad = -angleRad;
-
-                            const newInitialPolys = result.polygons.map((poly: any) => {
-                                const newPoints = poly.points.map((pt: Coordinate) => {
-                                    const v = latLonToVector(pt);
-                                    const vRot = rotateVector(v, poleVec, invAngleRad);
-                                    return vectorToLatLon(vRot);
-                                });
-                                return { ...poly, points: newPoints };
-                            });
+                            // --- REWRITE HISTORY STRATEGY (keyframe-less model) ---
+                            // Un-rotate the edited (current-time) geometry back to birth
+                            // through the FULL rotation model — every motion segment plus
+                            // inherited motion — not just the current pole. The result
+                            // becomes the plate's birth geometry (stage 0); the engine
+                            // derives every other time from it, so no snapshot rebaking.
+                            const allPlates = this.state.world.plates;
+                            const t = this.state.world.currentTime;
+                            const newInitialPolys = result.polygons.map((poly: Polygon) => ({
+                                ...poly,
+                                points: poly.points.map((pt: Coordinate) =>
+                                    pointPositionAt(p, allPlates, pt, t, p.birthTime))
+                            }));
 
                             copy.initialPolygons = newInitialPolys;
-
-                            // CRITICAL: Propagate this base shape change to ALL future keyframes
-                            // Keyframes store absolute snapshots. If we change the source truth, 
-                            // we must update the snapshots to reflect "it was always this shape".
-                            if (copy.motionKeyframes) {
-                                copy.motionKeyframes = copy.motionKeyframes.map(kf => {
-                                    // Re-calculate snapshot for this keyframe time based on NEW initial polygons
-                                    // Rotate from birthTime to keyframe.time
-                                    const kfDt = kf.time - p.birthTime;
-                                    const kfAngle = (rate * kfDt) * Math.PI / 180;
-                                    // Rotate forward from new birth shape
-                                    const newSnapshot = newInitialPolys.map((poly: Polygon) => ({
-                                        ...poly,
-                                        points: poly.points.map(pt => {
-                                            const v = latLonToVector(pt);
-                                            const vRot = rotateVector(v, poleVec, kfAngle);
-                                            return vectorToLatLon(vRot);
-                                        })
-                                    }));
-
-                                    return {
-                                        ...kf,
-                                        snapshotPolygons: newSnapshot
-                                        // Features might need update too but let's stick to geometry first
-                                    };
-                                });
+                            // Keep a materialized stage 0 (if any) in sync — same source of truth
+                            if (copy.geometryStages && copy.geometryStages.length > 0) {
+                                copy.geometryStages = copy.geometryStages.map((s, i) =>
+                                    i === 0 ? { ...s, polygons: newInitialPolys } : s);
                             }
+                            // NOTE: later 'Edit' stages are deliberately untouched — rewriting
+                            // history before an explicit shape edit must not destroy that edit
+                            // (the legacy snapshot rebake used to do exactly that).
                         } else {
-                            // --- KEYFRAME EVENT STRATEGY ---
-                            // Create a new keyframe at current time with the CURRENT polygons as snapshot
-                            const newKeyframe: MotionKeyframe = {
+                            // --- SHAPE EVENT STRATEGY (keyframe-less model) ---
+                            // Append a geometry stage at the current time: the edited
+                            // polygons + current features ARE the absolute coordinates
+                            // at this time, which is exactly a stage definition.
+                            ensureMotionModel(copy);
+                            const stages = [...copy.geometryStages!]
+                                .filter(s => Math.abs(s.time - this.state.world.currentTime) > 0.001);
+                            stages.push({
                                 time: this.state.world.currentTime,
-                                label: 'Edit', // Explicit label for timeline
-                                eulerPole: p.motion.eulerPole, // Inherit current pole
-                                snapshotPolygons: JSON.parse(JSON.stringify(result.polygons)), // Snapshot current shape
-                                snapshotFeatures: [...p.features] // Snapshot current features
-                            };
-
-                            if (!copy.motionKeyframes) copy.motionKeyframes = [];
-                            copy.motionKeyframes.push(newKeyframe);
-                            // Sort keyframes to be safe
-                            copy.motionKeyframes.sort((a, b) => a.time - b.time);
+                                polygons: JSON.parse(JSON.stringify(result.polygons)),
+                                features: [...p.features]
+                            });
+                            copy.geometryStages = stages.sort((a, b) => a.time - b.time);
                         }
                         return copy;
                     }
@@ -2350,46 +2327,23 @@ class TectoLiteApp {
                             const currentTime = this.state.world.currentTime;
 
                             // Get parent's current Euler pole
-                            const parentKeyframes = parentPlate.motionKeyframes || [];
-                            const parentActiveKeyframe = parentKeyframes
-                                .filter(kf => kf.time <= currentTime)
+                            const parentActiveSegment = [...getMotionModel(parentPlate).segments]
+                                .filter(s => s.time <= currentTime)
                                 .sort((a, b) => b.time - a.time)[0];
-
-                            const parentPole = parentActiveKeyframe?.eulerPole || { position: [0, 90], rate: 0 };
+                            const parentPole = parentActiveSegment?.eulerPole || { position: [0, 90] as Coordinate, rate: 0, visible: false };
 
                             this.state.world.plates = this.state.world.plates.map(p => {
                                 if (p.id === childId) {
-                                    // Bake in the parent's motion as the child's new base motion
-                                    const childKeyframes = p.motionKeyframes || [];
-
-                                    // Add a new keyframe with parent's pole (the combined motion at unlink time)
-                                    const newKeyframes = [...childKeyframes];
-
-                                    // Find if there's already a keyframe at this time
-                                    const existingIndex = newKeyframes.findIndex(kf => Math.abs(kf.time - currentTime) < 0.001);
-
-                                    if (existingIndex >= 0) {
-                                        // Update existing keyframe to use parent's pole
-                                        newKeyframes[existingIndex] = {
-                                            ...newKeyframes[existingIndex],
-                                            eulerPole: parentPole
-                                        };
-                                    } else {
-                                        // Create new keyframe with parent's pole
-                                        newKeyframes.push({
-                                            time: currentTime,
-                                            eulerPole: parentPole,
-                                            snapshotPolygons: p.polygons, // Current position becomes the snapshot
-                                            snapshotFeatures: p.features
-                                        });
-                                    }
-
-                                    return {
-                                        ...p,
-                                        linkedToPlateId: undefined,
-                                        unlinkTime: currentTime,  // Mark when link ended
-                                        motionKeyframes: newKeyframes
-                                    };
+                                    // Bake in the parent's motion as the child's new base motion segment
+                                    const updated = { ...p };
+                                    ensureMotionModel(updated);
+                                    const segments = [...updated.motionSegments!]
+                                        .filter(s => Math.abs(s.time - currentTime) > 0.001);
+                                    segments.push({ time: currentTime, eulerPole: parentPole });
+                                    updated.motionSegments = segments.sort((a, b) => a.time - b.time);
+                                    updated.linkedToPlateId = undefined;
+                                    updated.unlinkTime = currentTime;  // Mark when link ended
+                                    return updated;
                                 }
                                 return p;
                             });
@@ -2433,47 +2387,23 @@ class TectoLiteApp {
 
                                 const currentTime = this.state.world.currentTime;
 
-                                // Get parent's current Euler pole
-                                const parentKeyframes = parentPlate.motionKeyframes || [];
-                                const parentActiveKeyframe = parentKeyframes
-                                    .filter(kf => kf.time <= currentTime)
+                                // Get parent's current Euler pole (from the motion model)
+                                const parentActiveSegment = [...getMotionModel(parentPlate).segments]
+                                    .filter(s => s.time <= currentTime)
                                     .sort((a, b) => b.time - a.time)[0];
-
-                                const parentPole = parentActiveKeyframe?.eulerPole || { position: [0, 90], rate: 0 };
+                                const parentPole = parentActiveSegment?.eulerPole || { position: [0, 90] as Coordinate, rate: 0, visible: false };
 
                                 this.state.world.plates = this.state.world.plates.map(p => {
                                     if (p.id === childId) {
-                                        // Bake in the parent's motion as the child's new base motion
-                                        const childKeyframes = p.motionKeyframes || [];
-
-                                        // Add a new keyframe with parent's pole (the combined motion at unlink time)
-                                        const newKeyframes = [...childKeyframes];
-
-                                        // Find if there's already a keyframe at this time
-                                        const existingIndex = newKeyframes.findIndex(kf => Math.abs(kf.time - currentTime) < 0.001);
-
-                                        if (existingIndex >= 0) {
-                                            // Update existing keyframe to use parent's pole
-                                            newKeyframes[existingIndex] = {
-                                                ...newKeyframes[existingIndex],
-                                                eulerPole: parentPole
-                                            };
-                                        } else {
-                                            // Create new keyframe with parent's pole
-                                            newKeyframes.push({
-                                                time: currentTime,
-                                                eulerPole: parentPole,
-                                                snapshotPolygons: p.polygons, // Current position becomes the snapshot
-                                                snapshotFeatures: p.features,
-
-                                            });
-                                        }
-
-                                        return {
-                                            ...p,
-                                            linkedToPlateId: undefined,
-                                            motionKeyframes: newKeyframes
-                                        };
+                                        // Bake in the parent's motion as the child's new base motion segment
+                                        const updated = { ...p };
+                                        ensureMotionModel(updated);
+                                        const segments = [...updated.motionSegments!]
+                                            .filter(s => Math.abs(s.time - currentTime) > 0.001);
+                                        segments.push({ time: currentTime, eulerPole: parentPole });
+                                        updated.motionSegments = segments.sort((a, b) => a.time - b.time);
+                                        updated.linkedToPlateId = undefined;
+                                        return updated;
                                     }
                                     return p;
                                 });
@@ -3954,6 +3884,10 @@ class TectoLiteApp {
                 const updated = { ...p };
                 const oldMotion = { ...p.motion }; // Capture old motion
 
+                // Materialize the motion model BEFORE changing `motion` so a
+                // keyframe-less plate gets its fallback segment from the OLD pole
+                ensureMotionModel(updated);
+
                 // Update Motion to NEW values
                 updated.motion = {
                     ...p.motion,
@@ -3965,37 +3899,18 @@ class TectoLiteApp {
                     }
                 };
 
-                // Add/Update Keyframe
-                const currentKeyframes = p.motionKeyframes || [];
-
-                // HISTORICAL INTEGRITY:
-                // If we are adding a keyframe at T > Birth, and there are NO prior keyframes,
-                // we must "bake" the old motion as the base motion from Birth -> T.
-                // Otherwise, the new 'updated.motion' will retrospectively apply to T=0, rewriting history.
-                let newKeyframes = [...currentKeyframes];
-
-                const hasPriorKeyframe = currentKeyframes.some(k => k.time < currentTime);
-                if (!hasPriorKeyframe && currentTime > p.birthTime) {
-                    newKeyframes.push({
-                        time: p.birthTime,
-                        eulerPole: oldMotion.eulerPole, // Use OLD motion for the past
-                        snapshotPolygons: p.initialPolygons || p.polygons, // Best guess for past state
-                        snapshotFeatures: p.initialFeatures || p.features
-                    });
+                // HISTORICAL INTEGRITY: pin the OLD motion from birth if no earlier
+                // segment exists, so the new pole doesn't retroactively rewrite history.
+                const segments = [...updated.motionSegments!];
+                const hasPriorSegment = segments.some(s => s.time < currentTime);
+                if (!hasPriorSegment && currentTime > p.birthTime) {
+                    segments.push({ time: p.birthTime, eulerPole: oldMotion.eulerPole });
                 }
 
-                // Now add the NEW keyframe at Current Time
-                const newKeyframe: MotionKeyframe = {
-                    time: currentTime,
-                    eulerPole: updated.motion.eulerPole, // Use NEW motion for the future
-                    snapshotPolygons: p.polygons,
-                    snapshotFeatures: p.features
-                };
-
-                // Remove any existing keyframe exactly at current time to replace it
-                newKeyframes = newKeyframes.filter(k => Math.abs(k.time - currentTime) > 0.001);
-                newKeyframes.push(newKeyframe);
-                updated.motionKeyframes = newKeyframes.sort((a, b) => a.time - b.time);
+                // Replace any segment exactly at the current time, then add the new one
+                const filtered = segments.filter(s => Math.abs(s.time - currentTime) > 0.001);
+                filtered.push({ time: currentTime, eulerPole: updated.motion.eulerPole });
+                updated.motionSegments = filtered.sort((a, b) => a.time - b.time);
 
                 // Record motion change event for Actions timeline
                 const existingEvents = updated.events || [];
@@ -4328,6 +4243,12 @@ class TectoLiteApp {
                 ...kf,
                 snapshotPolygons: shiftPolys(kf.snapshotPolygons),
                 snapshotFeatures: kf.snapshotFeatures.map(shiftFeature)
+            })),
+            // Keyframe-less model: shift stage geometry too; motion segments copy as-is
+            geometryStages: clone.geometryStages?.map(s => ({
+                ...s,
+                polygons: shiftPolys(s.polygons),
+                features: s.features.map(shiftFeature)
             })),
             events: [] // split/fusion history belongs to the original, not the copy
         };

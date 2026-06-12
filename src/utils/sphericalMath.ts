@@ -155,6 +155,31 @@ export function quatFromAxisAngle(axis: Vector3, angleRad: number): Quaternion {
     };
 }
 
+export const QUAT_IDENTITY: Quaternion = { w: 1, x: 0, y: 0, z: 0 };
+
+/** Conjugate = inverse for unit quaternions. */
+export function quatConjugate(q: Quaternion): Quaternion {
+    return { w: q.w, x: -q.x, y: -q.y, z: -q.z };
+}
+
+/** Rotate a vector by a unit quaternion (v' = q v q*), without trig. */
+export function rotateVectorByQuat(v: Vector3, q: Quaternion): Vector3 {
+    // t = 2 * (q.xyz × v); v' = v + w*t + (q.xyz × t)
+    const tx = 2 * (q.y * v.z - q.z * v.y);
+    const ty = 2 * (q.z * v.x - q.x * v.z);
+    const tz = 2 * (q.x * v.y - q.y * v.x);
+    return {
+        x: v.x + q.w * tx + (q.y * tz - q.z * ty),
+        y: v.y + q.w * ty + (q.z * tx - q.x * tz),
+        z: v.z + q.w * tz + (q.x * ty - q.y * tx)
+    };
+}
+
+/** Rotate a lon/lat coordinate by a unit quaternion. */
+export function rotateCoordByQuat(p: Coordinate, q: Quaternion): Coordinate {
+    return vectorToLatLon(rotateVectorByQuat(latLonToVector(p), q));
+}
+
 export function axisAngleFromQuat(q: Quaternion): { axis: Vector3, angle: number } {
     // Ensure unit quaternion?
     // angle = 2 * acos(w)

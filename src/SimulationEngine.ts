@@ -5,12 +5,12 @@ import {
     latLonToVector,
     vectorToLatLon,
     rotateVector,
-    rotatePoint,
     normalize,
     calculateSphericalCentroid,
     nlerpCoord,
-    Vector3
+    rotateCoordByQuat
 } from './utils/sphericalMath';
+import { getMotionModel, activeStage, plateRotation, pointPositionAt } from './motion/RotationModel';
 import { BoundarySystem } from './BoundarySystem';
 // import { GeologicalAutomationSystem } from './systems/GeologicalAutomation'; // DISABLED
 import { EventEffectsProcessor } from './systems/EventEffectsProcessor';
@@ -132,7 +132,7 @@ export class SimulationEngine {
                 ? BoundarySystem.detectBoundaries(newPlates, time)
                 : [];
 
-            // Phase 4: Geological Automation — DISABLED (features removed)
+            // Phase 4: Geological Automation â€” DISABLED (features removed)
             const tempState = {
                 ...state,
                 world: {
@@ -218,7 +218,7 @@ export class SimulationEngine {
                 const interval = globalOptions.oceanicGenerationInterval || 25;
                 const newSlabs: TectonicPlate[] = [];
 
-                // ISOCHRON PATH (RiftAxis-based) — opt-in automation.
+                // ISOCHRON PATH (RiftAxis-based) â€” opt-in automation.
                 // The ephemeral-plate filter runs even when disabled so geometry
                 // derived before the option was switched off doesn't linger.
                 if (globalOptions.enableExpandingRifts === true) {
@@ -230,7 +230,7 @@ export class SimulationEngine {
                     newPlates = newPlates.filter(p => !p.riftAxisId && !p.junctionId);
                 }
 
-                // SIBLING + LEGACY PATHS ("Auto Generate") — opt-in automation.
+                // SIBLING + LEGACY PATHS ("Auto Generate") â€” opt-in automation.
                 // Previously this checkbox was never read and these paths ran whenever
                 // expanding rifts were on; they are now gated independently.
                 if (globalOptions.enableAutoOceanicCrust === true) {
@@ -257,7 +257,7 @@ export class SimulationEngine {
                 ? BoundarySystem.detectBoundaries(newPlates, newTime)
                 : [];
 
-            // Phase 3: Geological Automation — DISABLED (features removed)
+            // Phase 3: Geological Automation â€” DISABLED (features removed)
             const tempState = {
                 ...state,
                 world: {
@@ -655,7 +655,7 @@ export class SimulationEngine {
         const newStrips: TectonicPlate[] = [];
         const RIFT_GRID_RESOLUTION = 2.0;
 
-        // Pure helpers — hoisted so both the rift-strip pass and the junction-fill pass can use them.
+        // Pure helpers â€” hoisted so both the rift-strip pass and the junction-fill pass can use them.
         const getEdgePoints = (polygon: import('./types').Polygon, edges: import('./types').EdgeMeta[]): Coordinate[] => {
             const pts: Coordinate[] = [];
             for (const edge of edges) pts.push(polygon.points[edge.edgeIndex]);
@@ -785,7 +785,7 @@ export class SimulationEngine {
 
                         if (generationTime <= groupBirth) continue;
                         const stripIdA = `${plate.id}_${groupId}_strip_${generationTime}`;
-                        // Use semantic check: match by parent plate, rift group, and age — not by the
+                        // Use semantic check: match by parent plate, rift group, and age â€” not by the
                         // slabId prefix (which changes after a re-split re-links strips to a new plate).
                         const alreadyExists = [...currentPlates, ...newStrips].some(p =>
                             p.type === 'oceanic' &&
@@ -884,7 +884,7 @@ export class SimulationEngine {
                         });
                     }
 
-                    // Growing strips — from last permanent midline (or rift edge) to the live midline
+                    // Growing strips â€” from last permanent midline (or rift edge) to the live midline
                     const pCurrentPts = getEdgePoints(poly, pEdges);
                     const qCurrentPts = getEdgePoints(qPoly, qEdges);
 
@@ -975,10 +975,10 @@ export class SimulationEngine {
             }
         }
 
-        // ── Pass 2: Junction fills ────────────────────────────────────────────────────────────────
+        // â”€â”€ Pass 2: Junction fills â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // For each plate that is a corner of 2+ active rifts, detect shared rift-edge endpoints
-        // (within ~0.5° tolerance) and generate triangular oceanic fill for the fan-shaped gap.
-        const JUNCTION_TOL = 1 - Math.cos(0.5 * Math.PI / 180); // dot-product threshold ≈ 0.5°
+        // (within ~0.5Â° tolerance) and generate triangular oceanic fill for the fan-shaped gap.
+        const JUNCTION_TOL = 1 - Math.cos(0.5 * Math.PI / 180); // dot-product threshold â‰ˆ 0.5Â°
         const dotCoord = (a: Coordinate, b: Coordinate) => {
             const va = latLonToVector(a); const vb = latLonToVector(b);
             return va.x * vb.x + va.y * vb.y + va.z * vb.z;
@@ -1039,7 +1039,7 @@ export class SimulationEngine {
                         return this.applyPlateMotion(rawEnd, arm.plate, time, currentTime, currentPlates);
                     };
 
-                    // Canonical slabId prefix — sort groupIds so A-B and B-A produce the same key.
+                    // Canonical slabId prefix â€” sort groupIds so A-B and B-A produce the same key.
                     const [gMin, gMax] = [armA.groupId, armB.groupId].sort();
                     const jPrefix = `${pid}_junction_${gMin}_${gMax}`;
                     const groupBirthJ = Math.max(armA.groupBirth, armB.groupBirth);
@@ -1103,7 +1103,7 @@ export class SimulationEngine {
                         });
                     }
 
-                    // Growing junction fill — from last permanent boundary to current live midline endpoints.
+                    // Growing junction fill â€” from last permanent boundary to current live midline endpoints.
                     const latestPermJ = [...currentPlates, ...newStrips]
                         .filter(p => p.type === 'oceanic' && p.linkedToPlateId === pid &&
                             p.slabId?.startsWith(jPrefix) && !p.slabId.endsWith('_growing'))
@@ -1135,14 +1135,14 @@ export class SimulationEngine {
                 }
             }
         }
-        // ── End Pass 2 ───────────────────────────────────────────────────────────────────────────
+        // â”€â”€ End Pass 2 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         return newStrips;
     }
 
-    // ══════════════════════════════════════════════════════════════════════════════════════════
-    // ISOCHRON-BASED OCEAN GENERATION — GPlates-inspired derived geometry
-    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ISOCHRON-BASED OCEAN GENERATION â€” GPlates-inspired derived geometry
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     private readonly RIFT_GRID_RESOLUTION = 2.0;
 
@@ -1294,7 +1294,7 @@ export class SimulationEngine {
 
     /**
      * Derive ephemeral ocean ring TectonicPlate objects from isochron history.
-     * These are destroyed and recreated each frame — no persistent state.
+     * These are destroyed and recreated each frame â€” no persistent state.
      *
      * When junctions are provided, the junction-end of each ring boundary polyline is
      * clipped to the official junction position stored in `junctionHistory`. This ensures
@@ -1454,13 +1454,13 @@ export class SimulationEngine {
         };
     }
 
-    // (generateAxisCrust removed — replaced by isochron-based recordIsochrons + deriveOceanRings)
+    // (generateAxisCrust removed â€” replaced by isochron-based recordIsochrons + deriveOceanRings)
 
     /**
      * Shared isochron-path pipeline used by both update() and setTime().
      * Strips last frame's ephemeral axis/junction-derived plates, optionally records
      * new isochron + junction history (pass recordInterval only when advancing the
-     * simulation — never when scrubbing), then derives fresh ocean rings and wedges.
+     * simulation â€” never when scrubbing), then derives fresh ocean rings and wedges.
      */
     private deriveAxisGeometry(
         plates: TectonicPlate[],
@@ -1482,7 +1482,7 @@ export class SimulationEngine {
         return { basePlates, junctions: updatedJunctions, derived: [...rings, ...wedges] };
     }
 
-    // ── Triple Junction system ─────────────────────────────────────────────────────────────────────
+    // â”€â”€ Triple Junction system â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Interpolate a position from a time-sorted point history using normalized
@@ -1525,7 +1525,7 @@ export class SimulationEngine {
     /**
      * Detect and update TripleJunction objects by comparing current midline endpoints
      * of all active RiftAxes. Junctions are identified when two or more axes share an
-     * endpoint within ~0.5° tolerance. Returns an updated (possibly enlarged) junctions array.
+     * endpoint within ~0.5Â° tolerance. Returns an updated (possibly enlarged) junctions array.
      */
     private detectAndUpdateTripleJunctions(
         axes: RiftAxis[],
@@ -1589,7 +1589,7 @@ export class SimulationEngine {
                 existing.axisJunctionAtStart = cl.atStart;
                 if (existing.state === 'dead') existing.state = 'active';
             } else {
-                // Find the axis that was born latest — that determines the junction birth time
+                // Find the axis that was born latest â€” that determines the junction birth time
                 const birthTime = Math.max(
                     ...cl.axisIds.map(id => axes.find(a => a.id === id)?.birthTime ?? 0)
                 );
@@ -1604,7 +1604,7 @@ export class SimulationEngine {
         }
 
         // Mark junctions dead only when ALL their axes are dead.
-        // Do NOT kill a junction because its midline endpoints drifted apart — diverging
+        // Do NOT kill a junction because its midline endpoints drifted apart â€” diverging
         // plates spread continuously so endpoints always separate after birth. The junction
         // was geometrically real when first detected; it stays alive until its rifts close.
         for (const j of result) {
@@ -1692,7 +1692,7 @@ export class SimulationEngine {
                     if (allTimes.length === 0) continue;
                     if (allTimes[0] > startTime) allTimes.unshift(startTime);
 
-                    // Current live midline endpoints (growing boundary — always recomputed)
+                    // Current live midline endpoints (growing boundary â€” always recomputed)
                     let currentEndAB: Coordinate | null = null;
                     let currentEndBC: Coordinate | null = null;
 
@@ -1726,7 +1726,7 @@ export class SimulationEngine {
                     for (let k = 1; k < boundaries.length; k++) {
                         const outer = boundaries[k - 1];
                         const inner = boundaries[k];
-                        // Wedge quad: outer.pAB → outer.pBC → inner.pBC → inner.pAB
+                        // Wedge quad: outer.pAB â†’ outer.pBC â†’ inner.pBC â†’ inner.pAB
                         // (pAB-side edge is shared with axis AB ring; pBC-side edge with axis BC ring)
                         const ring = [outer.pAB, outer.pBC, inner.pBC, inner.pAB, outer.pAB];
                         if (this.sphericalArea(ring) < MIN_AREA) continue;
@@ -1764,152 +1764,23 @@ export class SimulationEngine {
         return wedges;
     }
 
-    // Helper to move a point forward in time according to a plate's motion history
+    // Helper to move a point forward (or backward) in time according to a plate's
+    // motion. Delegates to the rotation model: own piecewise segments, pre-birth
+    // history through the parent plate, and linked motion within the link window.
     private applyPlateMotion(point: Coordinate, plate: TectonicPlate, fromTime: number, toTime: number, allPlates: TectonicPlate[]): Coordinate {
-        // Handle pre-birth times by delegating to parent plate's motion.
-        // After a split, the child plate has no motion history before its birth —
-        // its parent (now dead) has the full keyframe history for the pre-split period.
-        if (fromTime < plate.birthTime && plate.parentPlateId) {
-            const parent = allPlates.find(p => p.id === plate.parentPlateId);
-            if (parent) {
-                const handoffTime = Math.min(plate.birthTime, toTime);
-                point = this.applyPlateMotion(point, parent, fromTime, handoffTime, allPlates);
-                fromTime = handoffTime;
-                if (fromTime >= toTime) return point;
-            }
-        }
-
-        let currentP = point;
-        let time = fromTime;
-
-        // Resolve linked motion (inherit from parent)
-        let effectivePlate = plate;
-        if (plate.linkedToPlateId) {
-            let current = plate;
-            const visited = new Set<string>();
-            while (current.linkedToPlateId && !visited.has(current.id)) {
-                visited.add(current.id);
-                const parent = allPlates.find(p => p.id === current.linkedToPlateId);
-                if (!parent) break;
-                current = parent;
-            }
-            effectivePlate = current;
-        }
-
-        const keyframes = [...(effectivePlate.motionKeyframes || [])].sort((a, b) => a.time - b.time);
-
-        // If no keyframes, fallback to simple current motion
-        if (keyframes.length === 0) {
-            const pole = effectivePlate.motion.eulerPole;
-            const dt = toTime - fromTime;
-            if (dt > 1e-6) {
-                const angle = pole.rate * dt;
-                currentP = rotatePoint(currentP, pole.position, toRad(angle));
-            }
-            return currentP;
-        }
-
-        while (time < toTime) {
-            let pole = effectivePlate.motion.eulerPole;
-            let nextBoundary = toTime;
-
-            // Find last keyframe <= time
-            let activeKFIndex = -1;
-            for (let i = 0; i < keyframes.length; i++) {
-                if (keyframes[i].time <= time) activeKFIndex = i;
-                else break;
-            }
-
-            if (activeKFIndex !== -1) {
-                pole = keyframes[activeKFIndex].eulerPole;
-                if (activeKFIndex + 1 < keyframes.length) {
-                    nextBoundary = Math.min(toTime, keyframes[activeKFIndex + 1].time);
-                }
-            } else {
-                // Before first keyframe: use first keyframe's pole (assume constant back in time)
-                if (keyframes.length > 0) {
-                    pole = keyframes[0].eulerPole;
-                    nextBoundary = Math.min(toTime, keyframes[0].time);
-                }
-            }
-
-            const dt = nextBoundary - time;
-            if (dt > 1e-6) {
-                const angle = pole.rate * dt;
-                currentP = rotatePoint(currentP, pole.position, toRad(angle));
-            }
-            time = nextBoundary;
-        }
-
-        return currentP;
+        return pointPositionAt(plate, allPlates, point, fromTime, toTime);
     }
 
     public calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {
-        // Collect all parent rotations recursively (A -> B -> C)
-        const getAccumulatedParentTransform = (p: TectonicPlate, t: number, visited: Set<string>): { axis: Vector3; angle: number }[] => {
-            if (!p.linkedToPlateId || visited.has(p.id)) return [];
-            visited.add(p.id);
+        // KEYFRAME-LESS MODEL (docs/PLAN_rotation_model.md): geometry is DERIVED â€”
+        // the active geometry stage rotated by the composed rotation from the stage
+        // time to t (own segments + parent chain + link window). Plates still
+        // carrying legacy keyframes are converted on the fly by getMotionModel().
 
-            const parent = allPlates.find(pl => pl.id === p.linkedToPlateId);
-            if (!parent) return [];
-
-            const transforms: { axis: Vector3; angle: number }[] = [];
-
-            // 1. Get grandparent transforms first (recursive)
-            transforms.push(...getAccumulatedParentTransform(parent, t, visited));
-
-            // 2. Add this parent's motion if within link window
-            const isWithinLinkWindow =
-                (!p.linkTime || t >= p.linkTime) &&
-                (!p.unlinkTime || t < p.unlinkTime);
-
-            if (isWithinLinkWindow) {
-                const parentKeyframes = parent.motionKeyframes || [];
-                // Find child current active keyframe to know from when we inherit parent motion
-                const activeKF = (p.motionKeyframes || []).filter(k => k.time <= t).sort((a, b) => b.time - a.time)[0];
-                const linkStartTime = p.linkTime || (parentKeyframes[0]?.time ?? 0);
-                const motionStartTime = activeKF ? Math.max(linkStartTime, activeKF.time) : linkStartTime;
-
-                const relevantKeyframes = parentKeyframes.filter(kf => kf.time <= t);
-
-                if (relevantKeyframes.length > 0) {
-                    relevantKeyframes.sort((a, b) => a.time - b.time);
-                    let prevTime = motionStartTime;
-
-                    for (let i = 0; i < relevantKeyframes.length; i++) {
-                        const kf = relevantKeyframes[i];
-                        if (kf.eulerPole && kf.eulerPole.rate !== 0) {
-                            const pole = kf.eulerPole;
-                            const axis = latLonToVector(pole.position);
-
-                            let segmentEnd = t;
-                            if (i + 1 < relevantKeyframes.length) {
-                                segmentEnd = Math.min(relevantKeyframes[i + 1].time, t);
-                            }
-
-                            const duration = segmentEnd - Math.max(kf.time, prevTime);
-
-                            if (duration > 0) {
-                                const angle = toRad(pole.rate * duration);
-                                transforms.push({ axis, angle });
-                            }
-                            prevTime = Math.max(prevTime, segmentEnd);
-                        }
-                    }
-                }
-            }
-            return transforms;
-        };
-
-        const parentTransform = getAccumulatedParentTransform(plate, time, new Set());
-
-
-
-
-        // Inheritance of Features
+        // Feature inheritance (legacy behavior preserved): features placed on a
+        // parent before the split, inside this plate's birth geometry, render here.
         const inheritedFeatures: Feature[] = [];
         const parentIds = plate.parentPlateIds || (plate.parentPlateId ? [plate.parentPlateId] : []);
-
         for (const pid of parentIds) {
             const parentPlate = allPlates.find(p => p.id === pid);
             if (!parentPlate) continue;
@@ -1932,103 +1803,49 @@ export class SimulationEngine {
             inheritedFeatures.push(...featuresToInherit);
         }
 
-        const keyframes = plate.motionKeyframes || [];
+        const { stages } = getMotionModel(plate);
+        const stage = activeStage(stages, time);
+        const qStage = plateRotation(plate, allPlates, stage.time, time);
 
-        // Find active keyframe OR synthesize one from initial state if none exist (e.g. oceanic strips)
-        let activeKeyframe = keyframes
-            .filter(kf => kf.time <= time)
-            .sort((a, b) => b.time - a.time)[0];
-
-        if (!activeKeyframe) {
-            // Synthesize a keyframe closest to birth
-            // For oceanic strips without keyframes, this allows them to be transformed by parent motion
-            activeKeyframe = {
-                time: plate.birthTime,
-                eulerPole: plate.motion?.eulerPole || { position: [0, 90], rate: 0, visible: false },
-                snapshotPolygons: plate.initialPolygons || plate.polygons,
-                snapshotFeatures: plate.initialFeatures || []
-            };
-        }
-
-        /* Legacy fallback removed - we handle static plates via synthetic keyframe above
-        if (keyframes.length === 0) {
-            return this.calculateWithLegacyMotion(plate, time, inheritedFeatures);
-        }
-        */
-
-        if (!activeKeyframe) {
-            // Fallback if something is really wrong (should cover above)
-            return plate;
-        }
-
-        const pole = activeKeyframe.eulerPole;
-        const elapsed = time - activeKeyframe.time;
-
-        const applyRotation = (coord: Coordinate, axis: Vector3, angle: number): Coordinate => {
-            if (angle === 0) return coord;
-            const v = latLonToVector(coord);
-            const vRot = rotateVector(v, axis, angle);
-            return vectorToLatLon(vRot);
-        };
-
-        // Rotation Logic: Global parent motions first, then differential child motion
-        const transform = (coord: Coordinate, isPointSpecificLifetime: boolean = false, startTime: number = activeKeyframe.time): Coordinate => {
-            let result = coord;
-            // 1. Apply parent accumulated transformation
-            for (const segment of parentTransform) {
-                result = applyRotation(result, segment.axis, segment.angle);
-            }
-            // 2. Apply child differential transformation
-            if (pole && pole.rate !== 0) {
-                const duration = isPointSpecificLifetime ? Math.max(0, time - startTime) : elapsed;
-                if (duration > 0) {
-                    let currentAxis = latLonToVector(pole.position);
-                    // Rotate the axis itself by the parent motion (Lock Motion)
-                    for (const segment of parentTransform) {
-                        currentAxis = rotateVector(currentAxis, segment.axis, segment.angle);
-                    }
-                    const ownAngle = toRad(pole.rate * duration);
-                    result = applyRotation(result, currentAxis, ownAngle);
-                }
-            }
-            return result;
-        };
-
-        const transformFeature = (feat: Feature, startTime: number, useOriginal: boolean = false): Feature => {
-            const sourcePos = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
-            const finalPos = transform(sourcePos, true, startTime);
-            return {
-                ...feat,
-                position: finalPos,
-                originalPosition: feat.originalPosition
-            };
-        };
-
-        const newPolygons = activeKeyframe.snapshotPolygons.map(poly => ({
+        const newPolygons = stage.polygons.map(poly => ({
             ...poly,
-            points: poly.points.map(p => transform(p))
+            points: poly.points.map(p => rotateCoordByQuat(p, qStage))
         }));
 
+        // Stage features are anchored at the stage time, unless they were placed
+        // later â€” then their placement position/time is the anchor.
+        const stageFeatureIds = new Set(stage.features.map(f => f.id));
+        const transformedStageFeatures = stage.features.map(f => {
+            const anchor = f.generatedAt !== undefined ? Math.max(f.generatedAt, stage.time) : stage.time;
+            if (anchor === stage.time) {
+                return { ...f, position: rotateCoordByQuat(f.position, qStage) };
+            }
+            const src = f.originalPosition ?? f.position;
+            return { ...f, position: pointPositionAt(plate, allPlates, src, anchor, time) };
+        });
+
+        // Features placed after the stage (live additions not yet part of any
+        // stage): anchored at creation time, from their placement position.
         const dynamicFeatures = plate.features.filter(f =>
-            !activeKeyframe.snapshotFeatures.some(sf => sf.id === f.id) &&
+            !stageFeatureIds.has(f.id) &&
             f.generatedAt !== undefined &&
-            f.generatedAt >= activeKeyframe.time
+            f.generatedAt >= stage.time
         );
+        const transformedDynamicFeatures = dynamicFeatures.map(f => {
+            const src = f.originalPosition ?? f.position;
+            return { ...f, position: pointPositionAt(plate, allPlates, src, f.generatedAt!, time) };
+        });
 
-        const transformedSnapshotFeatures = activeKeyframe.snapshotFeatures.map(feat =>
-            transformFeature(feat, activeKeyframe.time, false)
-        );
+        // Inherited features: anchored at the split time from their current
+        // position (legacy semantics preserved).
+        const transformedInheritedFeatures = inheritedFeatures.map(f => ({
+            ...f,
+            position: pointPositionAt(plate, allPlates, f.position, plate.birthTime, time)
+        }));
 
-        const transformedDynamicFeatures = dynamicFeatures.map(feat =>
-            transformFeature(feat, feat.generatedAt!, true)
-        );
-
-        const transformedInheritedFeatures = inheritedFeatures.map(feat =>
-            transformFeature(feat, plate.birthTime, false)
-        );
-
-        const newFeatures = [...transformedSnapshotFeatures, ...transformedDynamicFeatures, ...transformedInheritedFeatures];
-        const newCenter = calculateSphericalCentroid(newPolygons.flatMap(poly => poly.points));
+        const newFeatures = [...transformedStageFeatures, ...transformedDynamicFeatures, ...transformedInheritedFeatures];
+        const allPoints = newPolygons.flatMap(poly => poly.points);
+        const newCenter = allPoints.length > 0 ? calculateSphericalCentroid(allPoints) : plate.center;
 
         return {
             ...plate,
@@ -2121,89 +1938,13 @@ export class SimulationEngine {
     }
 
     public recalculateMotionHistory(plate: TectonicPlate): TectonicPlate {
-        // 1. Sort Keyframes
-        const keyframes = [...(plate.motionKeyframes || [])].sort((a, b) => a.time - b.time);
-
-        // 2. Start from Initial State (Birth)
-        // Ensure we strictly use the Source of Truth: initialPolygons
-        let currentPolygons = plate.initialPolygons;
-        let currentFeatures = plate.initialFeatures || [];
-
-        // Also need to handle inherited features if we want to be perfect, 
-        // but typically initialFeatures includes them if the plate was properly initialized.
-        // For recalculation, we assume initialFeatures + initialPolygons is the text-book definition at birthTime.
-
-        const newKeyframes: import('./types').MotionKeyframe[] = [];
-
-        // 3. Iterate to rebuild snapshots
-        for (let i = 0; i < keyframes.length; i++) {
-            const kf = keyframes[i];
-
-            // Calculate state AT this keyframe's time
-            // Based on PREVIOUS keyframe's motion
-
-            if (i === 0) {
-                // First keyframe.
-                // If it starts exactly at birth, snapshot is initial state.
-                // If it starts later, and there was NO previous motion, it's still initial state.
-                // (Assumes no "implicit" motion before first keyframe).
-
-                newKeyframes.push({
-                    ...kf,
-                    snapshotPolygons: currentPolygons,
-                    snapshotFeatures: currentFeatures
-                });
-            } else {
-                // Subsequent keyframe
-                const prevKf = newKeyframes[i - 1];
-                const delta = kf.time - prevKf.time;
-
-                if (delta < 0) {
-                    console.warn(`Negative time delta in plate ${plate.id}`);
-                    continue;
-                }
-
-                // Rotate from Previous Snapshot using Previous Pole
-                const axis = latLonToVector(prevKf.eulerPole.position);
-                const angle = toRad(prevKf.eulerPole.rate * delta);
-
-                const transform = (coord: Coordinate): Coordinate => {
-                    const v = latLonToVector(coord);
-                    const vRot = rotateVector(v, axis, angle);
-                    return vectorToLatLon(vRot);
-                };
-
-                // Rotate Polygons
-                const nextPolygons = prevKf.snapshotPolygons.map(poly => ({
-                    ...poly,
-                    points: poly.points.map(transform)
-                }));
-
-                // Rotate Features (Only those present in snapshot)
-                const transformFeature = (f: Feature): Feature => {
-                    const fV = latLonToVector(f.position);
-                    const fRot = rotateVector(fV, axis, angle);
-                    return { ...f, position: vectorToLatLon(fRot) };
-                };
-
-                const nextFeatures = prevKf.snapshotFeatures.map(transformFeature);
-
-                newKeyframes.push({
-                    ...kf,
-                    snapshotPolygons: nextPolygons,
-                    snapshotFeatures: nextFeatures
-                });
-
-                // Update for next iteration
-                currentPolygons = nextPolygons;
-                currentFeatures = nextFeatures;
-            }
-        }
-
-        return {
-            ...plate,
-            motionKeyframes: newKeyframes
-        };
+        // KEYFRAME-LESS MODEL: geometry is derived, never baked — there is nothing
+        // to recalculate. Kept as an identity function because TimelineSystem still
+        // calls it after timeline edits; pole/time edits on keyframes flow through
+        // getMotionModel() automatically. Crucially, this no longer overwrites
+        // 'Edit'-labelled snapshots (which are real geometry stages) the way the
+        // legacy rebake did.
+        return plate;
     }
 
     private updateFlowlines(): void {

@@ -101,6 +101,14 @@ export function remapImportedWorld(
             time: kf.time + timeOffset,
             snapshotPolygons: remapPolygons(kf.snapshotPolygons),
             snapshotFeatures: kf.snapshotFeatures.map(adjustFeatureTime)
+        })),
+        // Keyframe-less model fields (v2 saves)
+        motionSegments: plate.motionSegments?.map(s => ({ ...s, time: s.time + timeOffset })),
+        geometryStages: plate.geometryStages?.map(s => ({
+            ...s,
+            time: s.time + timeOffset,
+            polygons: remapPolygons(s.polygons),
+            features: s.features.map(adjustFeatureTime)
         }))
     }));
 

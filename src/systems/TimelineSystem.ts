@@ -1,5 +1,6 @@
 
-import { TectonicPlate, MotionKeyframe, Coordinate, PlateEvent } from '../types';
+import { TectonicPlate, MotionKeyframe, MotionSegment, GeometryStage, Coordinate, PlateEvent } from '../types';
+import { ensureMotionModel } from '../motion/RotationModel';
 import { SimulationEngine } from '../SimulationEngine';
 import { HistoryManager } from '../HistoryManager';
 // import toDisplayTime, toInternalTime removed
@@ -16,7 +17,7 @@ export interface TimelineEventItem {
     details: string;
     isEditable: boolean;
     isDeletable: boolean;
-    originalRef: MotionKeyframe | PlateEvent | TectonicPlate;
+    originalRef: MotionSegment | GeometryStage | MotionKeyframe | PlateEvent | TectonicPlate;
 }
 
 const EVENT_ICONS: Record<string, string> = {
@@ -105,38 +106,41 @@ export class TimelineSystem {
             originalRef: plate
         });
 
-        // 2. Motion/Shape Keyframes
-        if (plate.motionKeyframes) {
-            plate.motionKeyframes.forEach((kf, index) => {
-                // Determine if this is primarily a motion change or just a shape snapshot
-                // Heuristic: If it has user-defined name or type, use it. 
-                // For now, assume it's "Motion Change" if rate > 0 ?? Not reliable.
-                // Or check if this keyframe was created by the Edit tool which might flag it?
-                // Actually, every keyframe defines motion and shape.
-                // Let's call it "Motion & Shape" or just "Keyframe".
-                // But user asked for specific distinction if it's an "Event". 
+        // 2. Motion segments & shape stages (keyframe-less model).
+        // ensureMotionModel materializes legacy keyframes once, so edits made
+        // through the timeline always hit the authoritative arrays.
+        const model = ensureMotionModel(plate);
 
-                const label = kf.label || `Keyframe #${index + 1}`;
-                let type: 'motion' | 'shape' = 'motion';
-
-                if (kf.label === 'Edit') {
-                    type = 'shape';
-                }
-
-                list.push({
-                    id: `motion-${kf.time}-${plate.id}`,
-                    plateId: plate.id,
-                    plateName: plate.name,
-                    time: kf.time,
-                    type: type, // Or 'shape' if we can detect
-                    label: prefix + label,
-                    details: `${kf.eulerPole?.rate.toFixed(2)} deg/Ma`,
-                    isEditable: true,
-                    isDeletable: true,
-                    originalRef: kf
-                });
+        model.segments.forEach((segment, index) => {
+            list.push({
+                id: `motion-${segment.time}-${plate.id}`,
+                plateId: plate.id,
+                plateName: plate.name,
+                time: segment.time,
+                type: 'motion',
+                label: prefix + `Motion #${index + 1}`,
+                details: `${segment.eulerPole?.rate.toFixed(2)} deg/Ma`,
+                isEditable: true,
+                isDeletable: true,
+                originalRef: segment
             });
-        }
+        });
+
+        model.stages.forEach((stage, index) => {
+            if (index === 0) return; // birth geometry is represented by the Birth event
+            list.push({
+                id: `shape-${stage.time}-${plate.id}`,
+                plateId: plate.id,
+                plateName: plate.name,
+                time: stage.time,
+                type: 'shape',
+                label: prefix + 'Shape Edit',
+                details: `${stage.polygons.length} polygon(s)`,
+                isEditable: true,
+                isDeletable: true,
+                originalRef: stage
+            });
+        });
 
         // 3. Split Events (found in events array)
         if (plate.events) {
@@ -218,7 +222,7 @@ export class TimelineSystem {
 
         // Specific fields based on type
         if (event.type === 'motion') {
-            const kf = event.originalRef as MotionKeyframe;
+            const kf = event.originalRef as MotionSegment;
 
             // Rate
             content.appendChild(this.createInputRow('Rate', kf.eulerPole.rate, (val) => {
@@ -365,8 +369,10 @@ export class TimelineSystem {
             targetPlate.birthTime = internalTime;
 
             if (cascade) {
-                // Shift all keyframes
-                targetPlate.motionKeyframes.forEach((kf: MotionKeyframe) => kf.time += delta);
+                // Shift all motion segments and geometry stages
+                const m = ensureMotionModel(targetPlate);
+                m.segments.forEach((s: MotionSegment) => s.time += delta);
+                m.stages.forEach((s: GeometryStage) => s.time += delta);
 
                 // Shift all events
                 targetPlate.events.forEach((evt: PlateEvent) => evt.time += delta);
@@ -391,7 +397,9 @@ export class TimelineSystem {
                     if (sibling) {
                         sibling.birthTime = internalTime;
                         if (cascade) {
-                            sibling.motionKeyframes.forEach((skf: MotionKeyframe) => skf.time += delta);
+                            const sm = ensureMotionModel(sibling);
+                            sm.segments.forEach((s: MotionSegment) => s.time += delta);
+                            sm.stages.forEach((s: GeometryStage) => s.time += delta);
                             sibling.events.forEach((sevt: PlateEvent) => sevt.time += delta);
                         }
                     }
@@ -399,11 +407,16 @@ export class TimelineSystem {
             }
         }
         else if (event.type === 'motion') {
-            const kf = event.originalRef as MotionKeyframe;
-            oldInternalTime = kf.time;
-            kf.time = newTime;
-            // Sort keyframes after time change
-            targetPlate.motionKeyframes.sort((a: MotionKeyframe, b: MotionKeyframe) => a.time - b.time);
+            const seg = event.originalRef as MotionSegment;
+            oldInternalTime = seg.time;
+            seg.time = newTime;
+            ensureMotionModel(targetPlate).segments.sort((a: MotionSegment, b: MotionSegment) => a.time - b.time);
+        }
+        else if (event.type === 'shape') {
+            const stage = event.originalRef as GeometryStage;
+            oldInternalTime = stage.time;
+            stage.time = newTime;
+            ensureMotionModel(targetPlate).stages.sort((a: GeometryStage, b: GeometryStage) => a.time - b.time);
         }
         else if (event.type === 'split') {
             const evt = event.originalRef as PlateEvent;
@@ -421,7 +434,9 @@ export class TimelineSystem {
             children.forEach((child: TectonicPlate) => {
                 child.birthTime = newTime;
                 if (cascade) {
-                    child.motionKeyframes.forEach(ckf => ckf.time += delta);
+                    const cm = ensureMotionModel(child);
+                    cm.segments.forEach(s => s.time += delta);
+                    cm.stages.forEach(s => s.time += delta);
                     child.events.forEach(cevt => cevt.time += delta);
                 }
             });
@@ -437,7 +452,7 @@ export class TimelineSystem {
         this.triggerUpdate(invalidationTime, targetPlate);
     }
 
-    private updateKeyframe(kf: MotionKeyframe, event: TimelineEventItem, changes: Partial<{ rate: number, position: Coordinate }>) {
+    private updateKeyframe(kf: MotionSegment, event: TimelineEventItem, changes: Partial<{ rate: number, position: Coordinate }>) {
         this.pushHistory();
 
         if (changes.rate !== undefined) kf.eulerPole.rate = changes.rate;
@@ -490,8 +505,14 @@ export class TimelineSystem {
         }
 
         if (event.type === 'motion') {
-            const kf = event.originalRef as MotionKeyframe;
-            targetPlate.motionKeyframes = targetPlate.motionKeyframes.filter((k: MotionKeyframe) => k !== kf);
+            const seg = event.originalRef as MotionSegment;
+            const m = ensureMotionModel(targetPlate);
+            targetPlate.motionSegments = m.segments.filter((s: MotionSegment) => s !== seg);
+        }
+        else if (event.type === 'shape') {
+            const stage = event.originalRef as GeometryStage;
+            const m = ensureMotionModel(targetPlate);
+            targetPlate.geometryStages = m.stages.filter((s: GeometryStage) => s !== stage);
         }
         else if (event.type === 'split') {
             // Delete split event

@@ -160,7 +160,9 @@ function drawFeature(
 
 
 // JSON Export functionality
-const SAVE_VERSION = 1;
+// v2: plates may carry motionSegments/geometryStages (keyframe-less model).
+// v1 files (motionKeyframes only) are converted lazily by RotationModel.
+const SAVE_VERSION = 2;
 
 export type ExportMode = 'entire_timeline' | 'from_current_time';
 
@@ -292,6 +294,20 @@ export async function exportToJSON(state: AppState, cameraViews?: CameraView[]):
                             ...kf,
                             time: Math.max(0, kf.time + timeOffset),
                             snapshotFeatures: kf.snapshotFeatures.map(f => ({
+                                ...f,
+                                generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
+                                deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
+                            }))
+                        })),
+                    motionSegments: plate.motionSegments
+                        ?.filter(s => s.time <= state.world.currentTime)
+                        .map(s => ({ ...s, time: Math.max(0, s.time + timeOffset) })),
+                    geometryStages: plate.geometryStages
+                        ?.filter(s => s.time <= state.world.currentTime)
+                        .map(s => ({
+                            ...s,
+                            time: Math.max(0, s.time + timeOffset),
+                            features: s.features.map(f => ({
                                 ...f,
                                 generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
                                 deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined

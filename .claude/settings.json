@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(npm run verify; \"VERIFY=$LASTEXITCODE\"; npx eslint src --quiet; \"LINT=$LASTEXITCODE\")"
+      "PowerShell(npm run verify; \"VERIFY=$LASTEXITCODE\"; npx eslint src --quiet; \"LINT=$LASTEXITCODE\")",
+      "PowerShell(git -C c:\\\\GIT\\\\TectoLite branch --show-current)",
+      "PowerShell(git -C c:\\\\GIT\\\\TectoLite log --oneline -3)"
     ]
   }
 }

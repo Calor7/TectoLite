@@ -18,6 +18,7 @@ import {
     normalize,
     calculateSphericalCentroid,
 } from './utils/sphericalMath';
+import { derivePlateGeometry, pointPositionAt } from './motion/RotationModel';
 
 // Legacy interface for start/end splits
 interface SplitLine {
@@ -162,7 +163,7 @@ function splitPolygonWithPolyline(
     // duplicate vertex in the output polygon (polyA[0] == polyA[1]) and an off-by-one error in
     // originalEdgeMap that mis-assigns existing rift edgeMeta to the wrong child edge.
     // Fix: when two crossings share the same polylineIdx and the same geographic point, keep only
-    // the one where crossing.point ≈ polygonPoints[crossing.index] (the point is the START of that
+    // the one where crossing.point â‰ˆ polygonPoints[crossing.index] (the point is the START of that
     // edge), so that `idx = crossing.index + 1` correctly skips past the shared vertex.
     const vCoincident = (a: Coordinate, b: Coordinate) => {
         const va = latLonToVector(a), vb = latLonToVector(b);
@@ -235,202 +236,26 @@ function splitPolygonWithPolyline(
         { points: polyB, riftIndices: riftB, cutEdgeIndices: cutB, originalEdgeMap: mapB, cutPath: fullCutPath }
     ];
 }
-// --- HELPER: Motion Calculation (Duplicated from SimulationEngine due to isolation) ---
-// We need to bake the current position of the plate into the new "Initial State"
-// so that when the new plate is born, it starts at the current visual location.
-
-function getAccumulatedParentTransform(
-    p: TectonicPlate,
-    t: number,
-    allPlates: TectonicPlate[],
-    visited: Set<string>
-): { axis: Vector3; angle: number }[] {
-    if (!p.linkedToPlateId || visited.has(p.id)) return [];
-    visited.add(p.id);
-
-    const parent = allPlates.find(pl => pl.id === p.linkedToPlateId);
-    if (!parent) return [];
-
-    const transforms: { axis: Vector3; angle: number }[] = [];
-
-    // 1. Get grandparent transforms first (recursive)
-    transforms.push(...getAccumulatedParentTransform(parent, t, allPlates, visited));
-
-    // 2. Add this parent's motion if within link window
-    const isWithinLinkWindow =
-        (!p.linkTime || t >= p.linkTime) &&
-        (!p.unlinkTime || t < p.unlinkTime);
-
-    if (isWithinLinkWindow) {
-        const parentKeyframes = parent.motionKeyframes || [];
-        // Find child current active keyframe to know from when we inherit parent motion
-        const activeKF = (p.motionKeyframes || []).filter(k => k.time <= t).sort((a, b) => b.time - a.time)[0];
-        const linkStartTime = p.linkTime || (parentKeyframes[0]?.time ?? 0);
-        const motionStartTime = activeKF ? Math.max(linkStartTime, activeKF.time) : linkStartTime;
-
-        const relevantKeyframes = parentKeyframes.filter(kf => kf.time <= t);
-
-        if (relevantKeyframes.length > 0) {
-            relevantKeyframes.sort((a, b) => a.time - b.time);
-            let prevTime = motionStartTime;
-
-            for (let i = 0; i < relevantKeyframes.length; i++) {
-                const kf = relevantKeyframes[i];
-                if (kf.eulerPole && kf.eulerPole.rate !== 0) {
-                    const pole = kf.eulerPole;
-                    const axis = latLonToVector(pole.position);
-
-                    let segmentEnd = t;
-                    if (i + 1 < relevantKeyframes.length) {
-                        segmentEnd = Math.min(relevantKeyframes[i + 1].time, t);
-                    }
-
-                    const duration = segmentEnd - Math.max(kf.time, prevTime);
-                    if (duration > 0) {
-                        const angle = (pole.rate * duration) * (Math.PI / 180); // To Rad
-                        transforms.push({ axis, angle });
-                    }
-                    prevTime = segmentEnd;
-                }
-            }
-        }
-    }
-    return transforms;
-}
-
-// Helper to rotate vector by axis/angle
-function rotateVector(v: Vector3, axis: Vector3, angle: number): Vector3 {
-    // Rodriguez rotation formula
-    const cosA = Math.cos(angle);
-    const sinA = Math.sin(angle);
-    const crossProd = cross(axis, v);
-    const dotProd = dot(axis, v);
-
-    return {
-        x: v.x * cosA + crossProd.x * sinA + axis.x * dotProd * (1 - cosA),
-        y: v.y * cosA + crossProd.y * sinA + axis.y * dotProd * (1 - cosA),
-        z: v.z * cosA + crossProd.z * sinA + axis.z * dotProd * (1 - cosA)
-    };
-}
+// --- Motion baking (keyframe-less model) ---
+// Children are born with the parent's CURRENT visual geometry as their birth
+// stage, so the split position must be derived at the split time. Both helpers
+// now delegate to the rotation model instead of duplicating SimulationEngine math.
 
 function applyTransformToPolygons(plate: TectonicPlate, time: number, allPlates: TectonicPlate[]): Polygon[] {
-    const parentTransform = getAccumulatedParentTransform(plate, time, allPlates, new Set());
-
-    const keyframes = (plate.motionKeyframes || []).filter(kf => kf.time <= time).sort((a, b) => a.time - b.time);
-
-    // Use earliest keyframe's snapshot as the source polygons, or initialPolygons for strips without keyframes
-    const sourceKF = keyframes.length > 0 ? keyframes[0] : null;
-    const sourcePolys = sourceKF ? sourceKF.snapshotPolygons : (plate.initialPolygons || plate.polygons);
-
-    // Accumulate OWN rotation segments across ALL keyframes (not just the last one).
-    // Each segment applies the euler pole from that keyframe's time to the next keyframe's time (or `time`).
-    const ownSegments: { axis: Vector3; angle: number }[] = [];
-    for (let i = 0; i < keyframes.length; i++) {
-        const kf = keyframes[i];
-        if (!kf.eulerPole || kf.eulerPole.rate === 0) continue;
-        const segmentStart = kf.time;
-        const segmentEnd = (i + 1 < keyframes.length) ? Math.min(keyframes[i + 1].time, time) : time;
-        const duration = segmentEnd - segmentStart;
-        if (duration > 0) {
-            ownSegments.push({
-                axis: latLonToVector(kf.eulerPole.position),
-                angle: (kf.eulerPole.rate * duration) * (Math.PI / 180)
-            });
-        }
-    }
-    // Fallback: if no keyframes, use legacy motion
-    if (keyframes.length === 0 && plate.motion?.eulerPole && plate.motion.eulerPole.rate !== 0) {
-        const duration = time - plate.birthTime;
-        if (duration > 0) {
-            ownSegments.push({
-                axis: latLonToVector(plate.motion.eulerPole.position),
-                angle: (plate.motion.eulerPole.rate * duration) * (Math.PI / 180)
-            });
-        }
-    }
-
-    const applyRotation = (coord: Coordinate): Coordinate => {
-        let v = latLonToVector(coord);
-
-        // 1. Apply Parent Transform (Global Drift)
-        for (const segment of parentTransform) {
-            v = rotateVector(v, segment.axis, segment.angle);
-        }
-
-        // 2. Apply Own Motion segments (Local Rotations, in chronological order)
-        for (const segment of ownSegments) {
-            v = rotateVector(v, segment.axis, segment.angle);
-        }
-
-        return vectorToLatLon(v);
-    };
-
-    return sourcePolys.map(poly => ({
-        ...poly,
-        points: poly.points.map(p => applyRotation(p))
-    }));
+    return derivePlateGeometry(plate, allPlates, time).polygons;
 }
 
 function applyTransformToFeatures(plate: TectonicPlate, time: number, allPlates: TectonicPlate[]): import('./types').Feature[] {
-    const parentTransform = getAccumulatedParentTransform(plate, time, allPlates, new Set());
-
-    const keyframes = (plate.motionKeyframes || []).filter(kf => kf.time <= time).sort((a, b) => a.time - b.time);
-
-    // Accumulate OWN rotation segments across ALL keyframes (not just the last one)
-    const ownSegments: { axis: Vector3; angle: number }[] = [];
-    for (let i = 0; i < keyframes.length; i++) {
-        const kf = keyframes[i];
-        if (!kf.eulerPole || kf.eulerPole.rate === 0) continue;
-        const segmentStart = kf.time;
-        const segmentEnd = (i + 1 < keyframes.length) ? Math.min(keyframes[i + 1].time, time) : time;
-        const duration = segmentEnd - segmentStart;
-        if (duration > 0) {
-            ownSegments.push({
-                axis: latLonToVector(kf.eulerPole.position),
-                angle: (kf.eulerPole.rate * duration) * (Math.PI / 180)
-            });
-        }
-    }
-    // Fallback: if no keyframes, use legacy motion
-    if (keyframes.length === 0 && plate.motion?.eulerPole && plate.motion.eulerPole.rate !== 0) {
-        const duration = time - plate.birthTime;
-        if (duration > 0) {
-            ownSegments.push({
-                axis: latLonToVector(plate.motion.eulerPole.position),
-                angle: (plate.motion.eulerPole.rate * duration) * (Math.PI / 180)
-            });
-        }
-    }
-
-    const applyRotation = (coord: Coordinate): Coordinate => {
-        let v = latLonToVector(coord);
-
-        // 1. Apply Parent Transform
-        for (const segment of parentTransform) {
-            v = rotateVector(v, segment.axis, segment.angle);
-        }
-
-        // 2. Apply Own Motion segments
-        for (const segment of ownSegments) {
-            v = rotateVector(v, segment.axis, segment.angle);
-        }
-
-        return vectorToLatLon(v);
-    };
-
-    // Also include dynamic features generated after the keyframe/birth
-    // (SimulationEngine does extensive merging. Here we simplify: take all features that exist on the plate object)
-    // Actually, `plate.features` in state *should* contain the latest features added (like islands).
-    // BUT `plate.features` usually has their *original* position (if they have `originalPosition`).
-    // If we want to bake the current position, we must start from `originalPosition` and apply transform.
-
+    // Each feature is anchored at its own placement time (legacy code anchored
+    // everything at plate birth, which mis-placed features added mid-history).
     return plate.features.map(f => {
         const startPos = f.originalPosition || f.position;
-        const newPos = applyRotation(startPos);
+        const anchor = f.generatedAt ?? plate.birthTime;
+        const newPos = pointPositionAt(plate, allPlates, startPos, anchor, time);
         return {
             ...f,
             position: newPos,
-            originalPosition: newPos // BAKE IT
+            originalPosition: newPos // BAKE IT: children re-anchor at the split time
         };
     });
 }
@@ -1201,6 +1026,10 @@ export function splitPlate(
         features: leftFeatures,
         motion: newMotion,
         motionKeyframes: [leftKeyframe],
+        // Fresh motion model — must NOT inherit the parent's materialized
+        // segments/stages via the spread (stale geometry would override the split)
+        motionSegments: [{ time: currentTime, eulerPole: newMotion.eulerPole }],
+        geometryStages: [{ time: currentTime, polygons: leftPolygons, features: leftFeatures }],
         visible: true,
         locked: false,
         center: leftCenter,
@@ -1226,6 +1055,8 @@ export function splitPlate(
         features: rightFeatures,
         motion: newMotion,
         motionKeyframes: [rightKeyframe],
+        motionSegments: [{ time: currentTime, eulerPole: newMotion.eulerPole }],
+        geometryStages: [{ time: currentTime, polygons: rightPolygons, features: rightFeatures }],
         visible: true,
         locked: false,
         color: plateToSplit.color,
@@ -1249,7 +1080,7 @@ export function splitPlate(
     const children = onlySelected ? [] : currentState.world.plates.filter(p =>
         p.linkedToPlateId === plateId &&
         (p.deathTime === null || p.deathTime > currentTime) &&
-        !p.riftAxisId  // Skip axis-derived ocean plates — they're ephemeral (re-derived each frame)
+        !p.riftAxisId  // Skip axis-derived ocean plates â€” they're ephemeral (re-derived each frame)
     );
     const originalChildIds = new Set(children.map(c => c.id));
 
@@ -1280,7 +1111,7 @@ export function splitPlate(
                 const side1 = getSide([tempPoly1]);
 
                 if (child.type === 'oceanic') {
-                    // Oceanic strips must NOT get new rift sibling relationships on the cut edges —
+                    // Oceanic strips must NOT get new rift sibling relationships on the cut edges â€”
                     // that would cause generateSiblingCrust to treat the strip halves as a new rift
                     // and generate more ocean between them. Preserve only the original edgeMeta.
                     if (side1 === 'left') {
@@ -1335,7 +1166,9 @@ export function splitPlate(
                     birthTime: currentTime,
                     parentPlateId: child.id,
                     motionKeyframes: [],
-
+                    // Reset — do not inherit stale materialized model via spread
+                    motionSegments: undefined,
+                    geometryStages: undefined,
                 });
             }
             if (childRightPolys.length > 0) {
@@ -1352,7 +1185,8 @@ export function splitPlate(
                     birthTime: currentTime,
                     parentPlateId: child.id,
                     motionKeyframes: [],
-
+                    motionSegments: undefined,
+                    geometryStages: undefined,
                 });
             }
         } else {
@@ -1390,6 +1224,9 @@ export function splitPlate(
                     features: newFeatures,
                     motionKeyframes: [],
                     linkedToPlateId: newParentId,
+                    // Reset — do not inherit stale materialized model via spread
+                    motionSegments: undefined,
+                    geometryStages: undefined,
 
                     // If it was oceanic, it likely had no independent motion (locked=true).
                     // If it had independent motion, baking it effectively "applies" it up to now.
@@ -1492,10 +1329,10 @@ export function splitPlate(
         const rightHasEdge = childWithEdge(rightPlate);
 
         if (leftHasEdge && rightHasEdge) {
-            // Split cuts ACROSS the existing rift edge — both children got portions.
+            // Split cuts ACROSS the existing rift edge â€” both children got portions.
             // Pick the child with more rift edges as the primary; reroute the axis to it.
             // Duplicating the axis with full-width birthPolyline on both copies would cause
-            // geometry mismatch (full polyline paired with partial rift edges → deformed rings).
+            // geometry mismatch (full polyline paired with partial rift edges â†’ deformed rings).
             const countEdges = (plate: TectonicPlate, gId: string): number => {
                 let count = 0;
                 for (const poly of plate.polygons) {
@@ -1521,7 +1358,7 @@ export function splitPlate(
                 ...(refsA ? { plateIdA: rightPlateId } : { plateIdB: rightPlateId }),
             });
         } else {
-            // Neither child has the edge — mark axis dead (rift edge was lost)
+            // Neither child has the edge â€” mark axis dead (rift edge was lost)
             reroutedAxes.push({ ...axis, state: 'dead', deathTime: currentTime });
         }
     }
