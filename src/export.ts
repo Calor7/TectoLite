@@ -1,5 +1,5 @@
 // PNG Export functionality
-import { AppState, Feature, WorldState, ProjectionType } from './types';
+import { AppState, Feature, WorldState, ProjectionType, CameraView } from './types';
 import { ProjectionManager } from './canvas/ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
@@ -259,7 +259,7 @@ export function showExportDialog(): Promise<ExportOptions | null> {
     });
 }
 
-export async function exportToJSON(state: AppState): Promise<void> {
+export async function exportToJSON(state: AppState, cameraViews?: CameraView[]): Promise<void> {
     // Store current time for dialog access
     (window as any).__tectoLiteCurrentTime = state.world.currentTime;
 
@@ -339,6 +339,7 @@ export async function exportToJSON(state: AppState): Promise<void> {
         exportedAtTime: state.world.currentTime,
         world: worldToSave,
         viewport: state.viewport,
+        cameraViews: cameraViews && cameraViews.length > 0 ? cameraViews : undefined,
         activeTool: state.activeTool,
         activeFeatureType: state.activeFeatureType
     };
@@ -449,7 +450,7 @@ export function showImportDialog(filename: string, plateCount: number, currentTi
 }
 
 // Parse file to get metadata without full import
-export function parseImportFile(file: File): Promise<{ world: WorldState; viewport?: any; name: string; activeTool?: string; activeFeatureType?: string }> {
+export function parseImportFile(file: File): Promise<{ world: WorldState; viewport?: any; name: string; activeTool?: string; activeFeatureType?: string; cameraViews?: CameraView[] }> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -470,7 +471,8 @@ export function parseImportFile(file: File): Promise<{ world: WorldState; viewpo
                     viewport: data.viewport as any, // Optional
                     name: data.name || file.name,
                     activeTool: data.activeTool,
-                    activeFeatureType: data.activeFeatureType
+                    activeFeatureType: data.activeFeatureType,
+                    cameraViews: Array.isArray(data.cameraViews) ? data.cameraViews as CameraView[] : undefined
                 });
             } catch (err) {
                 reject(err);

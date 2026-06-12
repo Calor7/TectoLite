@@ -30,7 +30,10 @@ export interface RemappedImport {
  * Ephemeral axis/junction-derived ocean plates are skipped: they are
  * re-derived each frame from the imported rift axes.
  */
-export function remapImportedWorld(importedWorld: WorldState, timeOffset: number): RemappedImport {
+export function remapImportedWorld(
+    importedWorld: Pick<WorldState, 'plates' | 'riftAxes' | 'tripleJunctions'>,
+    timeOffset: number
+): RemappedImport {
     const idMap = new Map<string, string>(); // old plate id -> new plate id
     const featureIdMap = new Map<string, string>(); // old feature id -> new feature id
 

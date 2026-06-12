@@ -514,7 +514,9 @@ export interface WorldState {
 
     // Visual Options
     showLinks?: boolean;                    // Show plate-to-plate and landmass-to-plate links
-    showPredictionFlowlines?: boolean;      // Preview movement arcs while dragging a plate (Drag Landmass mode)
+    showPredictionFlowlines?: boolean;      // Preview movement arcs while dragging a plate (Drag Landmass mode, default off)
+    showVelocityArrows?: boolean;           // Draw current velocity arc at each plate center (default off)
+    showHoverTooltips?: boolean;            // Plate info tooltip when hovering the canvas (default off)
     showHiddenPlates?: boolean;             // Reveal plates even if plate.visible is false
     gridOnTop?: boolean;                    // Render grid above plates instead of below
     plateOpacity?: number;                  // Plate transparency (0-1, default 1.0)
@@ -577,6 +579,13 @@ export interface AppState {
   activeLineType: LineType; // Line sub-type when drawMode is 'line'
   activePolygonType: PolygonType; // Polygon sub-type when drawMode is 'polygon'
   viewport: Viewport;
+}
+
+/** A named, saved camera position (persisted in project files, not part of undo history). */
+export interface CameraView {
+  name: string;
+  rotate: [number, number, number];
+  scale: number;
 }
 
 export interface Viewport {
@@ -643,7 +652,10 @@ export function createDefaultWorldState(): WorldState {
 
       // Visual defaults
       showLinks: true,          // Show links by default
-      showPredictionFlowlines: true, // Show predicted movement arcs while dragging
+      // Visual overlays are opt-in (default off) to keep the canvas uncluttered
+      showPredictionFlowlines: false,
+      showVelocityArrows: false,
+      showHoverTooltips: false,
 
       showHiddenPlates: false,  // Hide invisible plates by default
       gridOnTop: false,         // Grid below plates by default

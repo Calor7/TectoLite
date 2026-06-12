@@ -153,6 +153,15 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         </div>
                     </div>
 
+                    <!-- 3b. CAMERA VIEWS -->
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
+                        <div class="dropdown-header">Camera Views <span class="info-icon" data-tooltip="Store and recall camera positions (hotkeys: Shift+1..9 to save, 1..9 to recall)">(i)</span></div>
+                        <div id="camera-views-list" style="max-height: 160px; overflow-y: auto;"></div>
+                        <div style="padding: 2px 8px 4px 8px;">
+                            <button id="btn-view-save-new" class="btn btn-secondary" style="width: 100%; font-size: 10px; padding: 3px 8px;">+ Save Current View</button>
+                        </div>
+                    </div>
+
                     <!-- 4. EFFECTS SETTING -->
                     <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
                         <div class="dropdown-header">Effects</div>
@@ -183,7 +192,13 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <input type="checkbox" id="check-show-links" ${g.showLinks !== false ? 'checked' : ''}> Show Links <span class="info-icon" data-tooltip="Show plate-to-plate and landmass-to-plate links">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
-                            <input type="checkbox" id="check-prediction-flowlines" ${g.showPredictionFlowlines !== false ? 'checked' : ''}> Prediction Flowlines <span class="info-icon" data-tooltip="Preview movement arcs while dragging a plate (Drag Landmass mode)">(i)</span>
+                            <input type="checkbox" id="check-prediction-flowlines" ${g.showPredictionFlowlines === true ? 'checked' : ''}> Drag Prediction Overlay <span class="info-icon" data-tooltip="While dragging a plate: movement arcs, rotation readout, and original-position outline">(i)</span>
+                        </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-velocity-arrows" ${g.showVelocityArrows === true ? 'checked' : ''}> Velocity Arrows <span class="info-icon" data-tooltip="Draw each plate's current motion arc at its center">(i)</span>
+                        </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-hover-tooltips" ${g.showHoverTooltips === true ? 'checked' : ''}> Hover Tooltips <span class="info-icon" data-tooltip="Show plate name, age and speed when hovering">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-show-hidden-plates" ${g.showHiddenPlates ? 'checked' : ''}> Show Hidden Plates <span class="info-icon" data-tooltip="Reveal plates even if their visibility is toggled off">(i)</span>
@@ -433,9 +448,10 @@ export function getAppHTML(opts: AppTemplateOptions): string {
           
           <div class="resizer-x" id="resizer-left-inner" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
 
-          <main class="canvas-container" style="flex:1; display:flex;">
+          <main class="canvas-container" style="flex:1; display:flex; position: relative;">
             <canvas id="main-canvas" style="flex:1;"></canvas>
             <div class="canvas-hint" id="canvas-hint"></div>
+            <div id="cursor-coords" style="position: absolute; bottom: 6px; right: 10px; font-family: monospace; font-size: 11px; color: var(--text-secondary); background: rgba(0,0,0,0.35); padding: 2px 6px; border-radius: 3px; pointer-events: none;"></div>
           </main>
           
           <div class="resizer-x" id="resizer-right" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>

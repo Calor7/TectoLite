@@ -443,10 +443,80 @@ export class CanvasManager {
         }
     }
 
+    private cursorCoordsEl: HTMLElement | null = null;
+
+    private updateCursorCoords(geo: Coordinate | null): void {
+        if (!this.cursorCoordsEl) this.cursorCoordsEl = document.getElementById('cursor-coords');
+        if (!this.cursorCoordsEl) return;
+        if (geo) {
+            const lat = geo[1], lon = geo[0];
+            this.cursorCoordsEl.textContent =
+                `${Math.abs(lat).toFixed(1)}°${lat >= 0 ? 'N' : 'S'}  ${Math.abs(lon).toFixed(1)}°${lon >= 0 ? 'E' : 'W'}`;
+        } else {
+            this.cursorCoordsEl.textContent = '';
+        }
+    }
+
+    // --- Hover tooltip (opt-in via showHoverTooltips) ---
+    private hoverTooltipTimer: number | null = null;
+    private hoverTooltipEl: HTMLElement | null = null;
+
+    private hideHoverTooltip(): void {
+        if (this.hoverTooltipTimer !== null) {
+            clearTimeout(this.hoverTooltipTimer);
+            this.hoverTooltipTimer = null;
+        }
+        if (this.hoverTooltipEl) this.hoverTooltipEl.style.display = 'none';
+    }
+
+    /** Show plate info after the cursor rests ~350ms (debounced — hitTest is not cheap). */
+    private scheduleHoverTooltip(screen: Point): void {
+        this.hoverTooltipTimer = window.setTimeout(() => {
+            this.hoverTooltipTimer = null;
+            const state = this.getState();
+            if (this.isDragging) return;
+            const hit = this.hitTest(screen);
+            if (!hit?.plateId) return;
+            const plate = state.world.plates.find(p => p.id === hit.plateId);
+            if (!plate) return;
+
+            if (!this.hoverTooltipEl) {
+                this.hoverTooltipEl = document.createElement('div');
+                this.hoverTooltipEl.style.cssText =
+                    'position: absolute; z-index: 50; pointer-events: none; font-size: 11px; ' +
+                    'background: rgba(20,20,32,0.92); color: #cdd6f4; padding: 6px 8px; border-radius: 4px; ' +
+                    'border: 1px solid rgba(137,180,250,0.3); line-height: 1.5; white-space: nowrap;';
+                this.canvas.parentElement?.appendChild(this.hoverTooltipEl);
+            }
+
+            const age = state.world.currentTime - plate.birthTime;
+            const rate = plate.motion?.eulerPole?.rate ?? 0;
+            const radiusKm = state.world.globalOptions.planetRadius || 6371;
+            const cmYr = (rate * Math.PI / 180 * radiusKm) / 10;
+            this.hoverTooltipEl.innerHTML =
+                `<b>${plate.name}</b><br>` +
+                `${plate.type ?? 'plate'} · born ${plate.birthTime.toFixed(0)} Ma (age ${age.toFixed(0)} Ma)<br>` +
+                `${rate.toFixed(2)} °/Ma · ${cmYr.toFixed(2)} cm/yr`;
+            this.hoverTooltipEl.style.left = `${screen.x + 14}px`;
+            this.hoverTooltipEl.style.top = `${screen.y + 10}px`;
+            this.hoverTooltipEl.style.display = 'block';
+        }, 350);
+    }
+
     private handleMouseMove(e: MouseEvent): void {
         const geo = this.getGeoFromMouse(e);
         const screen = this.getMousePos(e);
-        // this.currentMouseGeo = geo; // Unused
+        // Listener is on window — blank the readout when the cursor is off-canvas
+        const rect = this.canvas.getBoundingClientRect();
+        const onCanvas = e.clientX >= rect.left && e.clientX <= rect.right &&
+            e.clientY >= rect.top && e.clientY <= rect.bottom;
+        this.updateCursorCoords(onCanvas ? geo : null);
+
+        this.hideHoverTooltip();
+        if (onCanvas && !this.isDragging &&
+            this.getState().world.globalOptions.showHoverTooltips === true) {
+            this.scheduleHoverTooltip(screen);
+        }
 
         if (this.isDragging) {
             const dx = e.clientX - this.lastMousePos.x;
@@ -661,6 +731,7 @@ export class CanvasManager {
             this.drawEditHighlights();
         }
 
+        this.drawVelocityArrows(state, path);
         this.drawPredictionFlowlines(state, path);
 
         if (this.isFineTuning && this.ghostPlateId) {
@@ -1148,7 +1219,7 @@ export class CanvasManager {
      * under the pending rotation (drag + spin composed — exactly what Apply commits).
      */
     private drawPredictionFlowlines(state: AppState, path: any): void {
-        if (state.world.globalOptions.showPredictionFlowlines === false) return;
+        if (state.world.globalOptions.showPredictionFlowlines !== true) return; // opt-in
         if (!this.ghostPlateId || !this.ghostRotation) return;
 
         const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
@@ -1158,6 +1229,19 @@ export class CanvasManager {
         if (!qTotal) return;
         const { axis, angle } = axisAngleFromQuat(qTotal);
         if (angle < 0.005) return; // nothing meaningful to predict yet
+
+        // Original-position outline: faint dashed silhouette at the plate's true position
+        this.ctx.save();
+        this.ctx.setLineDash([4, 4]);
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeStyle = plate.color;
+        this.ctx.globalAlpha = 0.45;
+        for (const poly of plate.polygons) {
+            this.ctx.beginPath();
+            path(toGeoJSON(poly));
+            this.ctx.stroke();
+        }
+        this.ctx.restore();
 
         // Sample points: plate center + up to 7 evenly spaced boundary vertices
         const samples: Coordinate[] = [plate.center];
@@ -1202,6 +1286,70 @@ export class CanvasManager {
                 this.ctx.lineTo(end[0] - headLen * Math.cos(a + Math.PI / 6), end[1] - headLen * Math.sin(a + Math.PI / 6));
                 this.ctx.stroke();
                 this.ctx.setLineDash([6, 4]);
+            }
+        }
+
+        // Rotation readout next to the ghost center: total angle of the pending transform
+        const ghostCenter = this.getGhostCenterScreen();
+        if (ghostCenter) {
+            this.ctx.setLineDash([]);
+            this.ctx.globalAlpha = 1;
+            this.ctx.font = 'bold 11px sans-serif';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillStyle = '#fbbf24';
+            this.ctx.fillText(`${(angle * 180 / Math.PI).toFixed(1)}°`, ghostCenter[0], ghostCenter[1] - 72);
+        }
+
+        this.ctx.restore();
+    }
+
+    /**
+     * Velocity arrows (opt-in): a small arc with arrowhead at each plate's center
+     * showing its current rotation path, scaled like the motion gizmo (33° arc per 1°/Ma).
+     */
+    private drawVelocityArrows(state: AppState, path: any): void {
+        if (state.world.globalOptions.showVelocityArrows !== true) return;
+
+        const segs = 12;
+        const SCALE = 33; // visual deg of arc per deg/Ma, matches MotionGizmo
+        this.ctx.save();
+        this.ctx.lineWidth = 2;
+        this.ctx.lineCap = 'round';
+
+        for (const plate of state.world.plates) {
+            if (!plate.visible && !state.world.globalOptions.showHiddenPlates) continue;
+            if (state.world.currentTime < plate.birthTime) continue;
+            if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
+
+            const pole = plate.motion?.eulerPole;
+            if (!pole || Math.abs(pole.rate) < 0.01) continue;
+
+            const axis = latLonToVector(pole.position);
+            const v = latLonToVector(plate.center);
+            const totalAngle = (pole.rate * SCALE) * Math.PI / 180;
+
+            const coords: Coordinate[] = [];
+            for (let i = 0; i <= segs; i++) {
+                coords.push(vectorToLatLon(rotateVector(v, axis, (totalAngle * i) / segs)));
+            }
+
+            this.ctx.strokeStyle = '#e2e8f0';
+            this.ctx.globalAlpha = 0.7;
+            this.ctx.beginPath();
+            path({ type: 'LineString', coordinates: coords });
+            this.ctx.stroke();
+
+            const end = this.projectionManager.project(coords[segs]);
+            const prev = this.projectionManager.project(coords[segs - 1]);
+            if (end && prev) {
+                const a = Math.atan2(end[1] - prev[1], end[0] - prev[0]);
+                const headLen = 6;
+                this.ctx.beginPath();
+                this.ctx.moveTo(end[0], end[1]);
+                this.ctx.lineTo(end[0] - headLen * Math.cos(a - Math.PI / 6), end[1] - headLen * Math.sin(a - Math.PI / 6));
+                this.ctx.moveTo(end[0], end[1]);
+                this.ctx.lineTo(end[0] - headLen * Math.cos(a + Math.PI / 6), end[1] - headLen * Math.sin(a + Math.PI / 6));
+                this.ctx.stroke();
             }
         }
 

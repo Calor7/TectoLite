@@ -17,7 +17,8 @@ import {
     MotionKeyframe,
     MantlePlume,
     DrawMode,
-    LineType
+    LineType,
+    CameraView
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -80,6 +81,8 @@ class TectoLiteApp {
     private activeLinkSourceId: string | null = null; // Track first plate for linking
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
     private hasUnsavedChanges: boolean = false; // Tracks edits since last save/load for the close guard
+    private explorerFilter: string = ''; // Plate-name filter for the Explorer sidebar
+    private cameraBookmarks: CameraView[] = [];
     // timeMode removed
 
 
@@ -164,6 +167,88 @@ class TectoLiteApp {
         this.setupEventListeners();
         this.canvasManager.startRenderLoop();
         this.updateUI();
+
+        this.setupAutosave();
+        this.offerAutosaveRestore();
+    }
+
+    // --- Session autosave (crash / accidental-close recovery) ---
+
+    private static readonly AUTOSAVE_KEY = 'tectolite_autosave_v1';
+    private autosaveFailed = false;
+
+    private autosaveNow(): void {
+        if (!this.hasUnsavedChanges || this.autosaveFailed) return;
+        if (this.state.world.plates.length === 0) return;
+        try {
+            localStorage.setItem(TectoLiteApp.AUTOSAVE_KEY, JSON.stringify({
+                version: 1,
+                savedAt: new Date().toISOString(),
+                world: this.state.world,
+                viewport: this.state.viewport,
+                cameraViews: this.cameraBookmarks
+            }));
+        } catch {
+            // Quota exceeded (very large world) — stop trying for this session
+            this.autosaveFailed = true;
+        }
+    }
+
+    private clearAutosave(): void {
+        try { localStorage.removeItem(TectoLiteApp.AUTOSAVE_KEY); } catch { /* ignore */ }
+    }
+
+    private setupAutosave(): void {
+        window.setInterval(() => this.autosaveNow(), 120000); // every 2 minutes
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') this.autosaveNow();
+        });
+    }
+
+    private offerAutosaveRestore(): void {
+        try {
+            const raw = localStorage.getItem(TectoLiteApp.AUTOSAVE_KEY);
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (!data?.world || !Array.isArray(data.world.plates) || data.world.plates.length === 0) return;
+            const when = data.savedAt ? new Date(data.savedAt).toLocaleString() : 'an earlier session';
+
+            this.showModal({
+                title: 'Restore autosaved session?',
+                content: `An autosave from <b>${when}</b> with ${data.world.plates.length} plate(s) was found. The current session ended without saving.`,
+                buttons: [
+                    {
+                        text: 'Restore Autosave',
+                        subtext: 'Continue where you left off',
+                        onClick: () => {
+                            this.state = {
+                                ...this.state,
+                                world: data.world,
+                                viewport: data.viewport || this.state.viewport
+                            };
+                            if (Array.isArray(data.cameraViews)) {
+                                this.cameraBookmarks = data.cameraViews;
+                                this.renderCameraViews();
+                            }
+                            this.updateExplorer();
+                            this.updateUI();
+                            this.syncUIToState();
+                            this.simulation?.setTime(this.state.world.currentTime);
+                            this.canvasManager?.render();
+                            this.setUnsaved(true); // restored content is not on disk yet
+                            this.showToast('Autosaved session restored');
+                        }
+                    },
+                    {
+                        text: 'Discard',
+                        isSecondary: true,
+                        onClick: () => this.clearAutosave()
+                    }
+                ]
+            });
+        } catch {
+            // Corrupt autosave — ignore it
+        }
     }
 
 
@@ -660,6 +745,20 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
+        document.getElementById('check-velocity-arrows')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.showVelocityArrows = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        document.getElementById('check-hover-tooltips')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.showHoverTooltips = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+
+        // Camera view bookmarks (View dropdown): dynamic list, no slot limit
+        document.getElementById('btn-view-save-new')?.addEventListener('click', () => this.saveCameraBookmarkNew());
+        this.renderCameraViews();
+
         document.getElementById('check-show-hidden-plates')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.showHiddenPlates = (e.target as HTMLInputElement).checked;
             this.updateExplorer(); // Refreshes the eye icons in explorer if needed
@@ -1123,6 +1222,24 @@ class TectoLiteApp {
                 this.redo();
                 return;
             }
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+                e.preventDefault();
+                this.duplicateSelectedPlate();
+                return;
+            }
+
+            // Camera bookmarks: digit 1..9 recalls the Nth saved view, Shift+digit updates
+            // it (or appends a new one). The UI list in the View dropdown has no limit.
+            // Uses e.code because Shift+digit produces symbols (layout-dependent) in e.key.
+            if (!e.ctrlKey && !e.metaKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
+                const index = parseInt(e.code.slice(-1), 10) - 1;
+                if (e.shiftKey) {
+                    this.saveCameraBookmark(index);
+                } else {
+                    this.recallCameraBookmark(index);
+                }
+                return;
+            }
 
 
 
@@ -1166,6 +1283,16 @@ class TectoLiteApp {
                     this.simulation?.toggle();
                     this.updatePlayButton();
                     break;
+                case 'c': {
+                    // Center camera on the selected plate
+                    const selId = this.state.world.selectedPlateId;
+                    const plate = selId ? this.state.world.plates.find(p => p.id === selId) : null;
+                    if (plate) {
+                        this.state.viewport.rotate = [-plate.center[0], -plate.center[1], 0];
+                        this.canvasManager?.render();
+                    }
+                    break;
+                }
                 case 'arrowleft':
                 case 'arrowright': {
                     // Step time with arrow keys: ±1 Ma, Shift = ±10 Ma
@@ -1284,8 +1411,9 @@ class TectoLiteApp {
 
         // Export/Import JSON buttons
         document.getElementById('btn-export-json')?.addEventListener('click', async () => {
-            await exportToJSON(this.state);
+            await exportToJSON(this.state, this.cameraBookmarks);
             this.setUnsaved(false);
+            this.clearAutosave(); // saved to disk — stale autosave no longer needed
             this.showToast('Project saved');
         });
 
@@ -1298,7 +1426,7 @@ class TectoLiteApp {
             if (file) {
                 try {
                     // Parse file first to get metadata for the dialog
-                    const { world: importedWorld, viewport: importedViewport, name: filename, activeTool, activeFeatureType } = await parseImportFile(file);
+                    const { world: importedWorld, viewport: importedViewport, name: filename, activeTool, activeFeatureType, cameraViews: importedCameraViews } = await parseImportFile(file);
                     const currentTime = this.state.world.currentTime;
 
                     // Show import dialog
@@ -1331,7 +1459,10 @@ class TectoLiteApp {
                         this.simulation?.setTime(this.state.world.currentTime);
                         this.canvasManager?.render();
 
+                        this.cameraBookmarks = importedCameraViews || [];
+                        this.renderCameraViews();
                         this.setUnsaved(false); // State now mirrors the loaded file
+                        this.clearAutosave();
                         this.showToast(`Restored ${importedWorld.plates.length} plate(s) from ${filename}`, 3000);
 
                         (e.target as HTMLInputElement).value = '';
@@ -1378,6 +1509,12 @@ class TectoLiteApp {
                     this.updateUI();
                     this.syncUIToState();
                     this.canvasManager?.render();
+
+                    // Merge import: append the file's camera views (cheap to delete if unwanted)
+                    if (importedCameraViews && importedCameraViews.length > 0) {
+                        this.cameraBookmarks.push(...importedCameraViews);
+                        this.renderCameraViews();
+                    }
 
                     const modeDesc = importMode === 'at_beginning' ? 'at time 0' : `at time ${currentTime.toFixed(1)} Ma`;
                     this.showToast(`Imported ${processedPlates.length} plate(s) ${modeDesc}`, 3000);
@@ -1511,7 +1648,11 @@ class TectoLiteApp {
         if (checkAutoOceanic) checkAutoOceanic.checked = g.enableAutoOceanicCrust === true;
 
         const checkPredictionFlowlines = document.getElementById('check-prediction-flowlines') as HTMLInputElement | null;
-        if (checkPredictionFlowlines) checkPredictionFlowlines.checked = g.showPredictionFlowlines !== false;
+        if (checkPredictionFlowlines) checkPredictionFlowlines.checked = g.showPredictionFlowlines === true;
+        const checkVelocityArrows = document.getElementById('check-velocity-arrows') as HTMLInputElement | null;
+        if (checkVelocityArrows) checkVelocityArrows.checked = g.showVelocityArrows === true;
+        const checkHoverTooltips = document.getElementById('check-hover-tooltips') as HTMLInputElement | null;
+        if (checkHoverTooltips) checkHoverTooltips.checked = g.showHoverTooltips === true;
         // For now, assume it's not state-persisted or I need to add it.
 
         const radiusInput = document.getElementById('global-planet-radius') as HTMLInputElement;
@@ -2504,18 +2645,46 @@ class TectoLiteApp {
         const list = document.getElementById('plate-list');
         if (!list) return;
 
+        // Preserve search box focus across re-renders (typing triggers updateExplorer)
+        const searchHadFocus = document.activeElement?.id === 'plate-search';
         list.innerHTML = '';
 
+        // --- 0. SEARCH / FILTER (shown once the list gets long, or while filtering) ---
+        const filterText = this.explorerFilter.trim().toLowerCase();
+        if (this.state.world.plates.length > 5 || filterText) {
+            const searchWrap = document.createElement('div');
+            searchWrap.style.cssText = 'padding: 0 0 8px 0;';
+            searchWrap.innerHTML = '<input type="text" id="plate-search" class="property-input" placeholder="Filter plates…" style="width: 100%; padding: 4px 6px; font-size: 11px;">';
+            list.appendChild(searchWrap);
+            const searchInput = searchWrap.querySelector('input')!;
+            searchInput.value = this.explorerFilter;
+            searchInput.addEventListener('input', () => {
+                this.explorerFilter = searchInput.value;
+                this.updateExplorer();
+            });
+            if (searchHadFocus) {
+                searchInput.focus();
+                const len = searchInput.value.length;
+                searchInput.setSelectionRange(len, len);
+            }
+        }
+
+        const visiblePlates = filterText
+            ? this.state.world.plates.filter(p => p.name.toLowerCase().includes(filterText))
+            : this.state.world.plates;
+
         // --- 1. PLATES SECTION ---
-        const platesSection = this.createExplorerSection('Plates', 'plates', this.state.world.plates.length);
+        const platesSection = this.createExplorerSection('Plates', 'plates', visiblePlates.length);
         list.appendChild(platesSection.header);
 
         if (this.explorerState.sections['plates']) {
             const content = platesSection.content;
             if (this.state.world.plates.length === 0) {
                 content.innerHTML = '<p class="empty-message">Draw a landmass to create a plate</p>';
+            } else if (visiblePlates.length === 0) {
+                content.innerHTML = '<p class="empty-message">No plates match the filter</p>';
             } else {
-                content.innerHTML = this.state.world.plates.map(plate => `
+                content.innerHTML = visiblePlates.map(plate => `
       <div class="plate-item ${plate.id === this.state.world.selectedPlateId ? 'selected' : ''}" 
            data-plate-id="${plate.id}">
         <span class="plate-color" style="background: ${plate.color}"></span>
@@ -3957,6 +4126,170 @@ class TectoLiteApp {
         this.historyManager.push(this.state);
         this.setUnsaved(true);
         this.updateUndoRedoButtons();
+    }
+
+    // --- Camera bookmarks (unlimited, nameable; hotkeys Shift+1..9 / 1..9 cover the first nine) ---
+
+    private currentCameraSnapshot(): { rotate: [number, number, number]; scale: number } {
+        return {
+            rotate: [...this.state.viewport.rotate] as [number, number, number],
+            scale: this.state.viewport.scale
+        };
+    }
+
+    /** Overwrite the camera of the list entry at `index`, or append a new view if it doesn't exist. */
+    private saveCameraBookmark(index: number): void {
+        const existing = this.cameraBookmarks[index];
+        if (existing) {
+            this.cameraBookmarks[index] = { ...existing, ...this.currentCameraSnapshot() };
+            this.showToast(`"${existing.name}" updated`);
+        } else {
+            this.saveCameraBookmarkNew();
+            return;
+        }
+        this.renderCameraViews();
+    }
+
+    /** Append the current camera as a new named view (no limit). */
+    private saveCameraBookmarkNew(): void {
+        const name = `View ${this.cameraBookmarks.length + 1}`;
+        this.cameraBookmarks.push({ name, ...this.currentCameraSnapshot() });
+        const idx = this.cameraBookmarks.length;
+        const hint = idx <= 9 ? ` (press ${idx} to recall)` : '';
+        this.showToast(`"${name}" saved${hint} — click the name to rename`);
+        this.renderCameraViews();
+    }
+
+    private recallCameraBookmark(index: number): void {
+        const bm = this.cameraBookmarks[index];
+        if (!bm) {
+            this.showToast('No view in that slot — "+ Save Current View" stores one');
+            return;
+        }
+        this.state.viewport.rotate = [...bm.rotate] as [number, number, number];
+        this.state.viewport.scale = bm.scale;
+        this.canvasManager?.render();
+    }
+
+    private deleteCameraBookmark(index: number): void {
+        this.cameraBookmarks.splice(index, 1);
+        this.renderCameraViews();
+    }
+
+    /** Rebuild the Camera Views rows in the View dropdown. */
+    private renderCameraViews(): void {
+        const container = document.getElementById('camera-views-list');
+        if (!container) return;
+        container.innerHTML = '';
+
+        if (this.cameraBookmarks.length === 0) {
+            container.innerHTML = '<div style="padding: 2px 8px 4px 8px; font-size: 10px; color: var(--text-secondary);">No saved views yet</div>';
+            return;
+        }
+
+        this.cameraBookmarks.forEach((bm, index) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'padding: 2px 8px; display: flex; align-items: center; gap: 6px;';
+
+            const hotkey = document.createElement('span');
+            hotkey.style.cssText = 'font-size: 9px; color: var(--text-secondary); width: 12px; text-align: right;';
+            hotkey.textContent = index < 9 ? String(index + 1) : '';
+            hotkey.title = index < 9 ? `Hotkey: ${index + 1} recalls, Shift+${index + 1} updates` : '';
+
+            // Inline-editable name
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.value = bm.name;
+            nameInput.title = 'Click to rename';
+            nameInput.style.cssText =
+                'flex: 1; min-width: 0; font-size: 11px; background: transparent; ' +
+                'border: 1px solid transparent; border-radius: 3px; color: var(--text-primary); padding: 1px 4px;';
+            nameInput.addEventListener('focus', () => { nameInput.style.borderColor = 'var(--border-default)'; nameInput.select(); });
+            nameInput.addEventListener('blur', () => { nameInput.style.borderColor = 'transparent'; });
+            nameInput.addEventListener('change', () => {
+                bm.name = nameInput.value.trim() || `View ${index + 1}`;
+                nameInput.value = bm.name;
+            });
+            nameInput.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter') nameInput.blur();
+                ev.stopPropagation(); // keep app hotkeys out of the rename field
+            });
+
+            const goBtn = document.createElement('button');
+            goBtn.className = 'btn btn-secondary';
+            goBtn.style.cssText = 'font-size: 10px; padding: 2px 8px;';
+            goBtn.textContent = 'Go';
+            goBtn.title = `Jump to "${bm.name}"`;
+            goBtn.addEventListener('click', () => this.recallCameraBookmark(index));
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'btn btn-secondary';
+            delBtn.style.cssText = 'font-size: 10px; padding: 2px 6px;';
+            delBtn.title = `Delete "${bm.name}"`;
+            delBtn.textContent = '✕';
+            delBtn.addEventListener('click', () => this.deleteCameraBookmark(index));
+
+            row.appendChild(hotkey);
+            row.appendChild(nameInput);
+            row.appendChild(goBtn);
+            row.appendChild(delBtn);
+            container.appendChild(row);
+        });
+    }
+
+    /** Duplicate the selected plate (Ctrl+D): fresh IDs, stripped cross-references,
+     *  offset +12° longitude so the copy is visible next to the original. */
+    private duplicateSelectedPlate(): void {
+        const plateId = this.state.world.selectedPlateId;
+        const plate = plateId ? this.state.world.plates.find(p => p.id === plateId) : null;
+        if (!plate) {
+            this.showToast('Select a plate first');
+            return;
+        }
+
+        this.pushState();
+
+        // Reuse the import remapper: regenerates all IDs with stable feature-ID
+        // correspondence and strips parent/link/sibling refs (the clone is independent)
+        const { plates } = remapImportedWorld({ plates: [plate] }, 0);
+        const clone = plates[0];
+
+        // Pure longitude shift = rotation about the planet's axis (distortion-free)
+        const shiftLon = ([lon, lat]: Coordinate): Coordinate =>
+            [lon + 12 > 180 ? lon + 12 - 360 : lon + 12, lat];
+        const shiftPolys = (polys: TectonicPlate['polygons']): TectonicPlate['polygons'] =>
+            polys.map(p => ({ ...p, points: p.points.map(shiftLon) }));
+        const shiftFeature = (f: Feature): Feature => ({
+            ...f,
+            position: shiftLon(f.position),
+            originalPosition: f.originalPosition ? shiftLon(f.originalPosition) : f.originalPosition
+        });
+
+        const dup: TectonicPlate = {
+            ...clone,
+            name: `${plate.name} Copy`,
+            center: shiftLon(clone.center),
+            polygons: shiftPolys(clone.polygons),
+            initialPolygons: shiftPolys(clone.initialPolygons),
+            features: clone.features.map(shiftFeature),
+            initialFeatures: clone.initialFeatures.map(shiftFeature),
+            motionKeyframes: clone.motionKeyframes.map(kf => ({
+                ...kf,
+                snapshotPolygons: shiftPolys(kf.snapshotPolygons),
+                snapshotFeatures: kf.snapshotFeatures.map(shiftFeature)
+            })),
+            events: [] // split/fusion history belongs to the original, not the copy
+        };
+
+        this.state = {
+            ...this.state,
+            world: { ...this.state.world, plates: [...this.state.world.plates, dup] }
+        };
+        this.handleSelect(dup.id, null);
+        this.updateExplorer();
+        this.updateUI();
+        this.canvasManager?.render();
+        this.showToast(`Duplicated "${plate.name}"`);
     }
 
     /** Undo last action */
