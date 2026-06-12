@@ -21,13 +21,13 @@ import {
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
-import { exportToPNG } from './export';
+import { exportToPNG, exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog } from './export';
 import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
 import { vectorToLatLon, latLonToVector, rotateVector, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
-import { exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog } from './export';
+import { remapImportedWorld } from './importHelpers';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
 import { geoArea, geoCentroid } from 'd3-geo';
@@ -63,6 +63,7 @@ declare global {
     interface Window {
         __TECTOLITE_SMOKE_EXPORT__?: UnifiedExportOptions | null;
         __TECTOLITE_SMOKE_LAST_ERROR__?: string | null;
+        __TECTOLITE_HAS_UNSAVED__?: boolean; // read by electron-main.cjs close guard
     }
 }
 
@@ -78,6 +79,7 @@ class TectoLiteApp {
     private fusionFirstPlateId: string | null = null; // Track first plate for fusion
     private activeLinkSourceId: string | null = null; // Track first plate for linking
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
+    private hasUnsavedChanges: boolean = false; // Tracks edits since last save/load for the close guard
     // timeMode removed
 
 
@@ -332,6 +334,18 @@ class TectoLiteApp {
             }
         });
 
+        // Warn about unsaved changes when closing the page.
+        // Browser only: in Electron, a beforeunload preventDefault silently cancels
+        // window close (no dialog), which would make the app appear unclosable.
+        if (!navigator.userAgent.toLowerCase().includes('electron')) {
+            window.addEventListener('beforeunload', (e) => {
+                if (this.hasUnsavedChanges) {
+                    e.preventDefault();
+                    e.returnValue = '';
+                }
+            });
+        }
+
         // Unified View Dropdown
         const viewBtn = document.getElementById('btn-view-panels');
         const viewMenu = document.getElementById('view-dropdown-menu');
@@ -393,11 +407,7 @@ class TectoLiteApp {
                 const checked = (e.target as HTMLInputElement).checked;
                 const el = document.querySelector(p.target);
                 if (el) {
-                    if (p.inverse) {
-                        checked ? el.classList.remove(p.toggleClass) : el.classList.add(p.toggleClass);
-                    } else {
-                        checked ? el.classList.add(p.toggleClass) : el.classList.remove(p.toggleClass);
-                    }
+                    el.classList.toggle(p.toggleClass, p.inverse ? !checked : checked);
                 }
             });
         });
@@ -526,18 +536,7 @@ class TectoLiteApp {
             }
         });
 
-        // Fullscreen Toggle
-        document.getElementById('btn-fullscreen')?.addEventListener('click', () => {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    console.error(`Error attempting to enable fullscreen: ${err.message}`);
-                });
-            } else {
-                if (document.exitFullscreen) {
-                    document.exitFullscreen();
-                }
-            }
-        });
+        // (duplicate fullscreen listener removed — registered once above)
 
         document.getElementById('check-show-hints')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.showHints = (e.target as HTMLInputElement).checked;
@@ -747,7 +746,7 @@ class TectoLiteApp {
         document.getElementById('btn-reposition-pole-north')?.addEventListener('click', () => {
             const selectedPlateId = this.state.world.selectedPlateId;
             if (!selectedPlateId) {
-                alert("Please select a plate first.");
+                this.showToast('Select a plate first');
                 return;
             }
 
@@ -765,7 +764,7 @@ class TectoLiteApp {
         document.getElementById('btn-reposition-pole-south')?.addEventListener('click', () => {
             const selectedPlateId = this.state.world.selectedPlateId;
             if (!selectedPlateId) {
-                alert("Please select a plate first.");
+                this.showToast('Select a plate first');
                 return;
             }
 
@@ -807,7 +806,7 @@ class TectoLiteApp {
                             type: "FeatureCollection",
                             features: copy.polygons.map(p => toGeoJSON(p))
                         };
-                        // @ts-ignore
+                        // @ts-expect-error d3's GeoJSON typings don't accept our plain object literal
                         copy.center = geoCentroid(geoJson);
 
                         if (mode === 'generation') {
@@ -1146,16 +1145,33 @@ class TectoLiteApp {
                         this.canvasManager?.applySplit();
                     }
                     break;
-                case 'escape':
+                case 'escape': {
                     this.canvasManager?.cancelDrawing();
                     this.canvasManager?.cancelSplit();
                     this.canvasManager?.cancelMotion();
+                    // Also dismiss open dropdown menus and the time-input modal
+                    document.getElementById('view-dropdown-menu')?.classList.remove('show');
+                    document.getElementById('planet-dropdown-menu')?.classList.remove('show');
+                    const timeModal = document.getElementById('time-input-modal');
+                    if (timeModal) timeModal.style.display = 'none';
                     break;
+                }
                 case ' ':
                     e.preventDefault();
                     this.simulation?.toggle();
                     this.updatePlayButton();
                     break;
+                case 'arrowleft':
+                case 'arrowright': {
+                    // Step time with arrow keys: ±1 Ma, Shift = ±10 Ma
+                    e.preventDefault();
+                    const step = (e.shiftKey ? 10 : 1) * (e.key === 'ArrowRight' ? 1 : -1);
+                    const maxTime = this.state.world.globalOptions.timelineMaxTime || 500;
+                    const newTime = Math.min(maxTime, Math.max(0, this.state.world.currentTime + step));
+                    this.simulation?.setTime(newTime);
+                    this.updateTimeDisplay();
+                    break;
+                }
                 case 'delete':
                 case 'backspace':
                     this.deleteSelected();
@@ -1262,8 +1278,10 @@ class TectoLiteApp {
         });
 
         // Export/Import JSON buttons
-        document.getElementById('btn-export-json')?.addEventListener('click', () => {
-            exportToJSON(this.state);
+        document.getElementById('btn-export-json')?.addEventListener('click', async () => {
+            await exportToJSON(this.state);
+            this.setUnsaved(false);
+            this.showToast('Project saved');
         });
 
         document.getElementById('btn-import-json')?.addEventListener('click', () => {
@@ -1308,7 +1326,8 @@ class TectoLiteApp {
                         this.simulation?.setTime(this.state.world.currentTime);
                         this.canvasManager?.render();
 
-                        alert(`Successfully restored ${importedWorld.plates.length} plate(s) from ${filename}!`);
+                        this.setUnsaved(false); // State now mirrors the loaded file
+                        this.showToast(`Restored ${importedWorld.plates.length} plate(s) from ${filename}`, 3000);
 
                         (e.target as HTMLInputElement).value = '';
                         return;
@@ -1317,65 +1336,19 @@ class TectoLiteApp {
                     // Calculate time offset based on import mode
                     const timeOffset = importMode === 'at_current_time' ? currentTime : 0;
 
-                    // Generate new IDs for imported plates and features to avoid collisions
-                    const idMap = new Map<string, string>(); // oldId -> newId
-
-                    const processedPlates = importedWorld.plates.map(plate => {
-                        const newPlateId = generateId();
-                        idMap.set(plate.id, newPlateId);
-
-                        // Helper to adjust feature timestamps
-                        const adjustFeatureTime = (f: Feature): Feature => ({
-                            ...f,
-                            id: generateId(),
-                            generatedAt: f.generatedAt !== undefined ? f.generatedAt + timeOffset : timeOffset,
-                            deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
-                        });
-
-                        // Process polygons with new IDs
-                        const newPolygons = plate.polygons.map(p => ({
-                            ...p,
-                            id: generateId()
-                        }));
-
-                        // Process features with new IDs and adjusted times
-                        const newFeatures = plate.features.map(adjustFeatureTime);
-
-                        // Process initial polygons and features
-                        const newInitialPolygons = plate.initialPolygons.map(p => ({
-                            ...p,
-                            id: generateId()
-                        }));
-
-                        const newInitialFeatures = plate.initialFeatures.map(adjustFeatureTime);
-
-                        // Process motion keyframes with adjusted times
-                        const newKeyframes = plate.motionKeyframes.map(kf => ({
-                            ...kf,
-                            time: kf.time + timeOffset, // Shift keyframe time
-                            snapshotPolygons: kf.snapshotPolygons.map(p => ({ ...p, id: generateId() })),
-                            snapshotFeatures: kf.snapshotFeatures.map(adjustFeatureTime)
-                        }));
-
-                        return {
-                            ...plate,
-                            id: newPlateId,
-                            polygons: newPolygons,
-                            features: newFeatures,
-                            initialPolygons: newInitialPolygons,
-                            initialFeatures: newInitialFeatures,
-                            motionKeyframes: newKeyframes
-                        };
-                    });
+                    // Regenerate IDs, remap cross-references, and shift timestamps
+                    // (see importHelpers.ts for details — logic is unit-tested there)
+                    const remapped = remapImportedWorld(importedWorld, timeOffset);
+                    const processedPlates = remapped.plates;
 
                     // Update State
                     this.state = {
                         ...this.state,
                         world: {
                             ...this.state.world,
-                            plates: importMode === 'at_beginning'
-                                ? [...this.state.world.plates, ...processedPlates]
-                                : [...this.state.world.plates, ...processedPlates]
+                            plates: [...this.state.world.plates, ...processedPlates],
+                            riftAxes: [...(this.state.world.riftAxes || []), ...remapped.riftAxes],
+                            tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions]
                         }
                     };
 
@@ -1402,7 +1375,7 @@ class TectoLiteApp {
                     this.canvasManager?.render();
 
                     const modeDesc = importMode === 'at_beginning' ? 'at time 0' : `at time ${currentTime.toFixed(1)} Ma`;
-                    alert(`Successfully imported ${processedPlates.length} plate(s) ${modeDesc}!`);
+                    this.showToast(`Imported ${processedPlates.length} plate(s) ${modeDesc}`, 3000);
 
                     // Cleanup
                     (e.target as HTMLInputElement).value = '';
@@ -1448,7 +1421,7 @@ class TectoLiteApp {
         // instead of effectively bypassing it with helper utilities that mutate state directly.
         const plateId = this.state.world.selectedPlateId;
         if (!plateId) {
-            alert('Please select a plate first.');
+            this.showToast('Select a plate first');
             return;
         }
 
@@ -1525,6 +1498,12 @@ class TectoLiteApp {
             maxTimeInput.value = g.timelineMaxTime.toString();
             maxTimeInput.dispatchEvent(new Event('change'));
         }
+
+        // Oceanic crust automation toggles (opt-in; must reflect loaded state)
+        const checkExpandingRifts = document.getElementById('check-expanding-rifts') as HTMLInputElement | null;
+        if (checkExpandingRifts) checkExpandingRifts.checked = g.enableExpandingRifts === true;
+        const checkAutoOceanic = document.getElementById('check-auto-oceanic') as HTMLInputElement | null;
+        if (checkAutoOceanic) checkAutoOceanic.checked = g.enableAutoOceanicCrust === true;
         // For now, assume it's not state-persisted or I need to add it.
 
         const radiusInput = document.getElementById('global-planet-radius') as HTMLInputElement;
@@ -1619,7 +1598,7 @@ class TectoLiteApp {
                 hintText = "Drag to rotate the globe. Scroll to zoom.";
                 break;
             case 'edit':
-                hintText = "Select a plate, then drag edges to add points or drag vertices to move.";
+                hintText = "Select a plate, then drag edges to add points or drag vertices to move. Ctrl/Shift+drag moves the whole shape (drag the yellow ring to rotate).";
                 break;
             case 'draw':
                 hintText = this.state.drawMode === 'line'
@@ -1866,7 +1845,7 @@ class TectoLiteApp {
         const plateId = this.state.world.selectedPlateId;
 
         if (!plateId) {
-            alert("For Plate features (Mountains, Volcanoes), please select a plate first.");
+            this.showToast('For plate features (mountains, volcanoes), select a plate first', 3000);
             return;
         }
         this.pushState(); // Save state for undo
@@ -2395,7 +2374,7 @@ class TectoLiteApp {
     private handleSplitApply(points: Coordinate[]): void {
         if (points.length < 2) return;
 
-        let plateToSplit = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
+        const plateToSplit = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
 
         if (plateToSplit) {
             this.showModal({
@@ -2569,7 +2548,7 @@ class TectoLiteApp {
 
         // --- 2. ACTIONS SECTION (Previously Events) ---
         // Aggregate all plate events + user actions
-        let allEvents: { time: number, desc: string, plateName: string, plateId: string, type: string }[] = [];
+        const allEvents: { time: number, desc: string, plateName: string, plateId: string, type: string }[] = [];
 
         const addAction = (time: number | undefined, desc: string, plate: TectonicPlate, type: string) => {
             if (time === undefined || isNaN(time)) return;
@@ -3022,7 +3001,7 @@ class TectoLiteApp {
                 // d3.geoArea returns steradians. Sphere is 4*PI steradians.
                 let areaSteradians = 0;
                 try {
-                    // @ts-ignore
+                    // @ts-expect-error d3's GeoJSON typings don't accept our plain object literal
                     areaSteradians = geoArea(geoJsonFeatures);
                 } catch (e) { console.error(e); }
 
@@ -3815,7 +3794,7 @@ class TectoLiteApp {
 
             // Check if this plate should be deleted
             const isOceanic = processedPlate.type === 'oceanic';
-            const isAxisDerived = !!processedPlate.riftAxisId;
+            const isAxisDerived = !!processedPlate.riftAxisId || !!processedPlate.junctionId;
             // Use >= to include the plate currently being born/active at this exact timestep
             const isFuture = processedPlate.birthTime >= currentTime;
 
@@ -3867,7 +3846,9 @@ class TectoLiteApp {
         modal.style.display = 'flex';
         input.focus();
 
-        let cleanup: () => void;
+        // Reassigned to the real listener-removal below once the listeners exist;
+        // close() only runs from those listeners, so it always sees the real one.
+        let cleanup: () => void = () => { };
 
         const close = () => {
             modal.style.display = 'none';
@@ -3956,8 +3937,17 @@ class TectoLiteApp {
     }
 
     /** Push current state to history (call before meaningful changes) */
+    /** Track whether there are edits since the last save/load.
+     *  Mirrored to a window global so the Electron main process can read it
+     *  in its close-confirmation guard (browsers use beforeunload instead). */
+    private setUnsaved(value: boolean): void {
+        this.hasUnsavedChanges = value;
+        window.__TECTOLITE_HAS_UNSAVED__ = value;
+    }
+
     private pushState(): void {
         this.historyManager.push(this.state);
+        this.setUnsaved(true);
         this.updateUndoRedoButtons();
     }
 
@@ -4005,7 +3995,7 @@ class TectoLiteApp {
     public replacePlate(plate: TectonicPlate): void {
         const index = this.state.world.plates.findIndex(p => p.id === plate.id);
         if (index !== -1) {
-            let newPlates = [...this.state.world.plates];
+            const newPlates = [...this.state.world.plates];
             newPlates[index] = plate;
 
 

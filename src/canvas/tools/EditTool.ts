@@ -94,8 +94,8 @@ export class EditTool implements InputTool {
 
         if (e.button !== 0 || !geo) return;
 
-        // Shift+Click: Move/Rotate Plate
-        if (e.shiftKey) {
+        // Shift/Ctrl/Cmd+Click: Move/Rotate the whole plate instead of single vertices
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
             const state = this.getState();
             const plateId = state.world.selectedPlateId;
             if (plateId) {
@@ -166,7 +166,7 @@ export class EditTool implements InputTool {
         this.ensureTempPolygons(plate);
 
         const poly = this.tempPolygons!.polygons[edge.polyIndex];
-        let insertIdx = edge.vertexIndex + 1;
+        const insertIdx = edge.vertexIndex + 1;
         poly.points.splice(insertIdx, 0, edge.pointOnEdge);
 
         this.dragState = {
@@ -257,10 +257,15 @@ export class EditTool implements InputTool {
             this.onUpdate(!!this.tempPolygons);
 
         } else {
-            if (!e.shiftKey) {
+            // Suppress vertex/edge hover while a whole-plate modifier is held
+            if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
                 const nearest = this.getNearestElement(screenPos.x, screenPos.y);
                 this.hoveredVertex = nearest && nearest.type === 'vertex' ? nearest.data : null;
                 this.hoveredEdge = nearest && nearest.type === 'edge' ? nearest.data : null;
+                this.onHoverChange();
+            } else if (this.hoveredVertex || this.hoveredEdge) {
+                this.hoveredVertex = null;
+                this.hoveredEdge = null;
                 this.onHoverChange();
             }
         }

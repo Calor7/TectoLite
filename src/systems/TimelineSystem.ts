@@ -116,7 +116,7 @@ export class TimelineSystem {
                 // Let's call it "Motion & Shape" or just "Keyframe".
                 // But user asked for specific distinction if it's an "Event". 
 
-                let label = kf.label || `Keyframe #${index + 1}`;
+                const label = kf.label || `Keyframe #${index + 1}`;
                 let type: 'motion' | 'shape' = 'motion';
 
                 if (kf.label === 'Edit') {
@@ -520,26 +520,37 @@ export class TimelineSystem {
         const plateToUpdate = targetPlate || this.plate;
         if (plateToUpdate && this.simulationEngine && this.app && this.app.state) {
             const plates = this.app.state.world.plates as TectonicPlate[];
-            const affectedPlates: TectonicPlate[] = [plateToUpdate];
 
-            // If we are a child, parent and sibling are affected
+            // Collect every plate whose baked snapshots may depend on the edited one:
+            // the plate itself, its parent, ALL siblings, and ALL descendants
+            // (recursively — grandchildren after multi-generation splits were
+            // previously missed, leaving stale snapshots later in the timeline).
+            const affected = new Map<string, TectonicPlate>();
+            const addWithDescendants = (plate: TectonicPlate) => {
+                if (affected.has(plate.id)) return;
+                affected.set(plate.id, plate);
+                plates
+                    .filter((p: TectonicPlate) => p.parentPlateId === plate.id)
+                    .forEach(addWithDescendants);
+            };
+
+            addWithDescendants(plateToUpdate);
+
             if (plateToUpdate.parentPlateId) {
                 const parent = plates.find((p: TectonicPlate) => p.id === plateToUpdate.parentPlateId);
-                if (parent) affectedPlates.push(parent);
+                if (parent) affected.set(parent.id, parent);
 
-                const sibling = plates.find((p: TectonicPlate) => p.id !== plateToUpdate.id && p.parentPlateId === plateToUpdate.parentPlateId);
-                if (sibling) affectedPlates.push(sibling);
+                plates
+                    .filter((p: TectonicPlate) => p.id !== plateToUpdate.id && p.parentPlateId === plateToUpdate.parentPlateId)
+                    .forEach(addWithDescendants);
             }
 
-            // If we have children (from split), they are affected
-            const children = plates.filter((p: TectonicPlate) => p.parentPlateId === plateToUpdate.id);
-            affectedPlates.push(...children);
-
             // 1. Recalculate Physics for all affected
-            affectedPlates.forEach((p: TectonicPlate) => {
+            affected.forEach((p: TectonicPlate) => {
                 const updated = this.simulationEngine!.recalculateMotionHistory(p);
-                // 2. Update Main State (replace plate)
-                // Also pass invalidationTime to prune future orogeny strokes from this point onward
+                // 2. Update Main State (replace plate).
+                // NOTE: replacePlate ignores invalidationTime — the orogeny-stroke
+                // pruning it was meant for was removed with the elevation system.
                 if (this.app.replacePlate) {
                     this.app.replacePlate(updated, invalidationTime);
                 }

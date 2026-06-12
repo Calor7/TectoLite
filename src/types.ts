@@ -352,6 +352,23 @@ export interface Isochron {
   polyline: Coordinate[];  // absolute position of the midline at this time
 }
 
+/** A single historical position of a triple junction point (absolute coordinates). */
+export interface JunctionVertex {
+  time: number;       // geological time when this position was recorded
+  point: Coordinate;  // absolute position of the junction at this time
+}
+
+/** Represents a point where 2+ RiftAxes converge — the spreading-center junction.
+ *  Stores the junction's migration history so wedge fills can be derived each frame. */
+export interface TripleJunction {
+  id: string;
+  axisIds: string[];                // IDs of RiftAxes meeting here (2 or more)
+  axisJunctionAtStart: boolean[];   // For each axisId: is the junction end at polyline[0]?
+  birthTime: number;
+  junctionHistory?: JunctionVertex[]; // optional: historical junction positions for advanced clipping
+  state: 'active' | 'frozen' | 'dead';
+}
+
 /** A rift axis represents the spreading center between two diverging plates.
  *  Ocean crust grows outward from the axis in concentric rings (isochrons). */
 export interface RiftAxis {
@@ -399,6 +416,7 @@ export interface TectonicPlate {
   generatedBy?: string;  // ID of the parent plate that generated this slab
   slabId?: string;       // Unique ID for the slab (e.g. parentId_timeStep)
   riftAxisId?: string;   // Which RiftAxis generated this strip (axis-based path)
+  junctionId?: string;   // Which TripleJunction generated this wedge fill (ephemeral, axis-based path)
   elevation?: number; // Base elevation
 
   // Current Visual State (Calculated from keyframes)
@@ -500,16 +518,17 @@ export interface WorldState {
     gridOnTop?: boolean;                    // Render grid above plates instead of below
     plateOpacity?: number;                  // Plate transparency (0-1, default 1.0)
 
-    // Oceanic Crust Generation
-    enableAutoOceanicCrust?: boolean;        // Toggle for "Ribbed" generation
+    // Oceanic Crust Generation — all automation is opt-in (default: false)
+    enableAutoOceanicCrust?: boolean;        // Toggle for sibling/legacy "Ribbed" generation
     oceanicGenerationInterval?: number;      // Interval in Ma (default 25)
-    enableExpandingRifts?: boolean;          // Toggle for new Expanding Rift system (default: true)
+    enableExpandingRifts?: boolean;          // Toggle for isochron Expanding Rift system
     oceanicCrustColor?: string;              // Default color for new oceanic crust
     oceanicCrustOpacity?: number;            // Opacity for oceanic crust rendering (0-1)
   };
 
   // Rift Axis system (mid-ocean ridge entities)
   riftAxes?: RiftAxis[];        // All rift axes (active, frozen, dead)
+  tripleJunctions?: TripleJunction[];  // Junction points where 2+ axes converge
 
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
@@ -627,15 +646,16 @@ export function createDefaultWorldState(): WorldState {
       gridOnTop: false,         // Grid below plates by default
       plateOpacity: 1.0,        // Full opacity
 
-      // Oceanic Crust Defaults
-      enableAutoOceanicCrust: true,
+      // Oceanic Crust Defaults — automation is opt-in (off by default)
+      enableAutoOceanicCrust: false,
       oceanicGenerationInterval: 25,
-      enableExpandingRifts: true,
+      enableExpandingRifts: false,
       oceanicCrustColor: '#3b82f6', // Default blue
       oceanicCrustOpacity: 0.5,      // Default 50% opacity
     },
     // Rift axis defaults
     riftAxes: [],
+    tripleJunctions: [],
     // Event system defaults
     tectonicEvents: [],
     pendingEventId: null

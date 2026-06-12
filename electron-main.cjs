@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const isDev = require('electron-is-dev');
@@ -127,6 +127,36 @@ function createWindow() {
   if (smokeExportEnabled) {
     setupSmokeExport(mainWindow);
   }
+
+  // Confirm before closing with unsaved changes. The renderer mirrors its
+  // dirty state into window.__TECTOLITE_HAS_UNSAVED__ (see src/main.ts);
+  // beforeunload is not used because Electron cancels the close silently
+  // without showing any dialog.
+  let forceClose = false;
+  mainWindow.on('close', (e) => {
+    if (forceClose || smokeExportEnabled) return;
+    e.preventDefault(); // must happen synchronously; re-close below if allowed
+
+    const win = mainWindow;
+    win.webContents.executeJavaScript('window.__TECTOLITE_HAS_UNSAVED__ === true', true)
+      .catch(() => false)
+      .then((hasUnsaved) => {
+        if (hasUnsaved) {
+          const choice = dialog.showMessageBoxSync(win, {
+            type: 'warning',
+            buttons: ['Quit Without Saving', 'Cancel'],
+            defaultId: 1,
+            cancelId: 1,
+            title: 'Unsaved Changes',
+            message: 'You have unsaved changes.',
+            detail: 'Your project has changes that have not been saved. Quit anyway?'
+          });
+          if (choice !== 0) return; // keep the window open
+        }
+        forceClose = true;
+        win.close();
+      });
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;

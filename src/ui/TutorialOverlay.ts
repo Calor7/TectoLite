@@ -268,8 +268,8 @@ export class TutorialOverlay {
             const targetCenterX = targetRect.left + (targetRect.width / 2);
             const targetCenterY = targetRect.top + (targetRect.height / 2);
 
-            let idealX = 0;
-            let group: 'left' | 'right' | 'top' | 'bottom' = 'left';
+            let idealX: number;
+            let group: 'left' | 'right' | 'top' | 'bottom';
             const padding = 30;
 
             if (targetCenterX < screenCenterX) {
@@ -431,7 +431,7 @@ export class TutorialOverlay {
 
         requestAnimationFrame(() => {
             const nestedRect = nestedTooltip.getBoundingClientRect();
-            let topPos = anchorRect.bottom + 5;
+            const topPos = anchorRect.bottom + 5;
             let leftPos = anchorRect.left;
 
             if (leftPos + nestedRect.width > window.innerWidth) {

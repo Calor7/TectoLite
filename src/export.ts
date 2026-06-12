@@ -318,6 +318,15 @@ export async function exportToJSON(state: AppState): Promise<void> {
                     isochrons: a.isochrons
                         .map(iso => ({ time: iso.time + timeOffset, polyline: iso.polyline }))
                         .filter(iso => iso.time >= 0),
+                })),
+            tripleJunctions: (state.world.tripleJunctions || [])
+                .filter(j => j.state !== 'dead')
+                .map(j => ({
+                    ...j,
+                    birthTime: Math.max(0, j.birthTime + timeOffset),
+                    junctionHistory: j.junctionHistory
+                        ?.map(v => ({ ...v, time: v.time + timeOffset }))
+                        .filter(v => v.time >= 0),
                 }))
         };
     }

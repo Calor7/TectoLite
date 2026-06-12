@@ -489,7 +489,7 @@ export class CanvasManager {
     private pan(dx: number, dy: number) {
         const state = this.getState();
         const sens = (180 / Math.PI) / (state.viewport.scale || 250);
-        let newRotate = [...state.viewport.rotate] as [number, number, number];
+        const newRotate = [...state.viewport.rotate] as [number, number, number];
         newRotate[0] += dx * sens;
         newRotate[1] -= dy * sens;
         newRotate[1] = Math.max(-90, Math.min(90, newRotate[1]));
@@ -1031,7 +1031,7 @@ export class CanvasManager {
     private getEventAnchor(event: TectonicEvent): Coordinate | null {
         const points = event.boundarySegment.flat();
         if (points.length === 0) return null;
-        let sum = { x: 0, y: 0, z: 0 };
+        const sum = { x: 0, y: 0, z: 0 };
         for (const p of points) { const v = latLonToVector(p); sum.x += v.x; sum.y += v.y; sum.z += v.z; }
         const len = Math.sqrt(sum.x * sum.x + sum.y * sum.y + sum.z * sum.z);
         if (len === 0) return points[0];
@@ -1374,7 +1374,7 @@ export class CanvasManager {
     private getT(p: { x: number, y: number }, v: { x: number, y: number }, w: { x: number, y: number }) {
         const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
         if (l2 === 0) return 0;
-        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+        const t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
         return Math.max(0, Math.min(1, t));
     }
 }

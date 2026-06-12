@@ -24,7 +24,7 @@ function mergePolygons(plate1: TectonicPlate, plate2: TectonicPlate): Polygon[] 
 
     // Axis = centroid cross target
     let axis = cross(vCentroid, vTarget);
-    let angle = Math.acos(Math.min(1, Math.max(-1, dot(vCentroid, vTarget))));
+    const angle = Math.acos(Math.min(1, Math.max(-1, dot(vCentroid, vTarget))));
 
     const needsRotation = angle > 0.001;
     if (needsRotation) {

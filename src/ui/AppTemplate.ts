@@ -65,12 +65,12 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         
                         <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
                             <span>Expanding Rifts</span>
-                            <input type="checkbox" id="check-expanding-rifts" ${g.enableExpandingRifts !== false ? 'checked' : ''}>
+                            <input type="checkbox" id="check-expanding-rifts" ${g.enableExpandingRifts === true ? 'checked' : ''}>
                         </label>
                         
                         <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center; opacity: 0.8;">
                             <span>Auto Generate</span>
-                            <input type="checkbox" id="check-auto-oceanic" ${g.enableAutoOceanicCrust !== false ? 'checked' : ''}>
+                            <input type="checkbox" id="check-auto-oceanic" ${g.enableAutoOceanicCrust === true ? 'checked' : ''}>
                         </label>
                         
                         <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; justify-content: space-between;">
@@ -268,7 +268,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                   <button class="tool-btn" data-tool="edit" style="flex:1;">
                     <span class="tool-icon">✎</span>
                     <span class="tool-label">Edit</span>
-                    <span class="info-icon" data-tooltip="Modify plate geometry (Hotkey: E)">(i)</span>
+                    <span class="info-icon" data-tooltip="Modify plate geometry; Ctrl+drag moves the whole shape (Hotkey: E)">(i)</span>
                   </button>
 
               </div>
@@ -461,16 +461,19 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
         <footer class="timeline-bar" id="timeline-bar">
           <div class="time-controls">
-            <button id="btn-play" class="btn btn-icon" title="Play/Pause">▶️</button>
-            <select id="speed-select" class="speed-select">
-              <option value="1">1 Ma/s</option>
+            <button id="btn-play" class="btn btn-icon" title="Play/Pause (Space)">▶️</button>
+            <select id="speed-select" class="speed-select" title="Playback speed">
+              <option value="0.5">0.5 Ma/s</option>
+              <option value="1" selected>1 Ma/s</option>
+              <option value="2">2 Ma/s</option>
               <option value="5">5 Ma/s</option>
               <option value="10">10 Ma/s</option>
+              <option value="20">20 Ma/s</option>
               <option value="50">50 Ma/s</option>
             </select>
           </div>
           <div class="timeline">
-            <input type="range" id="time-slider" class="time-slider" min="0" max="500" value="0">
+            <input type="range" id="time-slider" class="time-slider" min="0" max="500" value="0" title="Scrub time (←/→ keys step ±1 Ma, Shift = ±10 Ma)">
             <div class="time-display">
               <div class="time-controls-row">
                 <span id="current-time" class="current-time-display" style="cursor: pointer; font-weight: 600;" title="Click to set current time">0</span>
@@ -479,7 +482,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
               </div>
             </div>
           </div>
-          <button id="btn-reset-time" class="btn btn-secondary">Reset</button>
+          <button id="btn-reset-time" class="btn btn-secondary" title="Jump back to 0 Ma">Reset</button>
         </footer>
         <div id="global-tooltip"></div>
         <!-- Time Input Modal -->

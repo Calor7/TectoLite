@@ -49,13 +49,15 @@ This index reflects the current repository state. Older delivery documents remai
 
 ## Notes on historical documents
 
-These files remain useful as delivery records, but parts of them describe earlier implementation states and should be read as historical snapshots rather than current architecture:
+These files remain useful as delivery records, but parts of them describe earlier implementation states and should be read as historical snapshots rather than current architecture. They live in `docs/archive/`:
 
-- [README_COMPLETION.md](README_COMPLETION.md)
-- [DELIVERY_REPORT.md](DELIVERY_REPORT.md)
-- [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)
+- [README_COMPLETION.md](docs/archive/README_COMPLETION.md)
+- [DELIVERY_REPORT.md](docs/archive/DELIVERY_REPORT.md)
+- [IMPLEMENTATION_SUMMARY.md](docs/archive/IMPLEMENTATION_SUMMARY.md)
 - [FEATURE_QUICK_REFERENCE.md](FEATURE_QUICK_REFERENCE.md)
-- [FEATURE_IMPLEMENTATION_COMPLETE.md](FEATURE_IMPLEMENTATION_COMPLETE.md)
+- [FEATURE_IMPLEMENTATION_COMPLETE.md](docs/archive/FEATURE_IMPLEMENTATION_COMPLETE.md)
+- [ELEVATION_HISTORY_INTEGRATION_COMPLETE.md](docs/archive/ELEVATION_HISTORY_INTEGRATION_COMPLETE.md)
+- [ELEVATION_MESH_EDITOR_COMPLETE.md](docs/archive/ELEVATION_MESH_EDITOR_COMPLETE.md)
 
 Some of those historical docs refer to runtime systems or files that are not present in the current `src/` tree, including `ElevationSystem.ts` and `TimeTransformationUtils.ts`.
 

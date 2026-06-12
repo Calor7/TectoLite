@@ -105,7 +105,7 @@ export class HeightmapGenerator {
                 // Volcano: Add +150 (Peak)
                 // Trench: Subtract -50
 
-                let intensity = 0;
+                let intensity: number;
                 let isSubtractive = false;
 
                 switch (feature.type) {

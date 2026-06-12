@@ -88,9 +88,16 @@ export class HistoryManager {
     }
 
     /**
-     * Deep clone state to prevent mutation issues
+     * Deep clone state to prevent mutation issues.
+     * structuredClone is significantly faster than the JSON round-trip for
+     * large worlds; fall back to JSON if the state ever contains a value
+     * structuredClone can't handle (e.g. a function sneaking into state).
      */
     private cloneState(state: AppState): AppState {
-        return JSON.parse(JSON.stringify(state));
+        try {
+            return structuredClone(state);
+        } catch {
+            return JSON.parse(JSON.stringify(state));
+        }
     }
 }

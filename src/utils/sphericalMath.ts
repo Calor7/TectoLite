@@ -178,6 +178,18 @@ export function axisAngleFromQuat(q: Quaternion): { axis: Vector3, angle: number
     };
 }
 
+// Normalized linear interpolation between two points on the sphere.
+// alpha=0 returns a, alpha=1 returns b. Good approximation of slerp for small arcs.
+export function nlerpCoord(a: Coordinate, b: Coordinate, alpha: number): Coordinate {
+    const v1 = latLonToVector(a);
+    const v2 = latLonToVector(b);
+    return vectorToLatLon(normalize({
+        x: v1.x * (1 - alpha) + v2.x * alpha,
+        y: v1.y * (1 - alpha) + v2.y * alpha,
+        z: v1.z * (1 - alpha) + v2.z * alpha,
+    }));
+}
+
 export function distance(a: Coordinate, b: Coordinate): number {
     const v1 = latLonToVector(a);
     const v2 = latLonToVector(b);

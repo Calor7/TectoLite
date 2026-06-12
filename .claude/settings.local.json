@@ -5,7 +5,12 @@
       "Bash(find /c/GIT/TectoLite/src -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
       "Bash(npx vite:*)",
       "Bash(find C:UsersCHRIST~1AppDataLocalTempclaudec--GIT-TectoLite -type f -name *.output -o -name *.md)",
-      "WebSearch"
+      "WebSearch",
+      "PowerShell(git -C c:\\\\GIT\\\\TectoLite status)",
+      "PowerShell(git -C c:\\\\GIT\\\\TectoLite diff --stat)",
+      "PowerShell(npm run typecheck)",
+      "PowerShell(npm run build)",
+      "PowerShell(git -C c:\\\\GIT\\\\TectoLite diff src/types.ts src/export.ts src/main.ts src/SplitTool.ts)"
     ]
   }
 }

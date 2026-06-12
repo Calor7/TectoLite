@@ -80,9 +80,9 @@ export class BoundarySystem {
             const res: Coordinate[] = [[coords[0][0], coords[0][1]]];
             for (let i = 1; i < coords.length; i++) {
                 let lon = coords[i][0];
-                let lat = coords[i][1];
-                let prevLon = res[i - 1][0];
-                let diff = lon - prevLon;
+                const lat = coords[i][1];
+                const prevLon = res[i - 1][0];
+                const diff = lon - prevLon;
                 // If jump > 180, adjust to be continuous
                 if (diff > 180) lon -= 360;
                 else if (diff < -180) lon += 360;

@@ -156,7 +156,33 @@ function splitPolygonWithPolyline(
 
     if (crossings.length < 2) return defaultResult;
     crossings.sort((a, b) => a.polylineIdx - b.polylineIdx);
-    const firstCrossing = crossings[0], secondCrossing = crossings[crossings.length - 1];
+
+    // Deduplicate vertex-coincident crossings: when the cut polyline starts or ends exactly at a
+    // polygon vertex, both incident edges register a crossing at the same point. This causes a
+    // duplicate vertex in the output polygon (polyA[0] == polyA[1]) and an off-by-one error in
+    // originalEdgeMap that mis-assigns existing rift edgeMeta to the wrong child edge.
+    // Fix: when two crossings share the same polylineIdx and the same geographic point, keep only
+    // the one where crossing.point ≈ polygonPoints[crossing.index] (the point is the START of that
+    // edge), so that `idx = crossing.index + 1` correctly skips past the shared vertex.
+    const vCoincident = (a: Coordinate, b: Coordinate) => {
+        const va = latLonToVector(a), vb = latLonToVector(b);
+        return va.x * vb.x + va.y * vb.y + va.z * vb.z > 1 - 1e-8;
+    };
+    const deduped: typeof crossings = [];
+    for (const c of crossings) {
+        const di = deduped.findIndex(d => d.polylineIdx === c.polylineIdx && vCoincident(d.point, c.point));
+        if (di !== -1) {
+            // Keep the crossing where the point is at the START of its polygon edge (not the end).
+            // That way, idx = index+1 starts iteration at the next distinct vertex.
+            const cAtStart = vCoincident(c.point, polygonPoints[c.index]);
+            if (cAtStart) deduped[di] = c;
+        } else {
+            deduped.push(c);
+        }
+    }
+    const dedupedCrossings = deduped.length >= 2 ? deduped : crossings;
+
+    const firstCrossing = dedupedCrossings[0], secondCrossing = dedupedCrossings[dedupedCrossings.length - 1];
 
     const cutSegment: Coordinate[] = polylinePoints.slice(firstCrossing.polylineIdx + 1, secondCrossing.polylineIdx + 1);
 
@@ -225,7 +251,7 @@ function getAccumulatedParentTransform(
     const parent = allPlates.find(pl => pl.id === p.linkedToPlateId);
     if (!parent) return [];
 
-    let transforms: { axis: Vector3; angle: number }[] = [];
+    const transforms: { axis: Vector3; angle: number }[] = [];
 
     // 1. Get grandparent transforms first (recursive)
     transforms.push(...getAccumulatedParentTransform(parent, t, allPlates, visited));
@@ -413,82 +439,16 @@ function getSplitFeatures(
     originalFeatures: import('./types').Feature[],
     leftPolygons: Polygon[],
     rightPolygons: Polygon[],
-    polylinePoints: Coordinate[],
+    _polylinePoints: Coordinate[], // kept for call-site stability; only used by the removed polyline path
     overallNormal: Vector3
 ): { leftFeatures: import('./types').Feature[], rightFeatures: import('./types').Feature[] } {
     const leftFeatures: import('./types').Feature[] = [];
     const rightFeatures: import('./types').Feature[] = [];
 
-    // Helper: Split a trail (polyline) by the cut line
-    const splitTrail = (trail: Coordinate[], cutPolyline: Coordinate[]): Coordinate[][] => {
-        if (trail.length < 2) return [trail];
-        const segments: Coordinate[][] = [];
-        let currentSegment: Coordinate[] = [trail[0]];
-
-        for (let i = 0; i < trail.length - 1; i++) {
-            const p1 = trail[i];
-            const p2 = trail[i + 1];
-
-            // Check intersection with EACH segment of the cut line
-            let intersection: Coordinate | null = null;
-            // Find the CLOSEST intersection if multiple (simplified: just first found for now)
-            for (let j = 0; j < cutPolyline.length - 1; j++) {
-                const c1 = cutPolyline[j];
-                const c2 = cutPolyline[j + 1];
-                const hit = findSegmentIntersection(p1, p2, c1, c2);
-                if (hit) {
-                    intersection = hit;
-                    break;
-                }
-            }
-
-            if (intersection) {
-                currentSegment.push(intersection);
-                segments.push(currentSegment);
-                currentSegment = [intersection];
-            }
-
-            currentSegment.push(p2);
-        }
-        segments.push(currentSegment);
-        return segments;
-    };
+    // (dead `if (false)` polyline-splitting block and its splitTrail helper removed)
 
     for (const feat of originalFeatures) {
         if (feat.type === 'rift') continue;
-
-        // --- POLYLINE / GRID LINE HANDLING ---
-        if (false) {
-            const subTrails = splitTrail([], polylinePoints);
-
-            for (const sub of subTrails) {
-                if (sub.length < 2) continue;
-
-                // Test midpoint
-                const midIdx = Math.floor(sub.length / 2);
-                const testPoint = sub[midIdx];
-
-                const inLeft = leftPolygons.some(poly => isPointInPolygon(testPoint, poly.points));
-                const inRight = rightPolygons.some(poly => isPointInPolygon(testPoint, poly.points));
-
-                const newFeat = {
-                    ...feat,
-                    id: generateId(), // New ID for split segment
-                    position: sub[0], // Update anchor to start of segment
-                    originalPosition: sub[0]
-                };
-
-                if (inLeft) leftFeatures.push(newFeat);
-                else if (inRight) rightFeatures.push(newFeat);
-                else {
-                    // Fallback
-                    const v = latLonToVector(testPoint);
-                    if (dot(v, overallNormal) > 0) leftFeatures.push(newFeat);
-                    else rightFeatures.push(newFeat);
-                }
-            }
-            continue;
-        }
 
         // --- STANDARD POINT FEATURE LOGIC ---
         const inLeft = leftPolygons.some(poly => isPointInPolygon(feat.position, poly.points));
@@ -616,7 +576,7 @@ export function splitPlate(
 ): AppState {
     const leftPlateId = generateId();
     const rightPlateId = generateId();
-    let currentState = state;
+    const currentState = state;
     const currentTime = state.world.currentTime;
 
     // --- 0. PRE-PROCESS CONNECTED RIFTS (L-Shaped Junction Logic) ---
@@ -1300,8 +1260,8 @@ export function splitPlate(
         // BAKE MOTION INTO CHILD FEATURES
         const bakedChildFeatures = applyTransformToFeatures(child, currentTime, currentState.world.plates);
 
-        let childLeftPolys: Polygon[] = [];
-        let childRightPolys: Polygon[] = [];
+        const childLeftPolys: Polygon[] = [];
+        const childRightPolys: Polygon[] = [];
         let wasSplit = false;
 
         const childLeftPlateId = generateId();

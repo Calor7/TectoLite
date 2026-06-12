@@ -53,7 +53,7 @@ export class EventSystem {
         const threshold = globalOptions.eventDetectionThreshold || 20;
 
         let newState = { ...state };
-        let newEvents = [...tectonicEvents];
+        const newEvents = [...tectonicEvents];
         let newPendingEventId: string | null = null;
 
         // Check each boundary for significant interaction
