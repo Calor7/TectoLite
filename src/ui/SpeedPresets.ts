@@ -3,6 +3,8 @@
  * Extracted from main.ts TectoLiteApp class.
  */
 
+import { showToast } from './TimeControls';
+
 
 
 export interface SpeedPreset {
@@ -209,7 +211,7 @@ export function applySpeedToSelected(
         callbacks.pushState();
         return true;
     } else {
-        alert('Please select a plate first to apply this speed preset.');
+        showToast('Select a plate first to apply this speed preset');
         return false;
     }
 }

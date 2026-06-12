@@ -18,6 +18,7 @@ import {
     MantlePlume,
     DrawMode,
     LineType,
+    PolygonType,
     CameraView
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
@@ -685,6 +686,12 @@ class TectoLiteApp {
             this.state.activeLineType = (e.target as HTMLSelectElement).value as LineType;
         });
 
+        // Was missing entirely: the Polygon Type select did nothing (new plates
+        // always used the previous/default polygon type)
+        document.getElementById('draw-polygon-type')?.addEventListener('change', (e) => {
+            this.state.activePolygonType = (e.target as HTMLSelectElement).value as PolygonType;
+        });
+
         document.getElementById('check-vertex-snap')?.addEventListener('change', (e) => {
             const enabled = (e.target as HTMLInputElement).checked;
             this.canvasManager?.setSnappingEnabled(enabled);
@@ -787,6 +794,22 @@ class TectoLiteApp {
 
         document.getElementById('check-expanding-rifts')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.enableExpandingRifts = (e.target as HTMLInputElement).checked;
+        });
+
+        // Automation & Events toggles (Settings dropdown; all opt-in)
+        document.getElementById('check-boundary-viz')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
+        });
+        document.getElementById('check-guided-creation')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.enableGuidedCreation = (e.target as HTMLInputElement).checked;
+        });
+        document.getElementById('check-pause-fusion')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.pauseOnFusionSuggestion = (e.target as HTMLInputElement).checked;
+        });
+        document.getElementById('check-show-event-icons')?.addEventListener('change', (e) => {
+            this.state.world.globalOptions.showEventIcons = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.render();
         });
 
         document.getElementById('input-oceanic-interval')?.addEventListener('change', (e) => {
@@ -1059,9 +1082,14 @@ class TectoLiteApp {
 
         // Image Overlay Controls
         document.getElementById('check-show-overlay')?.addEventListener('change', (e) => {
+            const checkbox = e.target as HTMLInputElement;
             if (this.state.world.imageOverlay) {
-                this.state.world.imageOverlay.visible = (e.target as HTMLInputElement).checked;
+                this.state.world.imageOverlay.visible = checkbox.checked;
                 this.canvasManager?.render();
+            } else if (checkbox.checked) {
+                // Was a silent no-op — explain why nothing appeared
+                checkbox.checked = false;
+                this.showToast('Upload a reference map first ("Upload Map" below)');
             }
         });
 
@@ -1653,6 +1681,29 @@ class TectoLiteApp {
         if (checkVelocityArrows) checkVelocityArrows.checked = g.showVelocityArrows === true;
         const checkHoverTooltips = document.getElementById('check-hover-tooltips') as HTMLInputElement | null;
         if (checkHoverTooltips) checkHoverTooltips.checked = g.showHoverTooltips === true;
+
+        // Automation & Events toggles
+        const checkBoundaryViz = document.getElementById('check-boundary-viz') as HTMLInputElement | null;
+        if (checkBoundaryViz) checkBoundaryViz.checked = g.enableBoundaryVisualization === true;
+        const checkGuidedCreation = document.getElementById('check-guided-creation') as HTMLInputElement | null;
+        if (checkGuidedCreation) checkGuidedCreation.checked = g.enableGuidedCreation === true;
+        const checkPauseFusion = document.getElementById('check-pause-fusion') as HTMLInputElement | null;
+        if (checkPauseFusion) checkPauseFusion.checked = g.pauseOnFusionSuggestion === true;
+
+        // Playback speed select (was never synced from loaded state)
+        const speedSelect = document.getElementById('speed-select') as HTMLSelectElement | null;
+        if (speedSelect && w.timeScale) speedSelect.value = String(w.timeScale);
+
+        // Reference overlay controls (was never synced from loaded state)
+        const overlayCheck = document.getElementById('check-show-overlay') as HTMLInputElement | null;
+        if (overlayCheck) overlayCheck.checked = w.imageOverlay?.visible === true;
+        const overlaySlider = document.getElementById('overlay-opacity-slider') as HTMLInputElement | null;
+        const overlayLabel = document.getElementById('overlay-opacity-value');
+        if (overlaySlider && w.imageOverlay) {
+            const pct = Math.round((w.imageOverlay.opacity ?? 0.5) * 100);
+            overlaySlider.value = String(pct);
+            if (overlayLabel) overlayLabel.textContent = `${pct}%`;
+        }
         // For now, assume it's not state-persisted or I need to add it.
 
         const radiusInput = document.getElementById('global-planet-radius') as HTMLInputElement;

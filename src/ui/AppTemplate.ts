@@ -91,6 +91,27 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                              <input type="range" id="input-oceanic-opacity" min="0" max="100" value="${Math.round((g.oceanicCrustOpacity ?? 0.5) * 100)}" style="width: 100%; height: 4px; display:block; margin-top:4px;">
                         </div>
                     </div>
+
+                    <!-- Automation & Events (opt-in; these systems existed but had no UI) -->
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
+                        <div class="dropdown-header">Automation &amp; Events</div>
+                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Boundary Visualization <span class="info-icon" data-tooltip="Detect and highlight convergent/divergent/transform boundaries each frame">(i)</span></span>
+                            <input type="checkbox" id="check-boundary-viz" ${g.enableBoundaryVisualization === true ? 'checked' : ''}>
+                        </label>
+                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Guided Creation Events <span class="info-icon" data-tooltip="Detect tectonic events (collisions, rifts) and suggest features">(i)</span></span>
+                            <input type="checkbox" id="check-guided-creation" ${g.enableGuidedCreation === true ? 'checked' : ''}>
+                        </label>
+                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Pause on Fusion Suggestion <span class="info-icon" data-tooltip="Pause playback when overlapping plates suggest a fusion">(i)</span></span>
+                            <input type="checkbox" id="check-pause-fusion" ${g.pauseOnFusionSuggestion === true ? 'checked' : ''}>
+                        </label>
+                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>Show Event Icons <span class="info-icon" data-tooltip="Draw markers on the map where tectonic events occurred">(i)</span></span>
+                            <input type="checkbox" id="check-show-event-icons" ${g.showEventIcons === true ? 'checked' : ''}>
+                        </label>
+                    </div>
                 </div>
             </div>
 
