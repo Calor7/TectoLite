@@ -221,3 +221,96 @@ The new Oceanic Crust system (`oceanic-strip` type plates) works by "accretion":
 - **Action**: New strip is created at the Rift Axis.
 - **Motion**: Strip is linked to the diverging continent, moving with it.
 - **Result**: Old strips naturally move away, creating a conveyor belt effect without complex gap-filling logic.
+
+
+---
+
+# CLAUDE.md — TectoLite working guidelines
+
+Distilled from how this codebase has actually been worked. Follow these unless the
+user says otherwise.
+
+## What this is
+
+TectoLite is a tectonic-plate simulation editor: TypeScript + Vite, vanilla DOM UI,
+shipped as a web app and an Electron desktop app. No framework. The heavy logic lives in
+a few large files (`src/main.ts`, `src/SimulationEngine.ts`, `src/canvas/CanvasManager.ts`,
+`src/SplitTool.ts`); pure helpers live in `src/utils/`, `src/motion/`, `src/importHelpers.ts`.
+
+## Verification discipline (non-negotiable)
+
+After **every** change, before claiming anything is done:
+
+```
+npm run verify     # = typecheck (tsc --noEmit) && test (vitest run) && build (vite)
+npm run lint       # = eslint src   (run --quiet to see errors only)
+```
+
+- `tsconfig` is strict with `noUnusedLocals`/`noUnusedParameters` — removing the last
+  caller of a helper will surface orphaned imports; that's the signal to delete the dead
+  code, not silence the warning.
+- Run long checks in the background and wait for the result. Never report "green"
+  without having seen the exit code / test count.
+- State outcomes plainly and honestly: if something is unverified (e.g. canvas visuals),
+  say so explicitly rather than implying it works.
+
+## What I cannot verify — flag it, don't fake it
+
+This is a visual, interactive app. Typecheck/tests/build prove the code is *consistent*,
+not that the *canvas looks right*. When a change affects rendering, dragging, or any
+on-screen behavior, say clearly that it needs a manual visual pass and give a focused
+checklist of what to look at. Do not claim visual correctness from a green build.
+
+## Principles used here
+
+- **Investigate before asserting.** Read the actual current code; don't trust comments,
+  variable names, or memory. Several bugs here were stale comments promising behavior the
+  code no longer had. Memory notes are point-in-time — re-verify file/function references
+  against the live tree before relying on them.
+- **Root cause, not symptom.** When a tool "doesn't work," find the *class* of bug and fix
+  every instance, then add a regression test that pins it. (e.g. one broken split exposed
+  a spread-clone hazard at five sites.)
+- **Behavior-preserving refactors keep signatures.** Replace an implementation under the
+  same public surface, verify green, and the blast radius stays small.
+- **Make logic pure so it can be tested.** Extract decision/transform logic into pure
+  functions/modules (`RotationModel`, `importHelpers`, `sphericalMath`) and unit-test it —
+  golden scenarios for math, regression tests for fixed bugs.
+- **Big/architectural changes go in phases with a written plan.** Drop a `docs/PLAN_*.md`,
+  define phases each independently green-verifiable, and keep its status table current.
+- **Delete dead code aggressively, but keep back-compat seams deliberately.** Old save
+  files (v1) must still load — lazy-migrate on import rather than dropping the parser.
+- **Comments explain *why*, not *what*** — especially the non-obvious invariant a line
+  protects (e.g. why a clone must reset a field).
+- **Track multi-step work with TodoWrite**; keep one item in progress.
+
+## UI / feature conventions
+
+- **New visual overlays and automation default OFF**, exposed as opt-in toggles (View
+  dropdown for visuals, Settings for automation). The canvas is information-dense; keep it
+  uncluttered. Use `=== true` checks (not `!== false`) so missing/undefined means off, add
+  the toggle to `syncUIToState`, and default `false` in `createDefaultWorldState()`.
+- Prefer non-blocking **toasts** over `alert()` for informational/empty-state feedback;
+  reserve `alert()` for genuine errors.
+- When adding an option, wire all four points: template (`AppTemplate.ts`), the change
+  handler (`main.ts`), `syncUIToState` (load reflects state), and persistence if it belongs
+  in a save file.
+
+## Persistence & save files
+
+- Bump `SAVE_VERSION` when the serialized shape changes; migrate older versions on import,
+  never write them back in the old shape.
+- Merge-import must remap **all** cross-references (plate/parent/link/sibling/axis IDs) and
+  shift all timestamps; dangling refs should be stripped, not left pointing at nothing.
+- Camera views and similar session/document state that isn't world-geometry live **outside**
+  `AppState` so undo (which clones the whole world) doesn't clobber them.
+
+## Memory & handover
+
+Keep `~/.claude/.../memory/` current: handover notes for ongoing multi-session work,
+discovered pitfalls (with the "check this first" symptom), and confirmed user preferences.
+Convert relative dates to absolute. This is what lets a cold session continue the work.
+
+## Out-of-scope log
+
+While working toward a goal, keep a running list of issues noticed but out of scope, and
+surface it in the final report rather than silently expanding scope or losing the finding.
