@@ -1937,16 +1937,6 @@ export class SimulationEngine {
         return updatedPlate;
     }
 
-    public recalculateMotionHistory(plate: TectonicPlate): TectonicPlate {
-        // KEYFRAME-LESS MODEL: geometry is derived, never baked — there is nothing
-        // to recalculate. Kept as an identity function because TimelineSystem still
-        // calls it after timeline edits; pole/time edits on keyframes flow through
-        // getMotionModel() automatically. Crucially, this no longer overwrites
-        // 'Edit'-labelled snapshots (which are real geometry stages) the way the
-        // legacy rebake did.
-        return plate;
-    }
-
     private updateFlowlines(): void {
         this.setState(state => {
             const plates = state.world.plates;
@@ -2019,39 +2009,11 @@ export class SimulationEngine {
     }
 
     private getPointPositionAtTime(point: Coordinate, plateId: string, time: number, allPlates: TectonicPlate[]): Coordinate {
+        // Keyframe-less model: delegate to the rotation model (the legacy
+        // keyframe walk here also had a broken fallback that discarded the walk)
         const plate = allPlates.find(p => p.id === plateId);
-        if (!plate) return point;
-        let currentPos = point;
-        let currentTime = plate.birthTime;
-        if (time <= currentTime) return point;
-        const keyframes = [...(plate.motionKeyframes || [])].sort((a, b) => a.time - b.time);
-        for (let i = 0; i < keyframes.length; i++) {
-            const kf = keyframes[i];
-            const nextKfTime = (i + 1 < keyframes.length) ? keyframes[i + 1].time : Infinity;
-            if (kf.time > time) break;
-            const intervalStart = Math.max(currentTime, kf.time);
-            const intervalEnd = Math.min(time, nextKfTime);
-            if (intervalEnd > intervalStart) {
-                const pole = kf.eulerPole;
-                if (pole && pole.rate !== 0) {
-                    const elapsed = intervalEnd - kf.time;
-                    const axis = latLonToVector(pole.position);
-                    const angle = toRad(pole.rate * elapsed);
-                    currentPos = vectorToLatLon(rotateVector(latLonToVector(currentPos), axis, angle));
-                }
-                currentTime = intervalEnd;
-            }
-        }
-        if (keyframes.length === 0 || currentTime < time) {
-            const pole = plate.motion?.eulerPole;
-            if (pole && pole.rate !== 0) {
-                const elapsed = time - plate.birthTime;
-                const axis = latLonToVector(pole.position);
-                const v = latLonToVector(point);
-                currentPos = vectorToLatLon(rotateVector(v, axis, toRad(pole.rate * elapsed)));
-            }
-        }
-        return currentPos;
+        if (!plate || time <= plate.birthTime) return point;
+        return this.applyPlateMotion(point, plate, plate.birthTime, time, allPlates);
     }
 
 }

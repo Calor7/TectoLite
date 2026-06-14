@@ -1879,6 +1879,8 @@ class TectoLiteApp {
                 features: [],
                 motion: defaultMotion,
                 motionKeyframes: [initialKeyframe],
+                motionSegments: [{ time: currentTime, eulerPole: { ...defaultMotion.eulerPole } }],
+                geometryStages: [{ time: currentTime, polygons: [polygon], features: [] }],
                 visible: true,
                 locked: false,
                 center: points[0],
@@ -1923,6 +1925,8 @@ class TectoLiteApp {
                 features: [],
                 motion: defaultMotion,
                 motionKeyframes: [initialKeyframe],
+                motionSegments: [{ time: currentTime, eulerPole: { ...defaultMotion.eulerPole } }],
+                geometryStages: [{ time: currentTime, polygons: [polygon], features: [] }],
                 visible: true,
                 locked: false,
                 center: points[0],
@@ -2444,32 +2448,22 @@ class TectoLiteApp {
 
                                 this.state.world.plates = this.state.world.plates.map(p => {
                                     if (p.id === childId) {
-                                        // Create a keyframe at link time with zero motion (default pole)
-                                        // This prevents the child from "teleporting" when linked
-                                        const childKeyframes = p.motionKeyframes || [];
-                                        const newKeyframes = [...childKeyframes];
-
-                                        // Check if there's already a keyframe at this time
-                                        const existingIndex = newKeyframes.findIndex(kf => Math.abs(kf.time - currentTime) < 0.001);
-
-                                        if (existingIndex < 0) {
-                                            // Add new keyframe with zero rate (child stops moving on its own while linked)
-                                            newKeyframes.push({
+                                        // Add a zero-rate motion segment at link time so the child
+                                        // stops moving on its own while linked (no "teleporting")
+                                        const updated = { ...p };
+                                        ensureMotionModel(updated);
+                                        const segments = [...updated.motionSegments!];
+                                        if (!segments.some(s => Math.abs(s.time - currentTime) < 0.001)) {
+                                            segments.push({
                                                 time: currentTime,
-                                                eulerPole: { position: [0, 90], rate: 0 },
-                                                snapshotPolygons: p.polygons,
-                                                snapshotFeatures: p.features,
-
+                                                eulerPole: { position: [0, 90], rate: 0, visible: false }
                                             });
+                                            updated.motionSegments = segments.sort((a, b) => a.time - b.time);
                                         }
-
-                                        return {
-                                            ...p,
-                                            linkedToPlateId: parentId,
-                                            linkTime: currentTime,
-                                            unlinkTime: undefined, // Clear any previous unlink time
-                                            motionKeyframes: newKeyframes
-                                        };
+                                        updated.linkedToPlateId = parentId;
+                                        updated.linkTime = currentTime;
+                                        updated.unlinkTime = undefined; // Clear any previous unlink time
+                                        return updated;
                                     }
                                     return p;
                                 });
@@ -2585,7 +2579,11 @@ class TectoLiteApp {
                 motionKeyframes: p.motionKeyframes ? p.motionKeyframes.map(kf => ({
                     ...kf,
                     snapshotFeatures: kf.snapshotFeatures.filter(f => !idsToDelete.has(f.id))
-                })) : p.motionKeyframes
+                })) : p.motionKeyframes,
+                geometryStages: p.geometryStages ? p.geometryStages.map(s => ({
+                    ...s,
+                    features: s.features.filter(f => !idsToDelete.has(f.id))
+                })) : p.geometryStages
             }));
 
             this.state.world.selectedFeatureId = null;
@@ -2612,7 +2610,11 @@ class TectoLiteApp {
                 motionKeyframes: p.motionKeyframes ? p.motionKeyframes.map(kf => ({
                     ...kf,
                     snapshotFeatures: kf.snapshotFeatures.map(applyUpdates)
-                })) : p.motionKeyframes
+                })) : p.motionKeyframes,
+                geometryStages: p.geometryStages ? p.geometryStages.map(s => ({
+                    ...s,
+                    features: s.features.map(applyUpdates)
+                })) : p.geometryStages
             };
         });
 
@@ -2734,7 +2736,11 @@ class TectoLiteApp {
                 }
             });
 
-            // Plate edits captured as explicit Edit keyframes
+            // Plate edits: geometry stages after birth (keyframe-less model),
+            // plus legacy Edit keyframes on plates not yet materialized
+            p.geometryStages?.slice(1).forEach(stage => {
+                addAction(stage.time, 'Plate Edited', p, 'plate_edit');
+            });
             p.motionKeyframes?.forEach(kf => {
                 if (kf.label === 'Edit') {
                     addAction(kf.time, 'Plate Edited', p, 'plate_edit');

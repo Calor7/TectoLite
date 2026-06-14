@@ -6,6 +6,7 @@ import {
     fromLegacyKeyframes,
     pointPositionAt,
     activeStage,
+    ensureMotionModel,
 } from './RotationModel';
 import {
     quatFromAxisAngle,
@@ -242,6 +243,60 @@ describe('geometry stages', () => {
             geometryStages: [{ time: 0, polygons: [], features: [] }],
         });
         expectCoord(pointPositionAt(plate, [plate], [10, 20], 40, 100), [70, 20]);
+    });
+});
+
+describe('ensureMotionModel', () => {
+    const square = (lonOffset: number) => [{
+        id: 'p1',
+        points: [[lonOffset, 0], [lonOffset + 10, 0], [lonOffset + 10, 10], [lonOffset, 10]] as Coordinate[],
+        closed: true,
+    }];
+
+    it('materializes legacy keyframes once and clears them', () => {
+        const plate = makePlate('a', {
+            initialPolygons: square(0),
+            motionKeyframes: [
+                { time: 0, eulerPole: pole(NORTH, 1), snapshotPolygons: [], snapshotFeatures: [] },
+            ] as never,
+        });
+        const model = ensureMotionModel(plate);
+        expect(plate.motionSegments).toHaveLength(1);
+        expect(plate.motionSegments![0].eulerPole.rate).toBe(1);
+        expect(plate.geometryStages).toHaveLength(1);
+        expect(plate.motionKeyframes).toHaveLength(0); // legacy storage retired
+        expect(model.segments).toBe(plate.motionSegments);
+    });
+
+    it('is idempotent and preserves already-materialized fields', () => {
+        const plate = makePlate('a', {
+            motionSegments: [seg(0, NORTH, 2)],
+            geometryStages: [{ time: 0, polygons: [], features: [] }],
+        });
+        const before = plate.motionSegments;
+        ensureMotionModel(plate);
+        ensureMotionModel(plate);
+        expect(plate.motionSegments).toBe(before);
+        expect(plate.motionSegments![0].eulerPole.rate).toBe(2);
+    });
+
+    it('split regression: a clone with new geometry must reset stale stages', () => {
+        // Cloning a materialized plate via spread while replacing initialPolygons
+        // would silently render the OLD stages. Clone sites reset both fields —
+        // this pins that the reset actually makes the new geometry win.
+        const parent = makePlate('parent', {
+            motionSegments: [seg(0, NORTH, 0)],
+            geometryStages: [{ time: 0, polygons: square(0), features: [] }],
+        });
+        const child = {
+            ...parent,
+            id: 'child',
+            initialPolygons: square(100),
+            motionSegments: undefined,
+            geometryStages: undefined,
+        } as TectonicPlate;
+        const g = derivePlateGeometry(child, [child], 10);
+        expectCoord(g.polygons[0].points[0], [100, 0]);
     });
 });
 

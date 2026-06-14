@@ -458,9 +458,20 @@ export class TimelineSystem {
         if (changes.rate !== undefined) kf.eulerPole.rate = changes.rate;
         if (changes.position !== undefined) kf.eulerPole.position = changes.position;
 
-        // Ocean strips are now isochron-derived (ephemeral) — no snapshot preservation needed.
-
         const targetPlate = this.app?.state.world.plates.find((p: TectonicPlate) => p.id === event.plateId);
+
+        // Keep plate.motion (speed inputs, gizmo, properties panel) in sync when
+        // the edited segment is the one currently active
+        if (targetPlate) {
+            const t = this.app.state.world.currentTime;
+            const active = [...ensureMotionModel(targetPlate).segments]
+                .filter((s: MotionSegment) => s.time <= t)
+                .sort((a: MotionSegment, b: MotionSegment) => b.time - a.time)[0];
+            if (active === kf) {
+                targetPlate.motion = { ...targetPlate.motion, eulerPole: { ...kf.eulerPole } };
+            }
+        }
+
         this.triggerUpdate(kf.time, targetPlate);
     }
 
@@ -537,48 +548,13 @@ export class TimelineSystem {
         this.triggerUpdate(event.time, targetPlate);
     }
 
-    private triggerUpdate(invalidationTime: number = 0, targetPlate?: TectonicPlate) {
-        const plateToUpdate = targetPlate || this.plate;
-        if (plateToUpdate && this.simulationEngine && this.app && this.app.state) {
-            const plates = this.app.state.world.plates as TectonicPlate[];
-
-            // Collect every plate whose baked snapshots may depend on the edited one:
-            // the plate itself, its parent, ALL siblings, and ALL descendants
-            // (recursively — grandchildren after multi-generation splits were
-            // previously missed, leaving stale snapshots later in the timeline).
-            const affected = new Map<string, TectonicPlate>();
-            const addWithDescendants = (plate: TectonicPlate) => {
-                if (affected.has(plate.id)) return;
-                affected.set(plate.id, plate);
-                plates
-                    .filter((p: TectonicPlate) => p.parentPlateId === plate.id)
-                    .forEach(addWithDescendants);
-            };
-
-            addWithDescendants(plateToUpdate);
-
-            if (plateToUpdate.parentPlateId) {
-                const parent = plates.find((p: TectonicPlate) => p.id === plateToUpdate.parentPlateId);
-                if (parent) affected.set(parent.id, parent);
-
-                plates
-                    .filter((p: TectonicPlate) => p.id !== plateToUpdate.id && p.parentPlateId === plateToUpdate.parentPlateId)
-                    .forEach(addWithDescendants);
-            }
-
-            // 1. Recalculate Physics for all affected
-            affected.forEach((p: TectonicPlate) => {
-                const updated = this.simulationEngine!.recalculateMotionHistory(p);
-                // 2. Update Main State (replace plate).
-                // NOTE: replacePlate ignores invalidationTime — the orogeny-stroke
-                // pruning it was meant for was removed with the elevation system.
-                if (this.app.replacePlate) {
-                    this.app.replacePlate(updated, invalidationTime);
-                }
-            });
-
-            this.render(this.plate); // Re-render the UI for current plate
+    private triggerUpdate(_invalidationTime: number = 0, _targetPlate?: TectonicPlate) {
+        // Keyframe-less model: geometry is derived, so timeline edits need no
+        // rebaking — re-derive the world at the current time and re-render.
+        if (this.simulationEngine && this.app?.state) {
+            this.simulationEngine.setTime(this.app.state.world.currentTime);
         }
+        this.render(this.plate);
     }
 
 }

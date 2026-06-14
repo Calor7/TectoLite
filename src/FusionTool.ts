@@ -161,6 +161,8 @@ export function fusePlates(
         center: newCenter,
         motion: plate1.motion,
         motionKeyframes: [initialKeyframe],
+        motionSegments: [{ time: currentTime, eulerPole: { ...plate1.motion.eulerPole } }],
+        geometryStages: [{ time: currentTime, polygons: mergedPolygons, features: combinedFeatures }],
         events: [],
         birthTime: currentTime,
         deathTime: null,
