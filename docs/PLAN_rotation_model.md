@@ -58,14 +58,15 @@ and `applyPlateMotion` all collapse into one rotation function; saves shrink.
 | 2 | ✅ done | Engine consumes core: `calculatePlateAtTime` + `applyPlateMotion` re-implemented on top of it (signatures kept, −183 lines), legacy keyframes auto-converted via `getMotionModel`; `recalculateMotionHistory` is now an identity (no more rebaking, no more Edit-snapshot destruction) | vitest + typecheck — **needs visual pass** |
 | 3 | ✅ done | Producers + timeline on the new model: `addMotionKeyframe` writes `motionSegments` (old-pole pinning preserved); shape edits append/replace `geometryStages`; 'Apply at Generation' un-rotates through the full model; SplitTool baking delegates to the core (−176 lines, per-feature anchoring fixed); TimelineSystem lists/edits/retimes/deletes segments & stages via `ensureMotionModel` (materializes legacy keyframes once, then clears them — no split-brain) | typecheck + tests |
 | 4 | ✅ done | SAVE_VERSION 2: plates serialize `motionSegments`/`geometryStages` (incl. from_current_time time-shifting); merge-import remaps/shifts the new fields; v1 files migrate lazily via `fromLegacyKeyframes` on first touch | typecheck + tests |
-| 5 | ✅ effective | No rebaking exists (`recalculateMotionHistory` = identity; triggerUpdate walk now harmless). Deliberately KEPT: `MotionKeyframe` type + snapshot fields (required to parse v1 saves), draw/split/fusion still create one initial legacy keyframe (materialized on first timeline touch — converter is the permanent v1 path) | typecheck |
+| 5 | ✅ done | DELETED: `recalculateMotionHistory`, `calculateWithLegacyMotion`, `getPointPositionAtTime` legacy walk, `replacePlate`, the triggerUpdate re-bake walk (now just `setTime` + render). All trig rotation gone from SimulationEngine (`toRad`/`rotateVector` imports dropped). KEPT by design: `MotionKeyframe` type + snapshot fields (parse v1 saves); draw/split/fusion now ALSO write `motionSegments`/`geometryStages` at creation (legacy keyframe kept alongside for v1 export only) | typecheck + 62 tests |
 
-### Full-implementation status (2026-06-12)
+### Full-implementation status (2026-06-13) — COMPLETE
 
-The model is functionally complete end to end: create → move → edit → split → fuse →
-timeline-edit → save(v2) → load all run on derived geometry. Remaining niceties, not
-blockers: draw/split/fusion could write segments/stages directly at creation (currently
-one legacy keyframe each, converted on first touch); `ensureMotionModel` unit tests.
+End to end on derived geometry: create → move → edit → split → fuse → link/unlink →
+timeline-edit → save(v2) → load. All producers write the model at creation; the
+converter remains only as the v1-import path. ~360 lines of duplicated/snapshot motion
+code deleted, replaced by one tested ~310-line core. 62 tests incl. `ensureMotionModel`
++ spread-clone regression. **Awaiting the user's manual visual pass** (checklist below).
 
 ### Phase 2 behavioral notes (visual checklist)
 

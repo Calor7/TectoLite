@@ -4310,24 +4310,6 @@ class TectoLiteApp {
         if (redoBtn) redoBtn.disabled = !this.historyManager.canRedo();
     }
 
-    // Helper for TimelineSystem to replace a plate (updating state)
-    public replacePlate(plate: TectonicPlate): void {
-        const index = this.state.world.plates.findIndex(p => p.id === plate.id);
-        if (index !== -1) {
-            const newPlates = [...this.state.world.plates];
-            newPlates[index] = plate;
-
-
-
-            this.state = {
-                ...this.state,
-                world: { ...this.state.world, plates: newPlates }
-            };
-
-            this.canvasManager?.render();
-        }
-    }
-
     // Helper for TimelineSystem to delete multiple plates
     public deletePlates(ids: string[]): void {
         const idSet = new Set(ids);

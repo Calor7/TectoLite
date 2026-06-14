@@ -1,10 +1,8 @@
 import { AppState, TectonicPlate, Coordinate, Feature, generateId, createDefaultMotion, RiftAxis, Isochron, TripleJunction } from './types';
 
 import {
-    toRad,
     latLonToVector,
     vectorToLatLon,
-    rotateVector,
     normalize,
     calculateSphericalCentroid,
     nlerpCoord,
@@ -1853,88 +1851,6 @@ export class SimulationEngine {
             features: newFeatures,
             center: newCenter
         };
-    }
-
-    // Legacy fallback for plates without keyframes
-    calculateWithLegacyMotion(
-        plate: TectonicPlate,
-        time: number,
-        inheritedFeatures: Feature[] = []
-    ): TectonicPlate {
-        const pole = plate.motion?.eulerPole;
-        const elapsed = time - plate.birthTime;
-
-        if (!pole || pole.rate === 0 || elapsed === 0) {
-            return {
-                ...plate,
-                polygons: plate.initialPolygons || plate.polygons,
-                features: [...(plate.initialFeatures || plate.features), ...inheritedFeatures],
-                center: plate.center
-            };
-        }
-
-        const axis = latLonToVector(pole.position);
-        const angle = toRad(pole.rate * elapsed);
-
-        const transform = (coord: Coordinate): Coordinate => {
-            const v = latLonToVector(coord);
-            const vRot = rotateVector(v, axis, angle);
-            return vectorToLatLon(vRot);
-        };
-
-        // Transform helper: STRICTLY uses the provided startTime.
-        const transformFeature = (feat: Feature, startTime: number, useOriginal: boolean = false): Feature => {
-            const featureElapsed = Math.max(0, time - startTime);
-            const featureAngle = toRad(pole.rate * featureElapsed);
-
-            if (featureAngle === 0) {
-                return feat;
-            }
-
-            const sourcePos = (useOriginal && feat.originalPosition) ? feat.originalPosition : feat.position;
-            const v = latLonToVector(sourcePos);
-            const vRot = rotateVector(v, axis, featureAngle);
-            return {
-                ...feat,
-                position: vectorToLatLon(vRot),
-                originalPosition: feat.originalPosition
-            };
-        };
-
-        const sourcePolys = plate.initialPolygons || plate.polygons;
-        // Use current features (which include dynamically added ones) instead of only initialFeatures
-        const sourceFeats = plate.features;
-
-        const newPolygons = sourcePolys.map(poly => ({
-            ...poly,
-            points: poly.points.map(transform)
-        }));
-
-        // Transform plate features: Use their own generatedAt (or plate birth if missing)
-        // Dynamic features use originalPosition (true)
-        const transformedPlateFeatures = sourceFeats.map(feat =>
-            transformFeature(feat, feat.generatedAt ?? plate.birthTime, true)
-        );
-
-        // Transform inherited features: Use Plate Birth Time (Split Time)
-        // Position is valid at split. useOriginal = false
-        const transformedInheritedFeatures = inheritedFeatures.map(feat =>
-            transformFeature(feat, plate.birthTime, false)
-        );
-
-        const newFeatures = [...transformedPlateFeatures, ...transformedInheritedFeatures];
-
-        const allPoints = newPolygons.flatMap(poly => poly.points);
-        const newCenter = calculateSphericalCentroid(allPoints);
-
-        const updatedPlate = {
-            ...plate,
-            polygons: newPolygons,
-            features: newFeatures,
-            center: newCenter
-        };
-
-        return updatedPlate;
     }
 
     private updateFlowlines(): void {

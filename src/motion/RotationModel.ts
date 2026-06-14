@@ -73,7 +73,7 @@ export function getMotionModel(plate: TectonicPlate): MotionModel {
  * - Every keyframe contributes a motion segment (time + pole). A plate without
  *   keyframes gets a single segment at birth from its current `motion`.
  * - Stage 0 is the birth geometry (`initialPolygons`/`initialFeatures` — the
- *   legacy source of truth used by `recalculateMotionHistory`).
+ *   legacy source of truth for a plate's birth geometry).
  * - Keyframes labelled 'Edit' are genuine geometry changes: their snapshots are
  *   absolute coordinates at the keyframe time, which is exactly a GeometryStage.
  *   All other snapshots are derived data and are dropped — that is the point.
