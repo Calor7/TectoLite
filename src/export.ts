@@ -1,5 +1,6 @@
 // PNG Export functionality
 import { AppState, Feature, WorldState, ProjectionType, CameraView } from './types';
+import { pruneCausalLinks } from './causality/CausalGraph';
 import { ProjectionManager } from './canvas/ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
@@ -162,7 +163,9 @@ function drawFeature(
 // JSON Export functionality
 // v2: plates may carry motionSegments/geometryStages (keyframe-less model).
 // v1 files (motionKeyframes only) are converted lazily by RotationModel.
-const SAVE_VERSION = 2;
+// v3: world may carry causalLinks (causality layer). Older files lack the field
+//     and are auto-seeded on import; never written back in an older shape.
+const SAVE_VERSION = 3;
 
 export type ExportMode = 'entire_timeline' | 'from_current_time';
 
@@ -344,6 +347,13 @@ export async function exportToJSON(state: AppState, cameraViews?: CameraView[]):
                         ?.map(v => ({ ...v, time: v.time + timeOffset }))
                         .filter(v => v.time >= 0),
                 }))
+        };
+
+        // Prune causal links to the surviving (filtered) entities and shift their
+        // annotation times so the saved slice has no dangling refs.
+        worldToSave = {
+            ...worldToSave,
+            causalLinks: pruneCausalLinks(state.world.causalLinks, worldToSave, timeOffset),
         };
     }
 

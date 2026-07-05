@@ -1896,7 +1896,7 @@ export class SimulationEngine {
                     });
                 }
 
-                if (plate.lineType === 'rift' && plate.initialFeatures) {
+                if (plate.lineType === 'divergent' && plate.initialFeatures) {
                     plate.initialFeatures.forEach(f => {
                         if (f.properties?.path && Array.isArray(f.properties.path)) {
                             sourcePoints.push(...f.properties.path);

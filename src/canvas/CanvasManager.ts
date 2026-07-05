@@ -1,4 +1,4 @@
-import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, TectonicEvent, ToolType, TectonicPlate } from '../types';
+import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, TectonicEvent, ToolType, TectonicPlate, LineType, resolveLineTypeDefaults } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
@@ -875,19 +875,22 @@ export class CanvasManager {
                 this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
                 this.ctx.lineWidth = isSelected ? 2 : 1;
                 if (plate.type === 'rift') {
-                    // Line type visual differentiation
-                    const lt = plate.lineType || 'generic';
-                    const lineTypeStyles: Record<string, { color: string; selectedColor: string; dash: number[]; width: number }> = {
-                        rift: { color: '#ff4444', selectedColor: '#ff6666', dash: [12, 4], width: 2 },
-                        trench: { color: '#4488ff', selectedColor: '#66aaff', dash: [3, 3], width: 2 },
-                        fault: { color: '#ffaa00', selectedColor: '#ffcc44', dash: [], width: 2 },
-                        suture: { color: '#aa44ff', selectedColor: '#cc66ff', dash: [6, 2], width: 2 },
-                        generic: { color: '#ff8844', selectedColor: '#ffaa66', dash: [8, 4], width: 2 },
-                    };
-                    const style = lineTypeStyles[lt] || lineTypeStyles.generic;
-                    this.ctx.strokeStyle = isSelected ? style.selectedColor : style.color;
-                    this.ctx.lineWidth = isSelected ? style.width + 2 : style.width;
-                    this.ctx.setLineDash(style.dash);
+                    // Line type visual differentiation.
+                    // Color: respects plate.color when the user customized it;
+                    // otherwise falls back to the per-type default from
+                    // globalOptions.lineTypeDefaults (settings-editable).
+                    // Dash: respects plate.lineDashCustomized override;
+                    // otherwise uses the per-type default.
+                    const lt: LineType = (plate.lineType as LineType) || 'generic';
+                    const defs = resolveLineTypeDefaults(this.getState().world.globalOptions.lineTypeDefaults);
+                    const typeDefault = defs[lt] || defs.generic;
+                    const strokeColor = plate.lineColorCustomized
+                        ? (plate.color || typeDefault.color)
+                        : typeDefault.color;
+                    const dash = typeDefault.dash;
+                    this.ctx.strokeStyle = isSelected ? '#ffffff' : strokeColor;
+                    this.ctx.lineWidth = isSelected ? 4 : 2;
+                    this.ctx.setLineDash(dash);
                 }
                 this.ctx.stroke();
                 this.ctx.setLineDash([]); // Reset dash after each polygon stroke

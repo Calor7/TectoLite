@@ -8,13 +8,17 @@ import {
     Feature,
     RiftAxis,
     TripleJunction,
+    CausalLink,
+    EntityRef,
     generateId,
+    migrateLineType,
 } from './types';
 
 export interface RemappedImport {
     plates: TectonicPlate[];
     riftAxes: RiftAxis[];
     tripleJunctions: TripleJunction[];
+    causalLinks: CausalLink[];
 }
 
 /**
@@ -31,7 +35,7 @@ export interface RemappedImport {
  * re-derived each frame from the imported rift axes.
  */
 export function remapImportedWorld(
-    importedWorld: Pick<WorldState, 'plates' | 'riftAxes' | 'tripleJunctions'>,
+    importedWorld: Pick<WorldState, 'plates' | 'riftAxes' | 'tripleJunctions' | 'causalLinks'>,
     timeOffset: number
 ): RemappedImport {
     const idMap = new Map<string, string>(); // old plate id -> new plate id
@@ -89,6 +93,9 @@ export function remapImportedWorld(
             .filter((id): id is string => id !== undefined),
         linkedToPlateId: remapRef(plate.linkedToPlateId),
         generatedBy: remapRef(plate.generatedBy),
+        // Normalize legacy lineType values (rift/trench/fault/suture) to the
+        // current LineType union so old saves render with the new palette.
+        lineType: plate.lineType ? migrateLineType(plate.lineType) : plate.lineType,
         connectedRiftIds: (plate.connectedRiftIds || [])
             .map(id => idMap.get(id))
             .filter((id): id is string => id !== undefined),
@@ -132,15 +139,63 @@ export function remapImportedWorld(
             };
         });
 
+    const junctionIdMap = new Map<string, string>();
     const tripleJunctions: TripleJunction[] = (importedWorld.tripleJunctions || [])
         .filter(j => j.axisIds.every(id => axisIdMap.has(id)))
-        .map(j => ({
-            ...j,
-            id: generateId(),
-            axisIds: j.axisIds.map(id => axisIdMap.get(id)!),
-            birthTime: j.birthTime + timeOffset,
-            junctionHistory: j.junctionHistory?.map(v => ({ ...v, time: v.time + timeOffset }))
-        }));
+        .map(j => {
+            const newJunctionId = generateId();
+            junctionIdMap.set(j.id, newJunctionId);
+            return {
+                ...j,
+                id: newJunctionId,
+                axisIds: j.axisIds.map(id => axisIdMap.get(id)!),
+                birthTime: j.birthTime + timeOffset,
+                junctionHistory: j.junctionHistory?.map(v => ({ ...v, time: v.time + timeOffset }))
+            };
+        });
 
-    return { plates, riftAxes, tripleJunctions };
+    // Remap user-authored causal links onto the new IDs. Auto-derived links are
+    // dropped (the caller re-seeds them from the merged world). Links whose
+    // endpoints weren't imported — including event refs, which aren't merge-
+    // imported — are stripped rather than left dangling.
+    const remapEntityRef = (r: EntityRef): EntityRef | undefined => {
+        switch (r.kind) {
+            case 'plate': { const id = idMap.get(r.id); return id ? { kind: 'plate', id } : undefined; }
+            case 'feature': { const id = featureIdMap.get(r.id); return id ? { kind: 'feature', id } : undefined; }
+            case 'riftAxis': { const id = axisIdMap.get(r.id); return id ? { kind: 'riftAxis', id } : undefined; }
+            case 'tripleJunction': { const id = junctionIdMap.get(r.id); return id ? { kind: 'tripleJunction', id } : undefined; }
+            default: return undefined; // events aren't carried by merge-import
+        }
+    };
+    const causalLinks: CausalLink[] = (importedWorld.causalLinks || [])
+        .filter(l => l.auto !== true)
+        .map(l => {
+            const from = remapEntityRef(l.from);
+            const to = remapEntityRef(l.to);
+            if (!from || !to) return undefined;
+            return {
+                ...l,
+                id: generateId(),
+                from,
+                to,
+                time: l.time !== undefined ? l.time + timeOffset : undefined,
+            } as CausalLink;
+        })
+        .filter((l): l is CausalLink => l !== undefined);
+
+    return { plates, riftAxes, tripleJunctions, causalLinks };
+}
+
+/**
+ * In-place migration of a world's plate.lineType values from the legacy
+ * LineType union (rift/trench/fault/suture) to the current one
+ * (divergent/convergent/transform/generic). Use this for load paths that
+ * bypass remapImportedWorld (autosave restore, replace-current import).
+ */
+export function migrateWorldLineTypes(world: Pick<WorldState, 'plates'>): void {
+    for (const plate of world.plates) {
+        if (plate.lineType) {
+            plate.lineType = migrateLineType(plate.lineType);
+        }
+    }
 }

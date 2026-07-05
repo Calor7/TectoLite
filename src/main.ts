@@ -19,7 +19,10 @@ import {
     DrawMode,
     LineType,
     PolygonType,
-    CameraView
+    CameraView,
+    DASH_PRESETS,
+    resolveLineTypeDefaults,
+    defaultLineTypeDefaults
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -29,7 +32,8 @@ import { fusePlates } from './FusionTool';
 import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
-import { remapImportedWorld } from './importHelpers';
+import { remapImportedWorld, migrateWorldLineTypes } from './importHelpers';
+import { reseedAutoLinks } from './causality/CausalGraph';
 import { pointPositionAt, ensureMotionModel, getMotionModel } from './motion/RotationModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
@@ -223,6 +227,7 @@ class TectoLiteApp {
                         text: 'Restore Autosave',
                         subtext: 'Continue where you left off',
                         onClick: () => {
+                            migrateWorldLineTypes(data.world);
                             this.state = {
                                 ...this.state,
                                 world: data.world,
@@ -834,6 +839,51 @@ class TectoLiteApp {
 
             this.canvasManager?.render();
         });
+
+        // ── Line Entity Defaults ──────────────────────────────────────
+        // Per-line-type default color + dash pattern. Changing a default
+        // updates every non-customized line entity (already-placed ones whose
+        // color/dash the user hasn't manually overridden) and feeds into newly
+        // created ones.
+        const ensureLineTypeDefaults = () => {
+            if (!this.state.world.globalOptions.lineTypeDefaults) {
+                this.state.world.globalOptions.lineTypeDefaults = defaultLineTypeDefaults();
+            }
+            return resolveLineTypeDefaults(this.state.world.globalOptions.lineTypeDefaults);
+        };
+
+        const applyLineTypeDefaultColor = (lt: LineType, color: string) => {
+            const defs = ensureLineTypeDefaults();
+            defs[lt].color = color;
+            // Update non-customized line entities of this type.
+            for (const plate of this.state.world.plates) {
+                if (plate.type === 'rift' && (plate.lineType || 'generic') === lt && !plate.lineColorCustomized) {
+                    plate.color = color;
+                }
+            }
+            this.canvasManager?.render();
+        };
+
+        const applyLineTypeDefaultDash = (lt: LineType, dash: number[]) => {
+            const defs = ensureLineTypeDefaults();
+            defs[lt].dash = dash;
+            // Dash isn't stored per-plate (derived from the default), so no
+            // per-plate update is needed — the canvas reads the default next
+            // render. lineDashCustomized plates keep their override (handled
+            // in CanvasManager).
+            this.canvasManager?.render();
+        };
+
+        for (const lt of ['divergent', 'convergent', 'transform', 'generic'] as LineType[]) {
+            document.getElementById(`input-line-color-${lt}`)?.addEventListener('input', (e) => {
+                applyLineTypeDefaultColor(lt, (e.target as HTMLInputElement).value);
+            });
+            document.getElementById(`select-line-dash-${lt}`)?.addEventListener('change', (e) => {
+                const idx = parseInt((e.target as HTMLSelectElement).value);
+                const preset = DASH_PRESETS[idx] || DASH_PRESETS[0];
+                applyLineTypeDefaultDash(lt, [...preset.dash]);
+            });
+        }
 
         // Global Options
         // Advanced Toggles
@@ -1450,6 +1500,7 @@ class TectoLiteApp {
                     this.pushState(); // Save current state before adding/restoring
 
                     if (importMode === 'replace_current') {
+                        migrateWorldLineTypes(importedWorld);
                         this.state = {
                             ...this.state,
                             world: importedWorld,
@@ -1457,6 +1508,9 @@ class TectoLiteApp {
                             activeTool: (activeTool as ToolType) ?? this.state.activeTool,
                             activeFeatureType: (activeFeatureType as FeatureType) ?? this.state.activeFeatureType
                         };
+                        // Auto-seed the causal graph (legacy saves lack causalLinks);
+                        // preserves any user-authored links already in the file.
+                        this.state.world.causalLinks = reseedAutoLinks(this.state.world, this.state.world.causalLinks || []);
 
                         this.updateExplorer();
                         this.updateUI();
@@ -1489,9 +1543,13 @@ class TectoLiteApp {
                             ...this.state.world,
                             plates: [...this.state.world.plates, ...processedPlates],
                             riftAxes: [...(this.state.world.riftAxes || []), ...remapped.riftAxes],
-                            tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions]
+                            tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions],
+                            causalLinks: [...(this.state.world.causalLinks || []), ...remapped.causalLinks]
                         }
                     };
+                    // Re-seed auto-derived causal links over the merged world so
+                    // ancestry/event links reflect the newly added plates.
+                    this.state.world.causalLinks = reseedAutoLinks(this.state.world, this.state.world.causalLinks || []);
 
                     // Restoring Settings Logic
                     if (importedWorld.globalOptions) {
@@ -1871,10 +1929,17 @@ class TectoLiteApp {
             const lineType = this.state.activeLineType;
             const typeLabel = lineType.charAt(0).toUpperCase() + lineType.slice(1);
 
+            // Seed the plate color from the per-type default in settings so new
+            // line entities track settings changes until the user customizes.
+            const defs = resolveLineTypeDefaults(this.state.world.globalOptions.lineTypeDefaults);
+            const typeDefaultColor = (defs[lineType] || defs.generic).color;
+
             const plate: TectonicPlate = {
                 id: generateId(),
                 name: `${typeLabel} ${this.state.world.plates.filter(p => p.type === 'rift').length + 1}`,
-                color: '#ff8844',
+                color: typeDefaultColor,
+                // lineColorCustomized / lineDashCustomized intentionally unset
+                // (false) so settings-default changes propagate to this plate.
                 polygons: [polygon],
                 features: [],
                 motion: defaultMotion,
@@ -3016,10 +3081,9 @@ class TectoLiteApp {
       <div class="property-group">
         <label class="property-label">Line Type</label>
         <select id="prop-line-type" class="property-input">
-            <option value="rift" ${plate.lineType === 'rift' || !plate.lineType ? 'selected' : ''}>Rift</option>
-            <option value="trench" ${plate.lineType === 'trench' ? 'selected' : ''}>Trench</option>
-            <option value="fault" ${plate.lineType === 'fault' ? 'selected' : ''}>Fault / Transform</option>
-            <option value="suture" ${plate.lineType === 'suture' ? 'selected' : ''}>Suture Zone</option>
+            <option value="divergent" ${plate.lineType === 'divergent' || !plate.lineType ? 'selected' : ''}>Divergent</option>
+            <option value="convergent" ${plate.lineType === 'convergent' ? 'selected' : ''}>Convergent</option>
+            <option value="transform" ${plate.lineType === 'transform' ? 'selected' : ''}>Transform</option>
             <option value="generic" ${plate.lineType === 'generic' ? 'selected' : ''}>Generic</option>
         </select>
       </div>
@@ -3261,9 +3325,19 @@ class TectoLiteApp {
 
 
 
-        document.getElementById('prop-color')?.addEventListener('change', (e) => {
+        const propColor = document.getElementById('prop-color') as HTMLInputElement | null;
+        propColor?.addEventListener('change', (e) => {
             plate.color = (e.target as HTMLInputElement).value;
+            // Mark line entities as color-customized so subsequent settings-
+            // default changes don't override the user's manual pick.
+            if (plate.type === 'rift') plate.lineColorCustomized = true;
             this.updateExplorer();
+            this.canvasManager?.render();
+        });
+        // Live feedback while dragging the color picker swatch.
+        propColor?.addEventListener('input', (e) => {
+            plate.color = (e.target as HTMLInputElement).value;
+            if (plate.type === 'rift') plate.lineColorCustomized = true;
             this.canvasManager?.render();
         });
 
@@ -3272,11 +3346,21 @@ class TectoLiteApp {
             const typeLabel = plate.lineType.charAt(0).toUpperCase() + plate.lineType.slice(1);
             // Auto-update name if it still looks like a default name
             const nameInput = document.getElementById('prop-name') as HTMLInputElement;
-            if (nameInput && /^(Rift|Trench|Fault|Custom) \d+$/.test(plate.name)) {
+            if (nameInput && /^(Divergent|Convergent|Transform|Generic|Rift|Trench|Fault|Suture|Custom) \d+$/.test(plate.name)) {
                 const num = plate.name.split(' ').pop();
                 plate.name = `${typeLabel} ${num}`;
                 nameInput.value = plate.name;
                 this.updateExplorer();
+            }
+            // Sync the color picker to the new line type's current default
+            // color from settings. Switching type resets the customized flag
+            // so the plate tracks the new type's default until manually set.
+            const colorInput = document.getElementById('prop-color') as HTMLInputElement;
+            if (colorInput && plate.type === 'rift') {
+                const defs = resolveLineTypeDefaults(this.state.world.globalOptions.lineTypeDefaults);
+                plate.color = (defs[plate.lineType] || defs.generic).color;
+                plate.lineColorCustomized = false;
+                colorInput.value = plate.color;
             }
             this.canvasManager?.render();
         });

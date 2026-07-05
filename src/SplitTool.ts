@@ -2,7 +2,7 @@ import {
     AppState, TectonicPlate,
     Polygon,
     EdgeMeta,
-    LineType,
+    EdgeKind,
     Coordinate,
     generateId,
     MotionKeyframe,
@@ -324,7 +324,7 @@ function assignSplitEdgeMeta(
 
             metaA.push({
                 edgeIndex: currentEdgIdx,
-                type: 'rift' as LineType,
+                type: 'rift' as EdgeKind,
                 sourceId: groupId,
                 siblings: [{
                     id: generateId(),
@@ -361,7 +361,7 @@ function assignSplitEdgeMeta(
 
             metaB.push({
                 edgeIndex: currentEdgIdx,
-                type: 'rift' as LineType,
+                type: 'rift' as EdgeKind,
                 sourceId: groupId,
                 siblings: [{
                     id: generateId(),

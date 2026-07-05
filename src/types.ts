@@ -27,7 +27,7 @@ export interface SiblingAssignment {
 /** Per-edge metadata. edgeIndex = edge from points[i] → points[(i+1) % len] */
 export interface EdgeMeta {
   edgeIndex: number;
-  type: LineType;                    // 'rift' | 'trench' | 'fault' | 'suture' | 'generic'
+  type: EdgeKind;                    // 'rift' | 'cut' | 'passive' — semantic role of the edge
   sourceId?: string;                 // Entity that "owns" this edge (plate ID, rift group ID)
   siblings?: SiblingAssignment[];    // 0, 1, or 2+ sibling assignments (non-exclusive)
 }
@@ -46,6 +46,25 @@ export function getRiftEdgeIndices(poly: Polygon): number[] {
     return poly.edgeMeta.filter(e => e.type === 'rift').map(e => e.edgeIndex);
   }
   return poly.riftEdgeIndices || [];
+}
+
+/** Legacy → current LineType migration map (v1/v2 saves → v3). */
+export const LEGACY_LINE_TYPE_MAP: Record<string, LineType> = {
+  rift: 'divergent',
+  trench: 'convergent',
+  fault: 'transform',
+  suture: 'convergent',
+  generic: 'generic',
+  // Already-new values pass through unchanged
+  divergent: 'divergent',
+  convergent: 'convergent',
+  transform: 'transform',
+};
+
+/** Migrate a possibly-legacy lineType string to the current LineType union. */
+export function migrateLineType(raw: string | undefined): LineType {
+  if (!raw) return 'generic';
+  return LEGACY_LINE_TYPE_MAP[raw] ?? 'generic';
 }
 
 export function getEdgesForSiblingGroup(poly: Polygon, groupId: string): EdgeMeta[] {
@@ -70,7 +89,7 @@ export interface EdgeRef {
 // Per-edge type assignment (foundation for future edge-type color coding)
 export interface EdgeStyle {
   edgeIndex: number;  // Index into polygon's points array
-  type: LineType;     // 'rift' | 'trench' | 'fault' | 'suture' | 'generic'
+  type: EdgeKind;     // 'rift' | 'cut' | 'passive'
 }
 export type FeatureType = 'mountain' | 'volcano' | 'hotspot' | 'rift' | 'trench' | 'island' | 'weakness' | 'poly_region' | 'seafloor';
 export type TimeMode = 'positive' | 'negative' | 'ma' | 'ago'; // Legacy - kept for transition, but functionally removed
@@ -337,8 +356,68 @@ export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
   }
 ];
 
-export type LineType = 'rift' | 'trench' | 'fault' | 'suture' | 'generic';
+export type LineType = 'divergent' | 'convergent' | 'transform' | 'generic';
+export type EdgeKind = 'rift' | 'cut' | 'passive';
 export type PolygonType = 'generic' | 'continental_crust' | 'island' | 'continental_plate' | 'oceanic_plate' | 'craton';
+
+/** Default base colors for each LineType — distinct in hue AND value,
+ *  distinguishable under common color-vision deficiencies. */
+export const LINE_TYPE_COLORS: Record<LineType, string> = {
+  divergent: '#2ECC71',  // green  — spreading / new crust
+  convergent: '#E74C3C', // red    — collision / subduction
+  transform: '#F39C12',  // amber  — lateral motion
+  generic: '#95A5A6',    // gray   — unclassified
+};
+
+/** Dash patterns per LineType (visual differentiation beyond color). */
+export const LINE_TYPE_DASH: Record<LineType, number[]> = {
+  divergent: [12, 4],
+  convergent: [3, 3],
+  transform: [],          // solid
+  generic: [8, 4],
+};
+
+/** Human-readable labels for each LineType (settings UI + naming). */
+export const LINE_TYPE_LABELS: Record<LineType, string> = {
+  divergent: 'Divergent',
+  convergent: 'Convergent',
+  transform: 'Transform',
+  generic: 'Generic',
+};
+
+/** Dash-pattern presets offered in the settings dropdown. */
+export const DASH_PRESETS: { label: string; dash: number[] }[] = [
+  { label: 'Solid',          dash: [] },
+  { label: 'Dashed',         dash: [12, 4] },
+  { label: 'Dotted',         dash: [3, 3] },
+  { label: 'Dash-Dot',       dash: [8, 4, 2, 4] },
+  { label: 'Long Dash',      dash: [16, 6] },
+  { label: 'Short Dash',     dash: [8, 4] },
+];
+
+/** Build a fresh Record<LineType, {color, dash}> from the static defaults. */
+export function defaultLineTypeDefaults(): Record<LineType, { color: string; dash: number[] }> {
+  return {
+    divergent:  { color: LINE_TYPE_COLORS.divergent,  dash: [...LINE_TYPE_DASH.divergent]  },
+    convergent: { color: LINE_TYPE_COLORS.convergent, dash: [...LINE_TYPE_DASH.convergent] },
+    transform:  { color: LINE_TYPE_COLORS.transform,  dash: [...LINE_TYPE_DASH.transform]  },
+    generic:    { color: LINE_TYPE_COLORS.generic,    dash: [...LINE_TYPE_DASH.generic]    },
+  };
+}
+
+/** Resolve the effective line-type defaults, falling back to the static
+ *  palette when globalOptions.lineTypeDefaults is missing (legacy saves). */
+export function resolveLineTypeDefaults(
+  opts?: Record<LineType, { color: string; dash: number[] }> | undefined
+): Record<LineType, { color: string; dash: number[] }> {
+  if (!opts) return defaultLineTypeDefaults();
+  // Backfill any missing entries (e.g. a save that predates a new LineType)
+  const base = defaultLineTypeDefaults();
+  for (const k of Object.keys(base) as LineType[]) {
+    if (!opts[k]) opts[k] = base[k];
+  }
+  return opts;
+}
 
 // ============================================================================
 // RIFT AXIS — Mid-ocean ridge / spreading center (first-class entity)
@@ -453,7 +532,9 @@ export interface TectonicPlate {
 
   // Rift & Generation Properties
   type?: 'lithosphere' | 'oceanic' | 'rift'; // Default 'lithosphere'
-  lineType?: LineType; // Classification for line-type plates (rift, trench, fault, custom)
+  lineType?: LineType; // Classification for line-type plates (divergent, convergent, transform, generic)
+  lineColorCustomized?: boolean;  // True once the user manually picks a color (settings-default changes won't override)
+  lineDashCustomized?: boolean;   // True once the user manually picks a dash pattern
   linkType?: 'motion' | 'generation'; // Default 'motion'
   connectedRiftIds: string[]; // IDs of Rifts accumulating crust from this plate
   connectedRiftId?: string; // Deprecated: Kept for backward compatibility
@@ -470,6 +551,42 @@ export interface TectonicPlate {
 
   visible: boolean;
   locked: boolean;
+}
+
+// ============================================================================
+// CAUSALITY LAYER — user-authorable + auto-derived causal graph
+// ============================================================================
+// Pure document metadata. Never read by SimulationEngine / motion / geometry.
+// Used only to (a) document "why" things exist and (b) HIGHLIGHT/rank options in
+// guided-mode suggestion UIs — it never gates or removes options.
+
+export type EntityKind = 'plate' | 'feature' | 'event' | 'riftAxis' | 'tripleJunction';
+
+/** Uniform handle to any causal-graph entity (cf. EdgeRef for edges). */
+export interface EntityRef {
+  kind: EntityKind;
+  id: string;
+}
+
+export type CausalRelation =
+  | 'caused-by'
+  | 'created-from'
+  | 'succeeded-by'
+  | 'contemporaneous-with'
+  | 'part-of'
+  | 'motivated-by';
+
+/** A directed causal/temporal link between two entities.
+ *  `auto: true` marks links derived by deriveImplicitLinks (re-derivable/disposable);
+ *  user-authored links omit it and are never touched by re-derivation. */
+export interface CausalLink {
+  id: string;
+  from: EntityRef;
+  to: EntityRef;
+  relation: CausalRelation;
+  time?: number;     // optional geological time the relation refers to
+  note?: string;     // optional user annotation
+  auto?: boolean;    // true = derived from implicit model links
 }
 
 export interface WorldState {
@@ -532,11 +649,19 @@ export interface WorldState {
     enableExpandingRifts?: boolean;          // Toggle for isochron Expanding Rift system
     oceanicCrustColor?: string;              // Default color for new oceanic crust
     oceanicCrustOpacity?: number;            // Opacity for oceanic crust rendering (0-1)
+
+    // Line Entity Defaults — per-line-type default color + dash pattern.
+    // User-editable in settings. When changed, all non-customized line
+    // entities are updated to match (see migrateLineTypeDefaults).
+    lineTypeDefaults?: Record<LineType, { color: string; dash: number[] }>;
   };
 
   // Rift Axis system (mid-ocean ridge entities)
   riftAxes?: RiftAxis[];        // All rift axes (active, frozen, dead)
   tripleJunctions?: TripleJunction[];  // Junction points where 2+ axes converge
+
+  // Causality layer (pure metadata; see CausalLink). Auto-seeded on import.
+  causalLinks?: CausalLink[];
 
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
@@ -691,10 +816,14 @@ export function createDefaultWorldState(): WorldState {
       enableExpandingRifts: false,
       oceanicCrustColor: '#3b82f6', // Default blue
       oceanicCrustOpacity: 0.5,      // Default 50% opacity
+      // Line entity defaults — seeded from LINE_TYPE_COLORS / LINE_TYPE_DASH
+      lineTypeDefaults: defaultLineTypeDefaults(),
     },
     // Rift axis defaults
     riftAxes: [],
     tripleJunctions: [],
+    // Causality layer defaults
+    causalLinks: [],
     // Event system defaults
     tectonicEvents: [],
     pendingEventId: null
@@ -710,7 +839,7 @@ export function createDefaultAppState(): AppState {
     activeTool: 'select',
     activeFeatureType: 'mountain',
     drawMode: 'polygon',
-    activeLineType: 'rift',
+    activeLineType: 'divergent',
     activePolygonType: 'generic',
     viewport: {
       width: width,

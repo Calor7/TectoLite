@@ -2,6 +2,13 @@
  * AppTemplate - Main application HTML template.
  * Extracted from main.ts TectoLiteApp.getHTML() method.
  */
+import {
+  LineType,
+  LINE_TYPE_LABELS,
+  DASH_PRESETS,
+  resolveLineTypeDefaults,
+} from '../types';
+
 export interface AppTemplateOptions {
   globalOptions: any;
   realWorldPresetListHtml: string;
@@ -90,6 +97,32 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                              </div>
                              <input type="range" id="input-oceanic-opacity" min="0" max="100" value="${Math.round((g.oceanicCrustOpacity ?? 0.5) * 100)}" style="width: 100%; height: 4px; display:block; margin-top:4px;">
                         </div>
+                    </div>
+
+                    <!-- Line Entity Defaults — per-type color + dash pattern -->
+                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
+                        <div class="dropdown-header">Line Entity Defaults</div>
+                        ${(() => {
+                          const defs = resolveLineTypeDefaults(g.lineTypeDefaults);
+                          const types: LineType[] = ['divergent', 'convergent', 'transform', 'generic'];
+                          return types.map(lt => {
+                            const d = defs[lt];
+                            const dashIdx = DASH_PRESETS.findIndex(p =>
+                              p.dash.length === d.dash.length &&
+                              p.dash.every((v, i) => v === d.dash[i])
+                            );
+                            const sel = dashIdx >= 0 ? dashIdx : 0;
+                            return `
+                              <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+                                <label style="font-size: 10px; color: var(--text-secondary); flex: 1;">${LINE_TYPE_LABELS[lt]}</label>
+                                <input type="color" id="input-line-color-${lt}" value="${d.color}" style="width: 24px; height: 16px; border: none; padding: 0; background: none; cursor: pointer;">
+                                <select id="select-line-dash-${lt}" class="tool-select" style="width: 90px; font-size: 10px; padding: 1px;">
+                                  ${DASH_PRESETS.map((p, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${p.label}</option>`).join('')}
+                                </select>
+                              </div>
+                            `;
+                          }).join('');
+                        })()}
                     </div>
 
                     <!-- Automation & Events (opt-in; these systems existed but had no UI) -->
@@ -353,10 +386,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                      <div id="line-type-group" style="display: none;">
                          <label style="font-size: 10px; color: var(--text-secondary);">Line Type</label>
                          <select id="draw-line-type" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
-                             <option value="rift">Rift</option>
-                             <option value="trench">Trench</option>
-                             <option value="fault">Fault / Transform</option>
-                             <option value="suture">Suture Zone</option>
+                             <option value="divergent">Divergent</option>
+                             <option value="convergent">Convergent</option>
+                             <option value="transform">Transform</option>
                              <option value="generic">Generic</option>
                          </select>
                      </div>
