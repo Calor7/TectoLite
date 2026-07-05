@@ -108,3 +108,6 @@ Each modal in the stack gets an incrementing z-index (e.g. base 10000 + stack de
 - The dropdown menus in `AppTemplate.ts` (planet settings, view options) are NOT modals — they're dropdown toggles. Leave them alone.
 - The `ModalManager` singleton is fine for this app (single window). If multi-window support is ever needed, instantiate per window.
 - Style the modal consistently with the existing `ModalSystem` look (dark theme, rounded corners, etc.) — reuse the CSS classes from `style.css` if they exist, or add new ones.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

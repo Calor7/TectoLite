@@ -83,3 +83,6 @@ The `toggleTheme` function in `ModalSystem.ts` switches a `data-theme` attribute
 - Keep the CSS organized with section comments (`/* === Layout === */`, `/* === Settings === */`, etc.).
 - The existing CSS variables (`--bg-dark`, `--bg-elevated`, `--text-primary`, `--text-secondary`, `--border-default`, `--accent-primary`, `--radius-sm`, etc.) should be reused — don't introduce new variables unless needed.
 - This task is tedious but low-risk. If a visual difference appears, it's a CSS specificity or variable issue — fix it by matching the original inline value.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

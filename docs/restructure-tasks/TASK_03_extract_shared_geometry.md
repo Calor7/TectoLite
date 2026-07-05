@@ -53,3 +53,5 @@ Both use the same equirectangular ray-casting algorithm with antimeridian longit
 - `Coordinate` type is `[number, number]` (lon, lat) — defined in `src/types.ts`.
 - `src/utils/sphericalMath.ts` already exports `Vector3`, `latLonToVector`, `vectorToLatLon`, etc. Follow the existing import style.
 - Do NOT change the algorithm — just move it. The duplication is the problem, not the implementation.
+
+Note out of scope findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

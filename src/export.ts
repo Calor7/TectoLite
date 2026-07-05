@@ -1,5 +1,6 @@
 // PNG Export functionality
 import { AppState, Feature, WorldState, ProjectionType, CameraView } from './types';
+import { migrateSaveFile, CURRENT_SAVE_VERSION as SAVE_VERSION, type SaveFile } from './migration';
 import { ProjectionManager } from './canvas/ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
@@ -160,9 +161,15 @@ function drawFeature(
 
 
 // JSON Export functionality
-// v2: plates may carry motionSegments/geometryStages (keyframe-less model).
-// v1 files (motionKeyframes only) are converted lazily by RotationModel.
-const SAVE_VERSION = 3;
+// Save version history:
+//   v4: motion model migration — plates carry motionSegments/geometryStages
+//       only (legacy motion/motionKeyframes removed from the type; old saves
+//       are migrated at load time via migrateSaveFile → ensureMotionModel).
+//   v3: line type rename (rift/trench/fault/suture → divergent/convergent/
+//       transform/generic).
+//   v1/v2: motionKeyframes-only model; converted lazily by the migration
+//       pipeline at load time.
+// The current version lives in src/migration.ts (CURRENT_SAVE_VERSION).
 
 export type ExportMode = 'entire_timeline' | 'from_current_time';
 
@@ -288,22 +295,11 @@ export async function exportToJSON(state: AppState, cameraViews?: CameraView[]):
                     ...plate,
                     birthTime: Math.max(0, plate.birthTime + timeOffset),
                     deathTime: plate.deathTime !== null ? plate.deathTime + timeOffset : null,
-                    motionKeyframes: plate.motionKeyframes
-                        .filter(kf => kf.time <= state.world.currentTime) // Only keyframes up to current time
-                        .map(kf => ({
-                            ...kf,
-                            time: Math.max(0, kf.time + timeOffset),
-                            snapshotFeatures: kf.snapshotFeatures.map(f => ({
-                                ...f,
-                                generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
-                                deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
-                            }))
-                        })),
                     motionSegments: plate.motionSegments
-                        ?.filter(s => s.time <= state.world.currentTime)
+                        .filter(s => s.time <= state.world.currentTime)
                         .map(s => ({ ...s, time: Math.max(0, s.time + timeOffset) })),
                     geometryStages: plate.geometryStages
-                        ?.filter(s => s.time <= state.world.currentTime)
+                        .filter(s => s.time <= state.world.currentTime)
                         .map(s => ({
                             ...s,
                             time: Math.max(0, s.time + timeOffset),
@@ -473,18 +469,27 @@ export function parseImportFile(file: File): Promise<{ world: WorldState; viewpo
         reader.onload = (e) => {
             try {
                 const text = e.target?.result as string;
-                const data = JSON.parse(text);
-
-                if (!data.version || data.version > SAVE_VERSION) {
-                    throw new Error('Unsupported save file version');
-                }
+                const data = JSON.parse(text) as SaveFile;
 
                 if (!data.world || !Array.isArray(data.world.plates)) {
                     throw new Error('Invalid save file format');
                 }
 
+                // Reject saves from the future before migrating — a newer
+                // version may use fields we don't understand.
+                if (data.version && data.version > SAVE_VERSION) {
+                    throw new Error('Unsupported save file version');
+                }
+
+                // Walk the save through every version-gated migration step up
+                // to CURRENT_SAVE_VERSION (line-type rename, motion-model
+                // migration, etc.). After this, data.version === SAVE_VERSION.
+                migrateSaveFile(data);
+
+                const world = data.world as WorldState;
+
                 resolve({
-                    world: data.world as WorldState,
+                    world,
                     viewport: data.viewport as any, // Optional
                     name: data.name || file.name,
                     activeTool: data.activeTool,

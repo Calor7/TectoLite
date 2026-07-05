@@ -102,3 +102,6 @@ The WebGL renderer must produce visually identical output to the Canvas2D render
 - Back-face culling: for orthographic projection, points behind the globe have negative dot product with the view direction. Implement in the vertex shader (discard clipped vertices) or in JS before uploading buffers.
 - If TASK_07 (dirty flag) and TASK_08 (projection cache) are done, the WebGL renderer benefits from the same optimizations — only re-upload buffers when plates/projection change.
 - **Fallback**: if WebGL context creation fails (old hardware), fall back to Canvas2D. Detect via `canvas.getContext('webgl2')` returning null.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

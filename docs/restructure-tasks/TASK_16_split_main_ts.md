@@ -121,3 +121,6 @@ If TASK_15 (Preact) is done, `updatePropertiesPanel` becomes a thin signal-sync.
 - Don't extract controllers that would be < 100 lines — merge small ones into a related controller.
 - The order of extraction matters: extract `PlateController` first (most self-contained), then `SelectionController`, then `ToolbarController`, etc.
 - Keep `pushState`/`undo`/`redo` in `TectoLiteApp` (or a `HistoryController`) — they're cross-cutting.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

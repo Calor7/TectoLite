@@ -91,3 +91,6 @@ For each frame, compute the viewport bounds in screen space. Skip nodes whose `b
 - **If TASK_21 (WebGL) is done, this task is largely redundant** — WebGL's instanced rendering + buffer caching achieves the same goals more naturally. The scene graph would just be a thin layer over the WebGL renderer.
 - **Recommendation**: Skip this task unless TASK_07+08+09 are insufficient AND TASK_21 is not planned. Document the decision either way.
 - If you do implement it, keep it minimal — a flat list of plate nodes with dirty flags and cached projections is 80% of the benefit. Hierarchical transforms and full dirty-rect are diminishing returns.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

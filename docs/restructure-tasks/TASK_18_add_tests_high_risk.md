@@ -99,3 +99,6 @@ Create tests for plate fusion:
 - Don't test edge cases you can't verify by hand — focus on cases where you can compute the expected output.
 - If TASK_03 (extract isPointInPolygon) is done, import from `sphericalMath` in the test fixtures.
 - If TASK_05 (motion migration) is done, use `motionSegments`/`geometryStages` in fixtures (not `motionKeyframes`).
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

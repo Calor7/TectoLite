@@ -4,6 +4,8 @@
  */
 
 import { showToast } from './TimeControls';
+import { activeEulerPole } from '../motion/RotationModel';
+import { TectonicPlate } from '../types';
 
 
 
@@ -97,7 +99,7 @@ export function showPresetInfoDialog(
     idx: number,
     callbacks: {
         convertCmYrToDegMa: (cmPerYr: number) => number;
-        getSelectedPlate: () => { id: string; motion: { eulerPole: { rate: number } } } | null;
+        getSelectedPlate: () => TectonicPlate | null;
         applyRate: (rate: number) => void;
         updatePropertiesPanel: () => void;
         render: () => void;
@@ -141,10 +143,7 @@ export function showPresetInfoDialog(
         const rateDegMa = callbacks.convertCmYrToDegMa(preset.speed);
         const plate = callbacks.getSelectedPlate();
         if (plate) {
-            plate.motion.eulerPole.rate = rateDegMa;
-            callbacks.updatePropertiesPanel();
-            callbacks.render();
-            callbacks.pushState();
+            callbacks.applyRate(rateDegMa);
             cleanup();
         } else {
             alert('Please select a plate first to apply this speed preset.');
@@ -158,8 +157,9 @@ export function showPresetInfoDialog(
  */
 export function updateSpeedInputsFromSelected(
     selectedPlateId: string | null,
-    plates: { id: string; motion: { eulerPole: { rate: number } } }[],
-    planetRadius: number
+    plates: TectonicPlate[],
+    planetRadius: number,
+    currentTime: number = 0
 ): void {
     const cmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
     const degInput = document.getElementById('speed-input-deg') as HTMLInputElement;
@@ -179,7 +179,7 @@ export function updateSpeedInputsFromSelected(
 
     cmInput.disabled = false;
     degInput.disabled = false;
-    const deg = plate.motion.eulerPole.rate || 0;
+    const deg = activeEulerPole(plate, currentTime).rate || 0;
     const cm = convertDegMaToCmYr(deg, planetRadius);
     degInput.value = deg.toFixed(2);
     cmInput.value = cm.toFixed(2);
@@ -192,7 +192,7 @@ export function updateSpeedInputsFromSelected(
 export function applySpeedToSelected(
     rate: number,
     selectedPlateId: string | null,
-    plates: { id: string; motion: { eulerPole: { rate: number } } }[],
+    plates: TectonicPlate[],
     callbacks: {
         updatePropertiesPanel: () => void;
         updateSpeedInputs: () => void;
@@ -204,7 +204,12 @@ export function applySpeedToSelected(
         ? plates.find(p => p.id === selectedPlateId)
         : null;
     if (plate) {
-        plate.motion.eulerPole.rate = rate;
+        // Update the active motion segment's rate in place. This is the
+        // direct-mutation path used by the speed input fields; the main app's
+        // applySpeedToSelected goes through addMotionSegment for history.
+        const t = (callbacks as any).currentTime ?? plate.birthTime;
+        const pole = activeEulerPole(plate, t);
+        pole.rate = rate;
         callbacks.updatePropertiesPanel();
         callbacks.updateSpeedInputs();
         callbacks.render();

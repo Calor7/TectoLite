@@ -49,26 +49,44 @@ export interface MotionModel {
 }
 
 /**
- * Resolve a plate's motion model: the new fields when present, otherwise a
- * conversion of its legacy keyframes (pure — does not write back to the plate).
+ * The Euler pole currently active at time `t` (the last segment with time ≤ t).
+ * Falls back to the first segment if `t` is before the first segment. Returns
+ * a zero-rate pole if the plate has no segments. Replaces the legacy
+ * `plate.motion.eulerPole` access pattern.
+ */
+export function activeEulerPole(plate: TectonicPlate, t: number = plate.birthTime): EulerPole {
+    const segments = plate.motionSegments;
+    if (!segments || segments.length === 0) {
+        return { position: [0, 90], rate: 0, visible: false };
+    }
+    const sorted = [...segments].sort((a, b) => a.time - b.time);
+    let active = sorted[0];
+    for (const seg of sorted) {
+        if (seg.time <= t + EPS) active = seg;
+        else break;
+    }
+    return active.eulerPole;
+}
+
+/**
+ * Resolve a plate's motion model. After the v4 flag-day migration every
+ * in-memory plate carries motionSegments + geometryStages, so this just reads
+ * them directly. (Legacy keyframe fallback is handled once at load time by
+ * ensureMotionModel / fromLegacyKeyframes — never here.)
  */
 export function getMotionModel(plate: TectonicPlate): MotionModel {
-    // Segments and stages adopt the new fields independently, so producers can
-    // migrate one at a time without a flag day.
-    const hasSegments = !!plate.motionSegments && plate.motionSegments.length > 0;
-    const hasStages = !!plate.geometryStages && plate.geometryStages.length > 0;
-    if (hasSegments && hasStages) {
-        return { segments: plate.motionSegments!, stages: plate.geometryStages! };
-    }
-    const legacy = fromLegacyKeyframes(plate);
     return {
-        segments: hasSegments ? plate.motionSegments! : legacy.segments,
-        stages: hasStages ? plate.geometryStages! : legacy.stages,
+        segments: plate.motionSegments,
+        stages: plate.geometryStages,
     };
 }
 
 /**
  * Convert legacy snapshot-baking keyframes into the derived model.
+ *
+ * Used only for save-file migration. Not called for in-memory plates — after
+ * the v4 flag day, ensureMotionModel runs once at load/import time and every
+ * plate in state carries motionSegments + geometryStages.
  *
  * - Every keyframe contributes a motion segment (time + pole). A plate without
  *   keyframes gets a single segment at birth from its current `motion`.
@@ -77,8 +95,21 @@ export function getMotionModel(plate: TectonicPlate): MotionModel {
  * - Keyframes labelled 'Edit' are genuine geometry changes: their snapshots are
  *   absolute coordinates at the keyframe time, which is exactly a GeometryStage.
  *   All other snapshots are derived data and are dropped — that is the point.
+ *
+ * Accepts a legacy-shaped plate (the raw JSON from old saves carries
+ * `motion`/`motionKeyframes` as extra fields not present on the current
+ * `TectonicPlate` type).
  */
-export function fromLegacyKeyframes(plate: TectonicPlate): MotionModel {
+export function fromLegacyKeyframes(plate: TectonicPlate & {
+    motion?: { eulerPole: EulerPole };
+    motionKeyframes?: Array<{
+        time: number;
+        label?: string;
+        eulerPole: EulerPole;
+        snapshotPolygons: Polygon[];
+        snapshotFeatures: Feature[];
+    }>;
+}): MotionModel {
     const kfs = [...(plate.motionKeyframes || [])].sort((a, b) => a.time - b.time);
 
     const segments: MotionSegment[] = kfs.map(kf => ({ time: kf.time, eulerPole: kf.eulerPole }));
@@ -104,20 +135,32 @@ export function fromLegacyKeyframes(plate: TectonicPlate): MotionModel {
 }
 
 /**
- * Materialize the motion model ONTO the plate (mutating): converts legacy
- * keyframes once, writes the new fields, and clears the keyframe array so no
- * stale dual-source remains. All producers/editors must call this before
- * mutating segments or stages.
+ * Materialize the motion model ONTO the plate (mutating). Called only at
+ * load/import time (v4 flag day). Converts legacy keyframes once if the new
+ * fields are missing, writes motionSegments + geometryStages, and is
+ * idempotent: a plate that already has the new model is left untouched.
  */
-export function ensureMotionModel(plate: TectonicPlate): MotionModel {
-    const model = getMotionModel(plate);
+export function ensureMotionModel(plate: TectonicPlate & {
+    motion?: { eulerPole: EulerPole };
+    motionKeyframes?: Array<{
+        time: number;
+        label?: string;
+        eulerPole: EulerPole;
+        snapshotPolygons: Polygon[];
+        snapshotFeatures: Feature[];
+    }>;
+}): MotionModel {
     if (!plate.motionSegments || plate.motionSegments.length === 0) {
-        plate.motionSegments = model.segments;
+        const legacy = fromLegacyKeyframes(plate);
+        plate.motionSegments = legacy.segments;
     }
     if (!plate.geometryStages || plate.geometryStages.length === 0) {
-        plate.geometryStages = model.stages;
+        const legacy = fromLegacyKeyframes(plate);
+        plate.geometryStages = legacy.stages;
     }
-    plate.motionKeyframes = []; // legacy storage retired for this plate
+    // Clear legacy storage if present on the raw object (save-file migration)
+    delete (plate as any).motionKeyframes;
+    delete (plate as any).motion;
     return { segments: plate.motionSegments, stages: plate.geometryStages };
 }
 
@@ -212,7 +255,7 @@ export function plateRotation(
 
         // 2. Own motion
         const { segments } = getMotionModel(plate);
-        const qOwn = segmentsRotation(segments, plate.motion?.eulerPole, t0, t1);
+        const qOwn = segmentsRotation(segments, undefined, t0, t1);
 
         // 3. Inherited motion via link chain, clamped to the link window
         if (plate.linkedToPlateId) {

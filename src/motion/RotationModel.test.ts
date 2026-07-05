@@ -34,8 +34,8 @@ function makePlate(id: string, overrides: Partial<TectonicPlate> = {}): Tectonic
         features: [],
         initialPolygons: [],
         initialFeatures: [],
-        motion: { eulerPole: pole(NORTH, 0) },
-        motionKeyframes: [],
+        motionSegments: [seg(0, NORTH, 0)],
+        geometryStages: [{ time: 0, polygons: [], features: [] }],
         events: [],
         connectedRiftIds: [],
         ...overrides,
@@ -108,7 +108,6 @@ describe('plateRotation', () => {
     it('delegates pre-birth time to the parent plate', () => {
         // Parent moves +1°/Ma from 0; child born at 50 moves +2°/Ma on its own.
         const parent = makePlate('parent', {
-            motionKeyframes: [],
             motionSegments: [seg(0, NORTH, 1)],
             geometryStages: [{ time: 0, polygons: [], features: [] }],
         });
@@ -254,17 +253,30 @@ describe('ensureMotionModel', () => {
     }];
 
     it('materializes legacy keyframes once and clears them', () => {
-        const plate = makePlate('a', {
+        // Legacy plate: has motion/motionKeyframes but NO motionSegments/geometryStages.
+        // ensureMotionModel should convert and write the new fields.
+        const plate = {
+            id: 'a',
+            name: 'a',
+            birthTime: 0,
+            deathTime: null,
+            center: [0, 0],
+            polygons: [],
+            features: [],
             initialPolygons: square(0),
+            initialFeatures: [],
+            motion: { eulerPole: pole(NORTH, 0) },
             motionKeyframes: [
                 { time: 0, eulerPole: pole(NORTH, 1), snapshotPolygons: [], snapshotFeatures: [] },
-            ] as never,
-        });
+            ],
+            events: [],
+            connectedRiftIds: [],
+        } as unknown as TectonicPlate;
         const model = ensureMotionModel(plate);
         expect(plate.motionSegments).toHaveLength(1);
-        expect(plate.motionSegments![0].eulerPole.rate).toBe(1);
+        expect(plate.motionSegments[0].eulerPole.rate).toBe(1);
         expect(plate.geometryStages).toHaveLength(1);
-        expect(plate.motionKeyframes).toHaveLength(0); // legacy storage retired
+        expect((plate as any).motionKeyframes).toBeUndefined(); // legacy storage retired
         expect(model.segments).toBe(plate.motionSegments);
     });
 
@@ -292,8 +304,9 @@ describe('ensureMotionModel', () => {
             ...parent,
             id: 'child',
             initialPolygons: square(100),
-            motionSegments: undefined,
-            geometryStages: undefined,
+            // Fresh motion model — must NOT inherit the parent's stale stages
+            motionSegments: [seg(0, NORTH, 0)],
+            geometryStages: [{ time: 0, polygons: square(100), features: [] }],
         } as TectonicPlate;
         const g = derivePlateGeometry(child, [child], 10);
         expectCoord(g.polygons[0].points[0], [100, 0]);
@@ -301,8 +314,26 @@ describe('ensureMotionModel', () => {
 });
 
 describe('fromLegacyKeyframes', () => {
+    // Helper: build a legacy-shaped plate (motion/motionKeyframes, no new fields)
+    const makeLegacyPlate = (id: string, overrides: Record<string, unknown> = {}): TectonicPlate => ({
+        id,
+        name: id,
+        birthTime: 0,
+        deathTime: null,
+        center: [0, 0],
+        polygons: [],
+        features: [],
+        initialPolygons: [],
+        initialFeatures: [],
+        events: [],
+        connectedRiftIds: [],
+        motion: { eulerPole: pole(NORTH, 0) },
+        motionKeyframes: [],
+        ...overrides,
+    } as unknown as TectonicPlate);
+
     it('maps keyframes to segments and keeps only Edit snapshots as stages', () => {
-        const plate = makePlate('a', {
+        const plate = makeLegacyPlate('a', {
             birthTime: 5,
             initialPolygons: [{ id: 'ip', points: [[0, 0]] as Coordinate[], closed: true }],
             initialFeatures: [],
@@ -310,7 +341,7 @@ describe('fromLegacyKeyframes', () => {
                 { time: 5, eulerPole: pole(NORTH, 1), snapshotPolygons: [{ id: 's1', points: [[0, 0]], closed: true }], snapshotFeatures: [] },
                 { time: 30, eulerPole: pole(SOUTH, 2), snapshotPolygons: [{ id: 's2', points: [[25, 0]], closed: true }], snapshotFeatures: [] },
                 { time: 60, eulerPole: pole(NORTH, 1), label: 'Edit', snapshotPolygons: [{ id: 's3', points: [[99, 0]], closed: true }], snapshotFeatures: [] },
-            ] as never,
+            ],
         });
         const model = fromLegacyKeyframes(plate);
 
@@ -325,7 +356,7 @@ describe('fromLegacyKeyframes', () => {
     });
 
     it('plate without keyframes gets one segment from its current motion', () => {
-        const plate = makePlate('a', { motion: { eulerPole: pole(NORTH, 3) } });
+        const plate = makeLegacyPlate('a', { motion: { eulerPole: pole(NORTH, 3) } });
         const model = fromLegacyKeyframes(plate);
         expect(model.segments).toHaveLength(1);
         expect(model.segments[0].eulerPole.rate).toBe(3);

@@ -81,3 +81,7 @@ If any visual animation runs independent of state (e.g. flowline trails animatin
 - Be generous with `markDirty()` calls — a false dirty (rendering when nothing changed) costs a bit of CPU, but a false clean (not rendering when something changed) is a visible bug. Err on the side of marking dirty.
 - The `cachedOverlayImages` map is unaffected — it's a content cache, not a render-skip cache.
 - If TASK_08 (cache projection) is done, the dirty flag and projection cache work together: dirty → rebuild projection if needed → render.
+
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

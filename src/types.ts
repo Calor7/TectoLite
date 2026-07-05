@@ -134,18 +134,15 @@ export interface EulerPole {
   visible?: boolean;
 }
 
-// A keyframe captures motion parameters and plate geometry at a specific time
+// A keyframe captures motion parameters and plate geometry at a specific time.
+// LEGACY: used only by RotationModel.fromLegacyKeyframes for save-file migration.
+// Not present on in-memory plates after the v4 flag-day migration.
 export interface MotionKeyframe {
   time: number;                    // When this motion segment starts
   label?: string;                  // Optional label for the timeline (e.g. "Edit", "Motion Change")
   eulerPole: EulerPole;            // Motion parameters for this segment
   snapshotPolygons: Polygon[];     // Plate geometry at keyframe time
   snapshotFeatures: Feature[];     // Features at keyframe time
-}
-
-export interface PlateMotion {
-  // Legacy - kept for backwards compatibility during transition
-  eulerPole: EulerPole;
 }
 
 export interface PlateEvent {
@@ -498,10 +495,10 @@ export interface TectonicPlate {
   junctionId?: string;   // Which TripleJunction generated this wedge fill (ephemeral, axis-based path)
   elevation?: number; // Base elevation
 
-  // Keyframe-less motion model (authoritative when present; legacy keyframes are
-  // converted on the fly via RotationModel.fromLegacyKeyframes during migration)
-  motionSegments?: MotionSegment[];
-  geometryStages?: GeometryStage[];
+  // Keyframe-less motion model (authoritative). All plates in state have these
+  // populated — load/import paths run ensureMotionModel once (v4 flag day).
+  motionSegments: MotionSegment[];
+  geometryStages: GeometryStage[];
 
   // Current Visual State (Calculated from keyframes)
   polygons: Polygon[];
@@ -540,11 +537,6 @@ export interface TectonicPlate {
   connectedRiftId?: string; // Deprecated: Kept for backward compatibility
   riftGenerationMode?: 'default' | 'always' | 'never';
 
-  // Motion keyframes - sorted by time, first keyframe is at birthTime
-  motionKeyframes: MotionKeyframe[];
-
-  // Legacy - kept for backwards compatibility
-  motion: PlateMotion;
   events: PlateEvent[];
 
 
@@ -727,15 +719,18 @@ export function generateId(): string {
   return Math.random().toString(36).slice(2, 11);
 }
 
-// Default plate motion
-export function createDefaultMotion(): PlateMotion {
-  return {
-    eulerPole: {
-      position: [0, 90], // North pole default
-      rate: 0,
-      visible: false
-    }
-  };
+/** Default motion segments: a single zero-rate segment at `currentTime`.
+ *  Use for every new plate so the motion model is consistent from birth. */
+export function createDefaultMotionSegments(currentTime: number): MotionSegment[] {
+  return [{
+    time: currentTime,
+    eulerPole: { position: [0, 90], rate: 0, visible: false }
+  }];
+}
+
+/** Default geometry stage: the plate's birth polygons/features at `currentTime`. */
+export function createDefaultGeometryStage(currentTime: number, polygons: Polygon[], features: Feature[] = []): GeometryStage[] {
+  return [{ time: currentTime, polygons, features }];
 }
 
 // Default world state

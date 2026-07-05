@@ -104,3 +104,7 @@ Create `src/migration.test.ts`:
 - If TASK_05 IS complete, uncomment the v3→v4 block and set `CURRENT_SAVE_VERSION = 4`.
 - The migration should be **idempotent** — running it twice on the same data should be a no-op.
 - `migrateSaveFile` mutates in place for efficiency (deep cloning a world is expensive). Document this in the JSDoc.
+
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

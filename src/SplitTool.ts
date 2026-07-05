@@ -5,8 +5,7 @@ import {
     EdgeKind,
     Coordinate,
     generateId,
-    MotionKeyframe,
-    createDefaultMotion,
+    EulerPole,
     RiftAxis
 } from './types';
 import {
@@ -19,7 +18,7 @@ import {
     calculateSphericalCentroid,
     isPointInPolygon,
 } from './utils/sphericalMath';
-import { derivePlateGeometry, pointPositionAt } from './motion/RotationModel';
+import { derivePlateGeometry, pointPositionAt, activeEulerPole } from './motion/RotationModel';
 
 // Legacy interface for start/end splits
 interface SplitLine {
@@ -873,7 +872,12 @@ export function splitPlate(
         return currentState; // Split failed or was wholly on one side
     }
 
-    const newMotion = inheritMomentum ? { ...plateToSplit.motion } : createDefaultMotion();
+    // Inherit the parent's active pole (or default zero) for the children's
+    // initial motion segment. The motion model is fresh — children do NOT
+    // inherit the parent's materialized segments/stages via spread.
+    const inheritedPole: EulerPole = inheritMomentum
+        ? { ...activeEulerPole(plateToSplit, currentTime) }
+        : { position: [0, 90], rate: 0, visible: false };
 
     // --- (Legacy Rift Plate Creation Removed) ---
 
@@ -930,20 +934,6 @@ export function splitPlate(
 
 
 
-    const leftKeyframe: MotionKeyframe = {
-        time: currentTime,
-        eulerPole: newMotion.eulerPole,
-        snapshotPolygons: leftPolygons,
-        snapshotFeatures: []
-    };
-
-    const rightKeyframe: MotionKeyframe = {
-        time: currentTime,
-        eulerPole: newMotion.eulerPole,
-        snapshotPolygons: rightPolygons,
-        snapshotFeatures: []
-    };
-
     const inheritedDescription = `Split from ${plateToSplit.name}`;
 
     // --- Distribute Connected Rifts ---
@@ -985,11 +975,9 @@ export function splitPlate(
         description: inheritedDescription,
         polygons: leftPolygons,
         features: leftFeatures,
-        motion: newMotion,
-        motionKeyframes: [leftKeyframe],
         // Fresh motion model — must NOT inherit the parent's materialized
         // segments/stages via the spread (stale geometry would override the split)
-        motionSegments: [{ time: currentTime, eulerPole: newMotion.eulerPole }],
+        motionSegments: [{ time: currentTime, eulerPole: { ...inheritedPole } }],
         geometryStages: [{ time: currentTime, polygons: leftPolygons, features: leftFeatures }],
         visible: true,
         locked: false,
@@ -1014,9 +1002,7 @@ export function splitPlate(
         name: `${plateToSplit.name} (B)`,
         polygons: rightPolygons,
         features: rightFeatures,
-        motion: newMotion,
-        motionKeyframes: [rightKeyframe],
-        motionSegments: [{ time: currentTime, eulerPole: newMotion.eulerPole }],
+        motionSegments: [{ time: currentTime, eulerPole: { ...inheritedPole } }],
         geometryStages: [{ time: currentTime, polygons: rightPolygons, features: rightFeatures }],
         visible: true,
         locked: false,
@@ -1126,10 +1112,10 @@ export function splitPlate(
                     linkedToPlateId: leftPlateId,
                     birthTime: currentTime,
                     parentPlateId: child.id,
-                    motionKeyframes: [],
-                    // Reset — do not inherit stale materialized model via spread
-                    motionSegments: undefined,
-                    geometryStages: undefined,
+                    // Fresh motion model — linked children inherit motion from
+                    // their parent via linkedToPlateId; own segments are identity.
+                    motionSegments: [{ time: currentTime, eulerPole: { position: [0, 90], rate: 0, visible: false } }],
+                    geometryStages: [{ time: currentTime, polygons: childLeftPolys, features: childLeftFeatures }],
                 });
             }
             if (childRightPolys.length > 0) {
@@ -1145,9 +1131,8 @@ export function splitPlate(
                     linkedToPlateId: rightPlateId,
                     birthTime: currentTime,
                     parentPlateId: child.id,
-                    motionKeyframes: [],
-                    motionSegments: undefined,
-                    geometryStages: undefined,
+                    motionSegments: [{ time: currentTime, eulerPole: { position: [0, 90], rate: 0, visible: false } }],
+                    geometryStages: [{ time: currentTime, polygons: childRightPolys, features: childRightFeatures }],
                 });
             }
         } else {
@@ -1165,12 +1150,10 @@ export function splitPlate(
                 // However, `initialPolygons` must be updated to the BAKED positions if we do this, 
                 // OR we keep original polygons if we want to preserve relative motion?
                 // `applyTransformToPolygons` bakes the motion.
-                // If we create a new plate with baked polygons, we must ensure `motion` is reset or capable of handling it.
-                // The new child will inherit the *new parent's* motion via `linkedToPlateId`.
-                // So its own motion should be identity? Or empty?
-                // `child` has `motion` and `motionKeyframes`.
+                // If we create a new plate with baked polygons, we must ensure its motion model
+                // is reset. The new child will inherit the *new parent's* motion via `linkedToPlateId`.
+                // So its own segments should be identity (zero rate).
                 // If we bake, we effectively apply the history.
-                // So we should zero out its motion or keep it as is?
                 // Usually oceanic crust is locked to parent.
 
                 const newFeatures = childLeftFeatures.concat(childRightFeatures);
@@ -1183,11 +1166,11 @@ export function splitPlate(
                     polygons: allPolys,
                     initialFeatures: newFeatures,
                     features: newFeatures,
-                    motionKeyframes: [],
                     linkedToPlateId: newParentId,
-                    // Reset — do not inherit stale materialized model via spread
-                    motionSegments: undefined,
-                    geometryStages: undefined,
+                    // Fresh motion model — linked children inherit motion from
+                    // their parent via linkedToPlateId; own segments are identity.
+                    motionSegments: [{ time: currentTime, eulerPole: { position: [0, 90], rate: 0, visible: false } }],
+                    geometryStages: [{ time: currentTime, polygons: allPolys, features: newFeatures }],
 
                     // If it was oceanic, it likely had no independent motion (locked=true).
                     // If it had independent motion, baking it effectively "applies" it up to now.

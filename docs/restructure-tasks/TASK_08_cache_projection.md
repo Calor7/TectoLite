@@ -55,3 +55,6 @@ Add a `getCacheStats()` method that returns `{ hits: number, misses: number }` f
 - `Viewport` has `scale: number`, `translate: [number, number]`, `rotate: [number, number, number]` — all primitives, safe in a cache key.
 - The cache key string concatenation is cheap (a few number→string conversions) vs. rebuilding a d3 projection (object allocation + function closures).
 - If TASK_07 (dirty flag) is done, this cache is less critical (render is skipped when clean), but it still helps when rendering IS needed but viewport hasn't changed (e.g. selection change).
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

@@ -43,3 +43,120 @@ task scope. Append new entries below.
   canonical export lives in `src/utils/sphericalMath.ts`. The doc is a
   historical plan and was not updated; if it is ever used as a live reference,
   the import path should be corrected to `../utils/sphericalMath`.
+
+---
+
+## From TASK_04 — Move @types/* to devDependencies
+
+### `npm audit` vulnerabilities (pre-existing)
+- `npm install` after the move reports 24 vulnerabilities
+  (6 moderate, 16 high, 2 critical) across 589 packages.
+- These are **pre-existing** and unrelated to moving two `@types/*` packages
+  to `devDependencies` (the move only changed 1 package entry in the
+  lockfile). Most originate from transitive deps of `electron`,
+  `electron-builder`, `sql.js`, and `vite`.
+- **Out of scope for TASK_04.** A dedicated dependency-audit / `npm audit fix`
+  / upgrade pass should be tracked as a separate task.
+
+### `sql.js` still in `dependencies`
+- TASK_04 verification accepts that `sql.js` may be gone if TASK_20
+  (replace sql.js) has run. As of this task, `sql.js` is still present in
+  `dependencies` — TASK_20 has not been executed yet. No action taken here.
+
+### Other `@types/*` not present
+- Only `@types/d3` and `@types/d3-geo` were misplaced. No other `@types/*`
+  packages exist in `dependencies`, so no further moves were needed.
+
+---
+
+## From TASK_05 — Finish Motion Model Migration (Flag Day)
+
+### `fromLegacyKeyframes` kept as a standalone migration helper
+- The task brief says `fromLegacyKeyframes` "can be removed once no save files
+  use keyframes (but keep it as a migration helper called at load time, then
+  remove in a follow-up)."
+- It is kept and marked with a JSDoc: "Used only for save-file migration. Not
+  called for in-memory plates." It accepts a legacy-shaped plate type
+  (`TectonicPlate & { motion?: ..., motionKeyframes?: ... }`) so it can read
+  the raw JSON fields from v3 saves without polluting the canonical
+  `TectonicPlate` type.
+- **Out of scope for TASK_05**: removing `fromLegacyKeyframes` entirely is a
+  follow-up task for after all users have migrated to v4 saves.
+
+### `MotionKeyframe` interface kept in `types.ts`
+- The `MotionKeyframe` interface is retained (with a JSDoc noting it is
+  legacy) because `fromLegacyKeyframes` and its tests reference it. Removing
+  it would break the save-file migration path.
+- **Out of scope**: remove together with `fromLegacyKeyframes` in the
+  follow-up cleanup task.
+
+### `SpeedPresets.applySpeedToSelected` direct-mutation path
+- `src/ui/SpeedPresets.ts` `applySpeedToSelected` mutates the active euler
+  pole's `rate` in place via `activeEulerPole(plate, t).rate = rate`. This
+  bypasses `addMotionSegment` (which pins historical integrity and records
+  motion-change events). The main app's `applySpeedToSelected` method in
+  `main.ts` correctly goes through `addMotionSegment`.
+- The direct-mutation path in `SpeedPresets.ts` is used by the standalone
+  `applySpeedToSelected` export, which appears to be a legacy extraction that
+  may not be called in the current flow (the main app wraps it). If it is
+  still called, it should be routed through `addMotionSegment` for
+  consistency.
+- **Out of scope for TASK_05** (behavioral change beyond the field removal).
+  A follow-up should audit whether the standalone export is still used and
+  either remove it or route it through the segment-based path.
+
+### `TimelineSystem.updateKeyframe` no longer syncs a `motion` field
+- Previously `updateKeyframe` synced `targetPlate.motion.eulerPole` when the
+  edited segment was the active one. Since `motion` is removed, this sync is
+  now a no-op (the properties panel and gizmo read `activeEulerPole()`
+  directly from `motionSegments`). The no-op branch is kept to avoid
+  restructuring the method.
+- **Out of scope**: the dead branch can be removed in a cleanup pass.
+
+### `ensureMotionModel` still mutates plates
+- The task brief notes: "After this task, `ensureMotionModel` should only be
+  called at load/import time, never inside state update paths." This is
+  honored — `ensureMotionModel` is called in `parseImportFile`,
+  `migrateWorldMotion` (autosave + replace-current), `remapImportedWorld`
+  (merge modes), and `TimelineSystem.buildEventList` (read-only display path).
+- The `TimelineSystem` call is for display purposes and mutates the plate to
+  materialize segments if missing. Since all in-memory plates now have the
+  new model, this is a no-op in practice but remains as a safety net.
+- **Out of scope**: removing the `TimelineSystem` `ensureMotionModel` call
+  can be done once confident all paths are migrated.
+
+---
+
+## From TASK_06 — Add Save-Version Migration Layer
+
+### `parseImportFile` version-rejection test uses FileReader (browser-only)
+- `src/export.ts` `parseImportFile` uses `FileReader`, which is unavailable in
+  the Node/vitest environment. The version-rejection contract is therefore
+  tested indirectly in `src/migration.test.ts` by asserting the guard
+  predicate (`version > CURRENT_SAVE_VERSION`) and that `migrateSaveFile`
+  does not silently downgrade a future-version save.
+- **Out of scope for TASK_06**: a full end-to-end `parseImportFile` test
+  would require a jsdom/MockFileReader setup. A follow-up could add a
+  browser-environment test (e.g. `// @vitest-environment jsdom`) that
+  exercises the actual `FileReader` path.
+
+### `migrateWorldLineTypes` / `migrateWorldMotion` still exported from `importHelpers.ts`
+- These helpers are now only consumed by `src/migration.ts` (and
+  `remapImportedWorld` keeps a per-plate `migrateLineType` safety net). They
+  are no longer called directly from `main.ts`.
+- They are kept as the building blocks the migration pipeline composes; the
+  `remapImportedWorld` `migrateLineType` call is intentionally retained as an
+  idempotent safety net per the task brief.
+- **Out of scope**: folding `migrateWorldLineTypes` / `migrateWorldMotion`
+  directly into `migration.ts` would couple the migration module to
+  `importHelpers` internals; leaving them as the composable primitives is
+  fine. A future cleanup could inline them if `importHelpers` is split
+  further.
+
+### v1 → v2 migration step is a no-op
+- No structural change between save v1 and v2 is known (the line-type rename
+  landed at v3 and the motion model at v4). The v1→v2 step in
+  `migrateSaveFile` only bumps the version number so older saves flow
+  through the later steps.
+- **Out of scope**: if git archaeology reveals a real v1→v2 transformation,
+  it should be added to the v1→v2 block in `src/migration.ts`.

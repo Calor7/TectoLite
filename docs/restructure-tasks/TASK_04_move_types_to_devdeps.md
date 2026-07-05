@@ -36,3 +36,5 @@ Run `npm install` to update `package-lock.json`.
 - This is a low-risk change. Type packages are never needed at runtime — they're consumed by `tsc` and the IDE.
 - If `npm install` produces a diff in `package-lock.json`, that's expected and should be committed.
 - Do NOT move `d3-geo`, `d3-geo-projection`, or `d3-delaunay` — those are runtime dependencies used by the app.
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

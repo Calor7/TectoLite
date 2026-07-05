@@ -85,3 +85,6 @@ Based on your evaluation:
 - If neither Option C nor a lighter library works, **Option D (lazy-load) is the safe fallback** — it doesn't remove the dependency but at least defers loading.
 - The `loadSqlJsFactory` singleton in `GeoPackageExporter.ts` has no error recovery — if WASM fails to load, the export silently fails. Any replacement should handle errors gracefully.
 - Check `electron-builder.yml` — if `better-sqlite3` is used, it needs to be rebuilt for Electron's Node version (`electron-rebuild`).
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

@@ -22,6 +22,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/d3": "^7.4.3",
+    "@types/d3-geo": "^3.1.0",
     "concurrently": "^9.2.1",
     "electron": "^40.1.0",
     "electron-builder": "^26.4.0",
@@ -34,8 +36,6 @@
     "wait-on": "^8.0.5"
   },
   "dependencies": {
-    "@types/d3": "^7.4.3",
-    "@types/d3-geo": "^3.1.0",
     "d3-delaunay": "^6.0.4",
     "d3-geo": "^3.1.1",
     "d3-geo-projection": "^4.0.0",

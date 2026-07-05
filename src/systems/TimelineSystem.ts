@@ -1,5 +1,5 @@
 
-import { TectonicPlate, MotionKeyframe, MotionSegment, GeometryStage, Coordinate, PlateEvent } from '../types';
+import { TectonicPlate, MotionSegment, GeometryStage, Coordinate, PlateEvent } from '../types';
 import { ensureMotionModel } from '../motion/RotationModel';
 import { SimulationEngine } from '../SimulationEngine';
 import { HistoryManager } from '../HistoryManager';
@@ -17,7 +17,7 @@ export interface TimelineEventItem {
     details: string;
     isEditable: boolean;
     isDeletable: boolean;
-    originalRef: MotionSegment | GeometryStage | MotionKeyframe | PlateEvent | TectonicPlate;
+    originalRef: MotionSegment | GeometryStage | PlateEvent | TectonicPlate;
 }
 
 const EVENT_ICONS: Record<string, string> = {
@@ -460,15 +460,16 @@ export class TimelineSystem {
 
         const targetPlate = this.app?.state.world.plates.find((p: TectonicPlate) => p.id === event.plateId);
 
-        // Keep plate.motion (speed inputs, gizmo, properties panel) in sync when
-        // the edited segment is the one currently active
+        // Keep the active euler pole (speed inputs, gizmo, properties panel) in
+        // sync when the edited segment is the one currently active
         if (targetPlate) {
             const t = this.app.state.world.currentTime;
             const active = [...ensureMotionModel(targetPlate).segments]
                 .filter((s: MotionSegment) => s.time <= t)
                 .sort((a: MotionSegment, b: MotionSegment) => b.time - a.time)[0];
             if (active === kf) {
-                targetPlate.motion = { ...targetPlate.motion, eulerPole: { ...kf.eulerPole } };
+                // No-op: the active pole is derived from motionSegments now.
+                // Properties panel / gizmo read activeEulerPole() directly.
             }
         }
 

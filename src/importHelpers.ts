@@ -11,6 +11,7 @@ import {
     generateId,
     migrateLineType,
 } from './types';
+import { ensureMotionModel } from './motion/RotationModel';
 
 export interface RemappedImport {
     plates: TectonicPlate[];
@@ -100,13 +101,7 @@ export function remapImportedWorld(
         features: plate.features.map(adjustFeatureTime),
         initialPolygons: remapPolygons(plate.initialPolygons),
         initialFeatures: plate.initialFeatures.map(adjustFeatureTime),
-        motionKeyframes: plate.motionKeyframes.map(kf => ({
-            ...kf,
-            time: kf.time + timeOffset,
-            snapshotPolygons: remapPolygons(kf.snapshotPolygons),
-            snapshotFeatures: kf.snapshotFeatures.map(adjustFeatureTime)
-        })),
-        // Keyframe-less model fields (v2 saves)
+        // Keyframe-less model fields (v4 saves). Shift times by the offset.
         motionSegments: plate.motionSegments?.map(s => ({ ...s, time: s.time + timeOffset })),
         geometryStages: plate.geometryStages?.map(s => ({
             ...s,
@@ -115,6 +110,14 @@ export function remapImportedWorld(
             features: s.features.map(adjustFeatureTime)
         }))
     }));
+
+    // Safety net: ensure every plate has the new model materialized. Old v3
+    // saves that slipped through parseImportFile without migration are caught
+    // here. ensureMotionModel reads legacy motion/motionKeyframes if present
+    // (the raw JSON carries them as extra fields not in the type).
+    for (const plate of plates) {
+        ensureMotionModel(plate);
+    }
 
     // Carry rift axes and triple junctions over. Axes whose flanking plates
     // weren't imported are skipped; junctions follow their axes.
@@ -165,5 +168,17 @@ export function migrateWorldLineTypes(world: Pick<WorldState, 'plates'>): void {
         if (plate.lineType) {
             plate.lineType = migrateLineType(plate.lineType);
         }
+    }
+}
+
+/**
+ * In-place migration of a world's plates to the keyframe-less motion model
+ * (motionSegments + geometryStages). Converts legacy motion/motionKeyframes
+ * via ensureMotionModel. Use this for load paths that bypass
+ * remapImportedWorld (autosave restore, replace-current import, parseImportFile).
+ */
+export function migrateWorldMotion(world: Pick<WorldState, 'plates'>): void {
+    for (const plate of world.plates) {
+        ensureMotionModel(plate);
     }
 }

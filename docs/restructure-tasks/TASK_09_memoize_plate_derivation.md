@@ -82,3 +82,6 @@ Choose the simple approach (clear when > 1000 entries) for now.
 - If TASK_05 (motion migration) is done, `motionKeyframes` won't exist — remove it from the cache key.
 - The cache stores `TectonicPlate` objects which contain arrays of polygons/features. These can be large. The 1000-entry bound prevents unbounded memory growth.
 - Do NOT cache during playback (`update()`) if it causes stale renders — the time always advances so cache misses are the norm. The cache is primarily for scrubbing.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

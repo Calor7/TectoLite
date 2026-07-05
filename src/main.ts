@@ -9,12 +9,11 @@ import {
     FeatureType,
     InteractionMode,
     generateId,
-    createDefaultMotion,
     createDefaultAppState,
     getNextPlateColor,
     Coordinate,
     ProjectionType,
-    MotionKeyframe,
+    EulerPole,
     MantlePlume,
     DrawMode,
     LineType,
@@ -32,8 +31,9 @@ import { fusePlates } from './FusionTool';
 import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
-import { remapImportedWorld, migrateWorldLineTypes } from './importHelpers';
-import { pointPositionAt, ensureMotionModel, getMotionModel } from './motion/RotationModel';
+import { remapImportedWorld } from './importHelpers';
+import { migrateSaveFile, type SaveFile } from './migration';
+import { pointPositionAt, ensureMotionModel, getMotionModel, activeEulerPole } from './motion/RotationModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
 import { geoArea, geoCentroid } from 'd3-geo';
@@ -214,7 +214,7 @@ class TectoLiteApp {
         try {
             const raw = localStorage.getItem(TectoLiteApp.AUTOSAVE_KEY);
             if (!raw) return;
-            const data = JSON.parse(raw);
+            const data = JSON.parse(raw) as SaveFile;
             if (!data?.world || !Array.isArray(data.world.plates) || data.world.plates.length === 0) return;
             const when = data.savedAt ? new Date(data.savedAt).toLocaleString() : 'an earlier session';
 
@@ -226,7 +226,10 @@ class TectoLiteApp {
                         text: 'Restore Autosave',
                         subtext: 'Continue where you left off',
                         onClick: () => {
-                            migrateWorldLineTypes(data.world);
+                            // Autosave bypasses parseImportFile, so run the
+                            // full migration pipeline here (line-type rename
+                            // + motion-model migration, gated by version).
+                            migrateSaveFile(data);
                             this.state = {
                                 ...this.state,
                                 world: data.world,
@@ -932,7 +935,7 @@ class TectoLiteApp {
                 this.pushState(); // Save state for undo
                 // Move pole to North Pole [0, 90]
                 const northPole: Coordinate = [0, 90];
-                this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: northPole });
+                this.addMotionSegment(plate.id, { ...activeEulerPole(plate, this.state.world.currentTime), position: northPole });
                 this.updatePropertiesPanel();
                 this.canvasManager?.render();
             }
@@ -950,7 +953,7 @@ class TectoLiteApp {
                 this.pushState(); // Save state for undo
                 // Move pole to South Pole [0, -90]
                 const southPole: Coordinate = [0, -90];
-                this.addMotionKeyframe(plate.id, { ...plate.motion.eulerPole, position: southPole });
+                this.addMotionSegment(plate.id, { ...activeEulerPole(plate, this.state.world.currentTime), position: southPole });
                 this.updatePropertiesPanel();
                 this.canvasManager?.render();
             }
@@ -1499,7 +1502,9 @@ class TectoLiteApp {
                     this.pushState(); // Save current state before adding/restoring
 
                     if (importMode === 'replace_current') {
-                        migrateWorldLineTypes(importedWorld);
+                        // parseImportFile already ran migrateSaveFile on the
+                        // imported world (line-type rename + motion-model
+                        // migration), so no per-field migration is needed here.
                         this.state = {
                             ...this.state,
                             world: importedWorld,
@@ -1614,7 +1619,7 @@ class TectoLiteApp {
     }
 
     private applySpeedToSelected(rate: number): void {
-        // Fix: Use addMotionKeyframe to ensure history preservation and oceanic crust pruning
+        // Fix: Use addMotionSegment to ensure history preservation and oceanic crust pruning
         // instead of effectively bypassing it with helper utilities that mutate state directly.
         const plateId = this.state.world.selectedPlateId;
         if (!plateId) {
@@ -1625,9 +1630,9 @@ class TectoLiteApp {
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (plate) {
             this.pushState(); // Save state for undo
-            const currentPole = plate.motion.eulerPole;
+            const currentPole = activeEulerPole(plate, this.state.world.currentTime);
             // Apply new rate
-            this.addMotionKeyframe(plate.id, { ...currentPole, rate: rate });
+            this.addMotionSegment(plate.id, { ...currentPole, rate: rate });
 
             // Update UI
             this.updatePropertiesPanel();
@@ -1648,7 +1653,8 @@ class TectoLiteApp {
         _updateSpeedInputs(
             this.state.world.selectedPlateId,
             this.state.world.plates,
-            this.state.world.globalOptions.planetRadius
+            this.state.world.globalOptions.planetRadius,
+            this.state.world.currentTime
         );
     }
 
@@ -1901,7 +1907,7 @@ class TectoLiteApp {
         this.pushState(); // Save state for undo
 
         const currentTime = this.state.world.currentTime;
-        const defaultMotion = createDefaultMotion();
+        const defaultEulerPole = { position: [0, 90] as Coordinate, rate: 0, visible: false };
 
         if (isLineMode) {
             // --- LINE MODE: Create a line plate ---
@@ -1909,13 +1915,6 @@ class TectoLiteApp {
                 id: generateId(),
                 points: points,
                 closed: false
-            };
-
-            const initialKeyframe: MotionKeyframe = {
-                time: currentTime,
-                eulerPole: { ...defaultMotion.eulerPole },
-                snapshotPolygons: [polygon],
-                snapshotFeatures: []
             };
 
             const lineType = this.state.activeLineType;
@@ -1934,9 +1933,7 @@ class TectoLiteApp {
                 // (false) so settings-default changes propagate to this plate.
                 polygons: [polygon],
                 features: [],
-                motion: defaultMotion,
-                motionKeyframes: [initialKeyframe],
-                motionSegments: [{ time: currentTime, eulerPole: { ...defaultMotion.eulerPole } }],
+                motionSegments: [{ time: currentTime, eulerPole: { ...defaultEulerPole } }],
                 geometryStages: [{ time: currentTime, polygons: [polygon], features: [] }],
                 visible: true,
                 locked: false,
@@ -1967,22 +1964,13 @@ class TectoLiteApp {
                 closed: true
             };
 
-            const initialKeyframe: MotionKeyframe = {
-                time: currentTime,
-                eulerPole: { ...defaultMotion.eulerPole },
-                snapshotPolygons: [polygon],
-                snapshotFeatures: []
-            };
-
             const plate: TectonicPlate = {
                 id: generateId(),
                 name: `Plate ${this.state.world.plates.length + 1}`,
                 color: getNextPlateColor(this.state.world.plates),
                 polygons: [polygon],
                 features: [],
-                motion: defaultMotion,
-                motionKeyframes: [initialKeyframe],
-                motionSegments: [{ time: currentTime, eulerPole: { ...defaultMotion.eulerPole } }],
+                motionSegments: [{ time: currentTime, eulerPole: { ...defaultEulerPole } }],
                 geometryStages: [{ time: currentTime, polygons: [polygon], features: [] }],
                 visible: true,
                 locked: false,
@@ -2633,10 +2621,6 @@ class TectoLiteApp {
                 ...p,
                 features: p.features.filter(f => !idsToDelete.has(f.id)),
                 initialFeatures: p.initialFeatures ? p.initialFeatures.filter(f => !idsToDelete.has(f.id)) : p.initialFeatures,
-                motionKeyframes: p.motionKeyframes ? p.motionKeyframes.map(kf => ({
-                    ...kf,
-                    snapshotFeatures: kf.snapshotFeatures.filter(f => !idsToDelete.has(f.id))
-                })) : p.motionKeyframes,
                 geometryStages: p.geometryStages ? p.geometryStages.map(s => ({
                     ...s,
                     features: s.features.filter(f => !idsToDelete.has(f.id))
@@ -2664,10 +2648,6 @@ class TectoLiteApp {
                 ...p,
                 features: p.features.map(applyUpdates),
                 initialFeatures: p.initialFeatures ? p.initialFeatures.map(applyUpdates) : p.initialFeatures,
-                motionKeyframes: p.motionKeyframes ? p.motionKeyframes.map(kf => ({
-                    ...kf,
-                    snapshotFeatures: kf.snapshotFeatures.map(applyUpdates)
-                })) : p.motionKeyframes,
                 geometryStages: p.geometryStages ? p.geometryStages.map(s => ({
                     ...s,
                     features: s.features.map(applyUpdates)
@@ -2793,15 +2773,9 @@ class TectoLiteApp {
                 }
             });
 
-            // Plate edits: geometry stages after birth (keyframe-less model),
-            // plus legacy Edit keyframes on plates not yet materialized
+            // Plate edits: geometry stages after birth (keyframe-less model)
             p.geometryStages?.slice(1).forEach(stage => {
                 addAction(stage.time, 'Plate Edited', p, 'plate_edit');
-            });
-            p.motionKeyframes?.forEach(kf => {
-                if (kf.label === 'Edit') {
-                    addAction(kf.time, 'Plate Edited', p, 'plate_edit');
-                }
             });
 
 
@@ -3033,9 +3007,8 @@ class TectoLiteApp {
 
         const isRift = plate.type === 'rift';
 
-        // Euler Pole UI
-        const motion = plate.motion;
-        const pole = motion.eulerPole;
+        // Euler Pole UI — read the active pole from the motion segments
+        const pole = activeEulerPole(plate, this.state.world.currentTime);
         const description = plate.description || '';
 
         content.innerHTML = `
@@ -3472,12 +3445,12 @@ class TectoLiteApp {
         document.getElementById('prop-pole-lon')?.addEventListener('change', (e) => {
             this.pushState(); // Save state for undo
             const newLon = parseFloat((e.target as HTMLInputElement).value);
-            this.addMotionKeyframe(plate.id, { ...pole, position: [newLon, pole.position[1]] });
+            this.addMotionSegment(plate.id, { ...pole, position: [newLon, pole.position[1]] });
         });
         document.getElementById('prop-pole-lat')?.addEventListener('change', (e) => {
             this.pushState(); // Save state for undo
             const newLat = parseFloat((e.target as HTMLInputElement).value);
-            this.addMotionKeyframe(plate.id, { ...pole, position: [pole.position[0], newLat] });
+            this.addMotionSegment(plate.id, { ...pole, position: [pole.position[0], newLat] });
         });
         document.getElementById('prop-pole-vis')?.addEventListener('change', (e) => {
             pole.visible = (e.target as HTMLInputElement).checked;
@@ -3488,10 +3461,11 @@ class TectoLiteApp {
             const cbSpeed = document.getElementById('cb-copy-speed') as HTMLInputElement;
             const cbPole = document.getElementById('cb-copy-pole') as HTMLInputElement;
 
+            const activePole = activeEulerPole(plate, this.state.world.currentTime);
             this.momentumClipboard = {
                 eulerPole: {
-                    position: cbPole && cbPole.checked ? [...plate.motion.eulerPole.position] : undefined,
-                    rate: cbSpeed && cbSpeed.checked ? plate.motion.eulerPole.rate : undefined
+                    position: cbPole && cbPole.checked ? [...activePole.position] : undefined,
+                    rate: cbSpeed && cbSpeed.checked ? activePole.rate : undefined
                 }
             };
             const pasteBtn = document.getElementById('btn-paste-momentum') as HTMLButtonElement;
@@ -3513,11 +3487,12 @@ class TectoLiteApp {
             const doPastePole = cbPole && cbPole.checked;
             const clip = this.momentumClipboard.eulerPole;
 
-            const newRate = (doPasteSpeed && clip.rate !== undefined) ? clip.rate : plate.motion.eulerPole.rate;
-            const newPos = (doPastePole && clip.position !== undefined) ? clip.position : plate.motion.eulerPole.position;
+            const activePole = activeEulerPole(plate, this.state.world.currentTime);
+            const newRate = (doPasteSpeed && clip.rate !== undefined) ? clip.rate : activePole.rate;
+            const newPos = (doPastePole && clip.position !== undefined) ? clip.position : activePole.position;
 
             this.pushState(); // Save state for undo
-            this.addMotionKeyframe(plate.id, {
+            this.addMotionSegment(plate.id, {
                 position: newPos,
                 rate: newRate
             });
@@ -3938,7 +3913,7 @@ class TectoLiteApp {
 
 
 
-    private addMotionKeyframe(plateId: string, newEulerPole: { position: Coordinate; rate: number; visible?: boolean }): void {
+    private addMotionSegment(plateId: string, newEulerPole: { position: Coordinate; rate: number; visible?: boolean }): void {
         const currentTime = this.state.world.currentTime;
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
@@ -3964,34 +3939,28 @@ class TectoLiteApp {
             // 1. Apply Motion Change if this is the target plate
             if (p.id === plateId) {
                 const updated = { ...p };
-                const oldMotion = { ...p.motion }; // Capture old motion
-
-                // Materialize the motion model BEFORE changing `motion` so a
-                // keyframe-less plate gets its fallback segment from the OLD pole
-                ensureMotionModel(updated);
-
-                // Update Motion to NEW values
-                updated.motion = {
-                    ...p.motion,
-                    eulerPole: {
-                        ...p.motion.eulerPole,
-                        position: newEulerPole.position,
-                        rate: newEulerPole.rate,
-                        visible: newEulerPole.visible ?? p.motion.eulerPole.visible
-                    }
-                };
+                // Capture the OLD active pole (the one currently in effect) so we
+                // can pin it from birth and preserve historical integrity.
+                const oldPole = activeEulerPole(p, currentTime);
 
                 // HISTORICAL INTEGRITY: pin the OLD motion from birth if no earlier
                 // segment exists, so the new pole doesn't retroactively rewrite history.
-                const segments = [...updated.motionSegments!];
+                const segments = [...updated.motionSegments];
                 const hasPriorSegment = segments.some(s => s.time < currentTime);
                 if (!hasPriorSegment && currentTime > p.birthTime) {
-                    segments.push({ time: p.birthTime, eulerPole: oldMotion.eulerPole });
+                    segments.push({ time: p.birthTime, eulerPole: oldPole });
                 }
+
+                // The new pole for the segment at the current time
+                const newPole: EulerPole = {
+                    position: newEulerPole.position,
+                    rate: newEulerPole.rate,
+                    visible: newEulerPole.visible ?? oldPole.visible
+                };
 
                 // Replace any segment exactly at the current time, then add the new one
                 const filtered = segments.filter(s => Math.abs(s.time - currentTime) > 0.001);
-                filtered.push({ time: currentTime, eulerPole: updated.motion.eulerPole });
+                filtered.push({ time: currentTime, eulerPole: newPole });
                 updated.motionSegments = filtered.sort((a, b) => a.time - b.time);
 
                 // Record motion change event for Actions timeline
@@ -4153,7 +4122,7 @@ class TectoLiteApp {
         const newEulerPole = { position: pole, rate };
 
         // Only update this plate's motion (linked children inherit automatically)
-        this.addMotionKeyframe(plateId, newEulerPole);
+        this.addMotionSegment(plateId, newEulerPole);
 
         // Refresh property panel to show updated Euler pole position
         this.updatePropertiesPanel();
@@ -4321,13 +4290,9 @@ class TectoLiteApp {
             initialPolygons: shiftPolys(clone.initialPolygons),
             features: clone.features.map(shiftFeature),
             initialFeatures: clone.initialFeatures.map(shiftFeature),
-            motionKeyframes: clone.motionKeyframes.map(kf => ({
-                ...kf,
-                snapshotPolygons: shiftPolys(kf.snapshotPolygons),
-                snapshotFeatures: kf.snapshotFeatures.map(shiftFeature)
-            })),
             // Keyframe-less model: shift stage geometry too; motion segments copy as-is
-            geometryStages: clone.geometryStages?.map(s => ({
+            motionSegments: clone.motionSegments.map(s => ({ ...s })),
+            geometryStages: clone.geometryStages.map(s => ({
                 ...s,
                 polygons: shiftPolys(s.polygons),
                 features: s.features.map(shiftFeature)

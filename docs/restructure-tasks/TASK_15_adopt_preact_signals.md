@@ -178,3 +178,6 @@ The key benefit of Preact: typing in an input no longer destroys/recreates it. F
 - For the `onInput` vs `onChange` distinction: use `onInput` for text/color (live feedback), `onChange` for selects (commit on change).
 - The tsconfig may need `"jsx": "preserve"` or `"jsx": "react-jsx"` + `"jsxImportSource": "preact"`. Update `tsconfig.json` accordingly.
 - If TASK_14 (extract inline styles) is done, use the CSS classes in the Preact components. If not, use inline styles temporarily (they'll be cleaned up by TASK_14).
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

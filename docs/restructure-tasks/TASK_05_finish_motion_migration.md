@@ -67,3 +67,6 @@ Update every reference to use the new model. Key places to check:
 - The `motion` field on `TectonicPlate` is deeply woven into the codebase. Be thorough with grep — missing a reference will cause a type error (which is good, tsc will catch it).
 - `ensureMotionModel` currently **mutates** plates. After this task, it should only be called at load/import time, never inside state update paths. All in-memory plates will already have the new model.
 - If `RotationModel.test.ts` tests `fromLegacyKeyframes`, keep those tests — they validate the migration path.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

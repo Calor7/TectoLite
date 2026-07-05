@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { remapImportedWorld } from './importHelpers';
-import { TectonicPlate, WorldState, Feature, RiftAxis, MotionKeyframe } from './types';
+import { TectonicPlate, WorldState, Feature, RiftAxis, GeometryStage } from './types';
 
 function makeFeature(id: string, generatedAt?: number): Feature {
     return { id, type: 'mountain', position: [0, 0], generatedAt } as unknown as Feature;
@@ -22,8 +22,8 @@ function makePlate(id: string, overrides: Partial<TectonicPlate> = {}): Tectonic
         features: [],
         initialPolygons: [{ id: `${id}-ipoly`, points: [[0, 0], [1, 0], [1, 1]], closed: true }],
         initialFeatures: [],
-        motion: { eulerPole: { position: [0, 90], rate: 0, visible: false } },
-        motionKeyframes: [],
+        motionSegments: [{ time: 0, eulerPole: { position: [0, 90], rate: 0, visible: false } }],
+        geometryStages: [{ time: 0, polygons: [{ id: `${id}-gpoly`, points: [[0, 0], [1, 0], [1, 1]], closed: true }], features: [] }],
         events: [],
         connectedRiftIds: [],
         ...overrides,
@@ -65,18 +65,20 @@ describe('remapImportedWorld', () => {
         expect(result.plates[0].connectedRiftIds).toEqual([]);
     });
 
-    it('keeps feature IDs consistent across features and keyframe snapshots', () => {
-        const kf: MotionKeyframe = {
+    it('keeps feature IDs consistent across features and geometry stages', () => {
+        const stage: GeometryStage = {
             time: 10,
-            eulerPole: { position: [0, 90], rate: 1, visible: false },
-            snapshotPolygons: [{ id: 'sp', points: [[0, 0]], closed: true }],
-            snapshotFeatures: [makeFeature('feat-1', 5)],
-        } as unknown as MotionKeyframe;
+            polygons: [{ id: 'sp', points: [[0, 0]], closed: true }],
+            features: [makeFeature('feat-1', 5)],
+        };
         const world = makeWorld([
             makePlate('a', {
                 features: [makeFeature('feat-1', 5)],
                 initialFeatures: [makeFeature('feat-1', 5)],
-                motionKeyframes: [kf],
+                geometryStages: [
+                    { time: 0, polygons: [{ id: 'sp0', points: [[0, 0]], closed: true }], features: [] },
+                    stage,
+                ],
             }),
         ]);
         const result = remapImportedWorld(world, 0);
@@ -84,21 +86,22 @@ describe('remapImportedWorld', () => {
         const newId = p.features[0].id;
         expect(newId).not.toBe('feat-1');
         expect(p.initialFeatures[0].id).toBe(newId);
-        expect(p.motionKeyframes[0].snapshotFeatures[0].id).toBe(newId);
+        expect(p.geometryStages[1].features[0].id).toBe(newId);
     });
 
-    it('shifts keyframe and feature times by the offset', () => {
-        const kf: MotionKeyframe = {
-            time: 10,
-            eulerPole: { position: [0, 90], rate: 1, visible: false },
-            snapshotPolygons: [],
-            snapshotFeatures: [],
-        } as unknown as MotionKeyframe;
+    it('shifts segment and feature times by the offset', () => {
         const world = makeWorld([
-            makePlate('a', { features: [makeFeature('f', 5)], motionKeyframes: [kf] }),
+            makePlate('a', {
+                features: [makeFeature('f', 5)],
+                motionSegments: [{ time: 10, eulerPole: { position: [0, 90], rate: 1, visible: false } }],
+                geometryStages: [
+                    { time: 0, polygons: [], features: [] },
+                    { time: 10, polygons: [], features: [] },
+                ],
+            }),
         ]);
         const result = remapImportedWorld(world, 100);
-        expect(result.plates[0].motionKeyframes[0].time).toBe(110);
+        expect(result.plates[0].motionSegments[0].time).toBe(110);
         expect(result.plates[0].features[0].generatedAt).toBe(105);
     });
 

@@ -3,6 +3,7 @@ import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
 import { MotionGizmo } from './MotionGizmo';
+import { activeEulerPole } from '../motion/RotationModel';
 import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid } from '../utils/sphericalMath';
 
 import { InputTool } from './tools/InputTool';
@@ -490,7 +491,7 @@ export class CanvasManager {
             }
 
             const age = state.world.currentTime - plate.birthTime;
-            const rate = plate.motion?.eulerPole?.rate ?? 0;
+            const rate = activeEulerPole(plate, state.world.currentTime).rate ?? 0;
             const radiusKm = state.world.globalOptions.planetRadius || 6371;
             const cmYr = (rate * Math.PI / 180 * radiusKm) / 10;
             this.hoverTooltipEl.innerHTML =
@@ -717,7 +718,7 @@ export class CanvasManager {
 
         const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
         if (selectedPlate && state.activeTool === 'select' && selectedPlate.visible) {
-            this.motionGizmo.setPlate(selectedPlate.id, selectedPlate.motion.eulerPole);
+            this.motionGizmo.setPlate(selectedPlate.id, activeEulerPole(selectedPlate, state.world.currentTime));
             this.motionGizmo.render(this.ctx, this.projectionManager, selectedPlate.center, state.world.globalOptions.planetRadius || 6371);
         } else {
             this.motionGizmo.clear();
@@ -901,8 +902,9 @@ export class CanvasManager {
 
             const showGlobalPoles = state.world.showEulerPoles;
             const gizmoActive = isSelected && state.activeTool === 'select';
-            if (plate.motion.eulerPole.visible || (showGlobalPoles && !gizmoActive)) {
-                this.drawEulerPole(plate.motion.eulerPole);
+            const pole = activeEulerPole(plate, state.world.currentTime);
+            if (pole.visible || (showGlobalPoles && !gizmoActive)) {
+                this.drawEulerPole(pole);
             }
         }
 
@@ -1324,7 +1326,7 @@ export class CanvasManager {
             if (state.world.currentTime < plate.birthTime) continue;
             if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
 
-            const pole = plate.motion?.eulerPole;
+            const pole = activeEulerPole(plate, state.world.currentTime);
             if (!pole || Math.abs(pole.rate) < 0.01) continue;
 
             const axis = latLonToVector(pole.position);

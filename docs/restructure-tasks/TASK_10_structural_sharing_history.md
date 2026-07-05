@@ -87,3 +87,6 @@ The current `undo()` / `redo()` in `main.ts` (around line 4358/4374) pop a state
 - The risk is **in-place mutation breaking undo**. If undo shows wrong state after this change, it means somewhere a plate/world object is being mutated in place instead of immutably replaced. Fix those mutation sites.
 - If TASK_05 is not done, the `ensureMotionModel` mutation is the main risk. Either fix it (shallow clone before mutate) or defer this task.
 - The `{ ...state }` shallow clone is O(1) for the top level — it copies field references, not deep content. `world`, `viewport`, `activeTool` etc. are shared by reference. This is correct because the app creates new `world` objects on every update.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

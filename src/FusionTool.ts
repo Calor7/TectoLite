@@ -1,5 +1,6 @@
-import { AppState, TectonicPlate, Feature, Polygon, Coordinate, generateId, MotionKeyframe } from './types';
+import { AppState, TectonicPlate, Feature, Polygon, Coordinate, generateId, EulerPole } from './types';
 import { calculateSphericalCentroid, latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize } from './utils/sphericalMath';
+import { activeEulerPole } from './motion/RotationModel';
 import polygonClipping from 'polygon-clipping';
 import { mixColors } from './utils/colorUtils';
 
@@ -143,12 +144,8 @@ export function fusePlates(
     const allPoints = mergedPolygons.flatMap(p => p.points);
     const newCenter = calculateSphericalCentroid(allPoints);
 
-    const initialKeyframe: MotionKeyframe = {
-        time: currentTime,
-        eulerPole: { ...plate1.motion.eulerPole },
-        snapshotPolygons: mergedPolygons,
-        snapshotFeatures: combinedFeatures
-    };
+    // Inherit plate1's active pole for the fused plate's initial motion.
+    const fusedPole: EulerPole = { ...activeEulerPole(plate1, currentTime) };
 
     const fusedPlate: TectonicPlate = {
         id: generateId(),
@@ -159,9 +156,7 @@ export function fusePlates(
         polygons: mergedPolygons,
         features: combinedFeatures,
         center: newCenter,
-        motion: plate1.motion,
-        motionKeyframes: [initialKeyframe],
-        motionSegments: [{ time: currentTime, eulerPole: { ...plate1.motion.eulerPole } }],
+        motionSegments: [{ time: currentTime, eulerPole: { ...fusedPole } }],
         geometryStages: [{ time: currentTime, polygons: mergedPolygons, features: combinedFeatures }],
         events: [],
         birthTime: currentTime,

@@ -53,3 +53,6 @@ Create or update `src/systems/EventSystem.test.ts`:
 - `eventSystem` is imported in `src/SimulationEngine.ts` (around line 14) and used in `update()` (around line 148). It's a module-level singleton.
 - The `processedInteractions` map keys are plate-pair keys (e.g. `"plateA|plateB"`). After import with ID regeneration, old keys are orphaned but not actively harmful — they just waste memory.
 - If TASK_01 (delete dead code) removed `CausalGraph`, the event system's relationship to causal links is gone — verify `EventSystem` doesn't reference `CausalLink`/`causalLinks` (it shouldn't, but check).
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

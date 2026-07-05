@@ -1,6 +1,7 @@
 import { TectonicPlate, Boundary, Coordinate, Polygon } from './types';
 import polygonClipping from 'polygon-clipping';
 import { latLonToVector, scaleVector, subtractVectors, cross, normalize, dot } from './utils/sphericalMath';
+import { activeEulerPole } from './motion/RotationModel';
 
 export class BoundarySystem {
 
@@ -241,7 +242,7 @@ export class BoundarySystem {
         // Rate is deg/Ma. Convert to rad/Ma? 
         // Just relative scale matters for classification.
 
-        const pole = plate.motion.eulerPole;
+        const pole = activeEulerPole(plate);
         const rateRad = pole.rate * (Math.PI / 180);
         const axis = latLonToVector(pole.position);
         const omega = scaleVector(axis, rateRad);

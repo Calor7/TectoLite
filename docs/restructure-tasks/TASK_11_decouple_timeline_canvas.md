@@ -123,3 +123,6 @@ this.canvasManager = new CanvasManager(
 - The `showModal` signature in `TimelineHost` should match the actual `showModal` method on `TectoLiteApp` — read its signature to get the exact type.
 - The `CanvasManagerCallbacks` object pattern makes it easy to add/remove callbacks in the future without misordering.
 - If TASK_07 (dirty flag) is done, include `this.canvasManager?.markDirty()` in the setState closure as shown.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

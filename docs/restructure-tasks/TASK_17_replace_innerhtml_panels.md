@@ -67,3 +67,6 @@ Same approach as explorer: keep a map of event ID → DOM element. Update existi
 - The Preact approach is strongly preferred — it's less code, more maintainable, and solves focus preservation automatically.
 - If TASK_16 (split main.ts) is done, the panel logic lives in `SelectionController` — update there.
 - The explorer search box already has a focus-preservation workaround (`searchHadFocus` check). The Preact/diff approach makes this workaround unnecessary.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

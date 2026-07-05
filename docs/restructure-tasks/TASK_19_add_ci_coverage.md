@@ -127,3 +127,6 @@ Add a CI status badge to `README.md`:
 - If the repo uses a different Node version, update `node-version` in the workflow.
 - The workflow triggers on `main` and `Automatation-*` branches (matching the current `Automatation-3rd-try` branch pattern).
 - If TASK_18 (add tests) is done, coverage should be well above 10%. If not, 10% is still achievable from the existing 5% + any new tests.
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list

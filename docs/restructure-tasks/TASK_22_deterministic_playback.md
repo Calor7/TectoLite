@@ -97,3 +97,6 @@ For full reproducibility (e.g. for testing or recording), add a `deterministic: 
 - `calculatePlateAtTime` is the expensive part. With fixed timestep, it's called `steps` times per frame. If `steps` is high (fast timeScale), this could be slower than the current variable-delta approach (which calls it once per frame). Monitor performance.
 - If TASK_09 (memoize plate derivation) is done, the cache helps here: within a single frame, multiple fixed steps at different times won't cache-hit (different times), but scrubbing back to a previously-visited time will.
 - Floating-point determinism: JavaScript `number` is IEEE 754 double — deterministic across runs on the same architecture. Across different browsers/architectures, there may be tiny differences. For strict cross-platform determinism, consider fixed-point math (overkill for this app).
+
+
+Note out of scope at the end findings and tasks and write them to docs\restructure-tasks\out-of-scope-list
