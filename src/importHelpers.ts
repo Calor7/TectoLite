@@ -8,8 +8,6 @@ import {
     Feature,
     RiftAxis,
     TripleJunction,
-    CausalLink,
-    EntityRef,
     generateId,
     migrateLineType,
 } from './types';
@@ -18,7 +16,6 @@ export interface RemappedImport {
     plates: TectonicPlate[];
     riftAxes: RiftAxis[];
     tripleJunctions: TripleJunction[];
-    causalLinks: CausalLink[];
 }
 
 /**
@@ -35,7 +32,7 @@ export interface RemappedImport {
  * re-derived each frame from the imported rift axes.
  */
 export function remapImportedWorld(
-    importedWorld: Pick<WorldState, 'plates' | 'riftAxes' | 'tripleJunctions' | 'causalLinks'>,
+    importedWorld: Pick<WorldState, 'plates' | 'riftAxes' | 'tripleJunctions'>,
     timeOffset: number
 ): RemappedImport {
     const idMap = new Map<string, string>(); // old plate id -> new plate id
@@ -154,36 +151,7 @@ export function remapImportedWorld(
             };
         });
 
-    // Remap user-authored causal links onto the new IDs. Auto-derived links are
-    // dropped (the caller re-seeds them from the merged world). Links whose
-    // endpoints weren't imported — including event refs, which aren't merge-
-    // imported — are stripped rather than left dangling.
-    const remapEntityRef = (r: EntityRef): EntityRef | undefined => {
-        switch (r.kind) {
-            case 'plate': { const id = idMap.get(r.id); return id ? { kind: 'plate', id } : undefined; }
-            case 'feature': { const id = featureIdMap.get(r.id); return id ? { kind: 'feature', id } : undefined; }
-            case 'riftAxis': { const id = axisIdMap.get(r.id); return id ? { kind: 'riftAxis', id } : undefined; }
-            case 'tripleJunction': { const id = junctionIdMap.get(r.id); return id ? { kind: 'tripleJunction', id } : undefined; }
-            default: return undefined; // events aren't carried by merge-import
-        }
-    };
-    const causalLinks: CausalLink[] = (importedWorld.causalLinks || [])
-        .filter(l => l.auto !== true)
-        .map(l => {
-            const from = remapEntityRef(l.from);
-            const to = remapEntityRef(l.to);
-            if (!from || !to) return undefined;
-            return {
-                ...l,
-                id: generateId(),
-                from,
-                to,
-                time: l.time !== undefined ? l.time + timeOffset : undefined,
-            } as CausalLink;
-        })
-        .filter((l): l is CausalLink => l !== undefined);
-
-    return { plates, riftAxes, tripleJunctions, causalLinks };
+    return { plates, riftAxes, tripleJunctions };
 }
 
 /**

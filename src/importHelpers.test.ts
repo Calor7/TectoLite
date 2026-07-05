@@ -192,36 +192,4 @@ describe('remapImportedWorld', () => {
         expect(tj.junctionHistory![0].time).toBe(120);
     });
 
-    it('remaps user-authored causal links onto new plate IDs and shifts time', () => {
-        const world = makeWorld([
-            makePlate('parent'),
-            makePlate('child', { parentPlateId: 'parent' }),
-        ], {
-            causalLinks: [{
-                id: 'u1',
-                from: { kind: 'plate', id: 'child' },
-                to: { kind: 'plate', id: 'parent' },
-                relation: 'motivated-by',
-                time: 10,
-            }],
-        });
-        const result = remapImportedWorld(world, 100);
-        const userLink = result.causalLinks.find(l => l.relation === 'motivated-by');
-        expect(userLink).toBeDefined();
-        expect(userLink!.from.id).toBe(result.plates[1].id);
-        expect(userLink!.to.id).toBe(result.plates[0].id);
-        expect(userLink!.time).toBe(110);
-    });
-
-    it('drops auto links and links with unresolved endpoints (e.g. events)', () => {
-        const world = makeWorld([makePlate('a')], {
-            causalLinks: [
-                { id: 'auto1', from: { kind: 'plate', id: 'a' }, to: { kind: 'plate', id: 'a' }, relation: 'created-from', auto: true },
-                { id: 'ev', from: { kind: 'feature', id: 'f1' }, to: { kind: 'event', id: 'e1' }, relation: 'caused-by' },
-                { id: 'dangling', from: { kind: 'plate', id: 'a' }, to: { kind: 'plate', id: 'missing' }, relation: 'caused-by' },
-            ],
-        });
-        const result = remapImportedWorld(world, 0);
-        expect(result.causalLinks).toHaveLength(0);
-    });
 });

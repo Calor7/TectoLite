@@ -1,7 +1,7 @@
 # TectoLite Documentation Index
 
 Status: active living index
-Last reviewed: March 31, 2026
+Last reviewed: 2026-07-05
 
 This index reflects the current repository state. Older delivery documents remain useful as project history, but they should not be treated as the source of truth when they conflict with current code.
 
@@ -17,7 +17,7 @@ This index reflects the current repository state. Older delivery documents remai
 
 ### Manual verification
 
-- [TESTING_CHECKLIST.md](TESTING_CHECKLIST.md): manual smoke and exploratory checks.
+- [docs/archive/TESTING_CHECKLIST.md](docs/archive/TESTING_CHECKLIST.md): manual smoke and exploratory checks (historical — references the removed "Ago" checkbox and time-mode toggle).
 
 ### Current elevation status
 
@@ -54,7 +54,7 @@ These files remain useful as delivery records, but parts of them describe earlie
 - [README_COMPLETION.md](docs/archive/README_COMPLETION.md)
 - [DELIVERY_REPORT.md](docs/archive/DELIVERY_REPORT.md)
 - [IMPLEMENTATION_SUMMARY.md](docs/archive/IMPLEMENTATION_SUMMARY.md)
-- [FEATURE_QUICK_REFERENCE.md](FEATURE_QUICK_REFERENCE.md)
+- [FEATURE_QUICK_REFERENCE.md](docs/archive/FEATURE_QUICK_REFERENCE.md) (moved to archive — references the absent `TimeTransformationUtils.ts` and the removed "Ago" checkbox)
 - [FEATURE_IMPLEMENTATION_COMPLETE.md](docs/archive/FEATURE_IMPLEMENTATION_COMPLETE.md)
 - [ELEVATION_HISTORY_INTEGRATION_COMPLETE.md](docs/archive/ELEVATION_HISTORY_INTEGRATION_COMPLETE.md)
 - [ELEVATION_MESH_EDITOR_COMPLETE.md](docs/archive/ELEVATION_MESH_EDITOR_COMPLETE.md)

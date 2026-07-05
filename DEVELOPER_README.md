@@ -26,12 +26,14 @@ src/
 │   ├── AppTemplate.ts               #   Full HTML template (getAppHTML)
 │   ├── ModalSystem.ts               #   showModal, showLegendDialog, toggleTheme
 │   ├── SpeedPresets.ts              #   Speed preset data, conversions (cm/yr ↔ deg/Ma)
-│   └── TimeControls.ts             #   Play button, toast, time display & input
+│   ├── TimeControls.ts              #   Play button, toast, time display & input
+│   ├── TutorialOverlay.ts           #   First-run tutorial overlay
+│   └── TutorialManual.html          #   In-app reference manual content
 │
 ├── canvas/                          # Canvas rendering & interaction
 │   ├── CanvasManager.ts             #   Main canvas controller (delegates to InputTools)
 │   ├── tools/                       #   Interaction logic (InputTool implementations)
-│   │   ├── InputTool.ts             #     Interface input events
+│   │   ├── InputTool.ts             #     Interface for input events
 │   │   ├── PathInputTool.ts         #     Draw, Split, PolyFeature
 │   │   ├── EditTool.ts              #     Vertex manipulation, Plate Editing
 │   │   ├── SelectionTool.ts         #     Select, Box Select
@@ -42,15 +44,27 @@ src/
 │
 ├── systems/                         # Simulation and export support systems
 │   ├── TimelineSystem.ts            #   Timeline UI + keyframe management
-│   ├── EventSystem.ts               #   Geological event model and event creation hooks
-│   ├── EventEffectsProcessor.ts     #   Visual/state effects from geological events
-│   ├── GeologicalAutomation.ts      #   Legacy hotspot automation path, partially retired
+│   ├── EventSystem.ts               #   Geological event model and event creation hooks (active)
+│   ├── EventEffectsProcessor.ts     #   Applies committed event effects to state (active)
 │   └── HeightmapGenerator.ts        #   Heightmap rasterization for export
 │
+├── motion/                          # Plate motion model
+│   ├── RotationModel.ts             #   Euler pole / rotation segment derivation
+│   └── RotationModel.test.ts        #   Unit tests for the rotation model
+│
 ├── utils/                           # Pure utility functions
-├── SimulationEngine.ts              # Time-stepping simulation (plate motion, interpolation)
+│   ├── colorUtils.ts                #   Color helpers
+│   ├── geoHelpers.ts                #   Geographic / projection helpers
+│   ├── sphericalMath.ts             #   Spherical geometry primitives
+│   └── sphericalMath.test.ts        #   Unit tests for spherical math
+│
+├── SimulationEngine.ts              # Time-stepping simulation (plate motion, interpolation, events)
 ├── HistoryManager.ts                # Undo/Redo state stack
+├── HistoryManager.test.ts           # HistoryManager unit tests
 ├── BoundarySystem.ts                # Plate boundary detection & classification
+├── importHelpers.ts                 # Save-file import / merge migration
+├── importHelpers.test.ts            # importHelpers unit tests
+├── FusionTool.ts                    # Plate fusion logic
 ├── GeoPackageExporter.ts            # QGIS GeoPackage export
 └── export.ts                        # JSON/PNG export, import dialog, unified export dialog
 ```
@@ -60,9 +74,10 @@ src/
 ## Current state notes
 
 - The current app is a canvas-heavy Electron/Vite desktop application with a single central `AppState`.
-- Historical docs mention additional systems such as `ElevationSystem.ts` and `TimeTransformationUtils.ts`; those files are not present in the current `src/` tree.
-- `TimeControls.ts` still exposes wrapper functions for display/input time handling, but the active behavior is effectively direct internal time handling.
-- `GeologicalAutomation.ts` remains in the repo, but the main simulation loop has retired parts of the older automation flow.
+- `GeologicalAutomation.ts` has been deleted; the simulation loop keeps a labeled bypass seam ("Geological Automation — DISABLED") where it used to run.
+- `ElevationSystem.ts` and `TimeTransformationUtils.ts` are absent from `src/`. Historical docs in `docs/archive/` still reference them — treat those as snapshots, not current architecture.
+- `EventSystem` and `EventEffectsProcessor` are active and run every simulation tick inside `SimulationEngine.ts`.
+- `TimeControls.ts` handles display/input time; the legacy "Ago" checkbox and `TimeMode` toggle have been removed from the UI (a deprecated `TimeMode` union remains in `types.ts` for save-file migration only).
 - Heightmap and GeoPackage exports are active code paths.
 
 ## Architecture Principles
@@ -136,13 +151,13 @@ The simulation layer contains a mix of active systems and legacy compatibility p
 
 ### Automation status
 
-- `GeologicalAutomation.ts` is not the primary simulation driver.
-- Hotspot-related behavior remains, while older orogeny-oriented automation is marked deprecated.
+- `EventSystem` (guided geological event creation) and `EventEffectsProcessor` (applies committed event effects) are **active** and run every tick inside `SimulationEngine.ts`.
+- `GeologicalAutomation.ts` (hotspot volcanism) has been **removed**; the simulation loop keeps a labeled bypass seam where it used to run.
 
 ### Elevation status
 
 - `HeightmapGenerator.ts` is active for export generation.
-- A mesh-editing runtime path is not currently wired into the app.
+- `ElevationSystem.ts` is absent — a mesh-editing runtime path is not wired into the app.
 
 ### Adding a new feature type
 
@@ -175,13 +190,13 @@ Use this for fast verification during refactoring.
 
 | File | Lines | What it does |
 | --- | --- | --- |
-| `main.ts` | ~3,476 | App orchestrator — state, event listeners, UI panels, tool handlers |
-| `CanvasManager.ts` | ~1,209 | Canvas rendering, mouse/touch input, tool modes |
-| `SimulationEngine.ts` | ~1,645 | Time-step simulation, plate motion, crust/event logic |
-| `types.ts` | ~592 | Shared interfaces, unions, defaults, and state models |
-| `SplitTool.ts` | ~1,270 | Complex polygon splitting, Rift Triple Junctions, L-Rift logic |
-| `export.ts` | ~900 | JSON/PNG import/export, dialogs |
-| `AppTemplate.ts` | ~490 | Full HTML template string |
+| `main.ts` | ~4,447 | App orchestrator — state, event listeners, UI panels, tool handlers |
+| `CanvasManager.ts` | ~1,661 | Canvas rendering, mouse/touch input, tool modes |
+| `SimulationEngine.ts` | ~1,932 | Time-step simulation, plate motion, event effects |
+| `types.ts` | ~843 | Shared interfaces, unions, defaults, and state models |
+| `SplitTool.ts` | ~1,391 | Complex polygon splitting, Rift Triple Junctions, L-Rift logic |
+| `export.ts` | ~766 | JSON/PNG import/export, dialogs |
+| `AppTemplate.ts` | ~636 | Full HTML template string |
 
 ---
 

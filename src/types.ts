@@ -557,38 +557,6 @@ export interface TectonicPlate {
 // CAUSALITY LAYER — user-authorable + auto-derived causal graph
 // ============================================================================
 // Pure document metadata. Never read by SimulationEngine / motion / geometry.
-// Used only to (a) document "why" things exist and (b) HIGHLIGHT/rank options in
-// guided-mode suggestion UIs — it never gates or removes options.
-
-export type EntityKind = 'plate' | 'feature' | 'event' | 'riftAxis' | 'tripleJunction';
-
-/** Uniform handle to any causal-graph entity (cf. EdgeRef for edges). */
-export interface EntityRef {
-  kind: EntityKind;
-  id: string;
-}
-
-export type CausalRelation =
-  | 'caused-by'
-  | 'created-from'
-  | 'succeeded-by'
-  | 'contemporaneous-with'
-  | 'part-of'
-  | 'motivated-by';
-
-/** A directed causal/temporal link between two entities.
- *  `auto: true` marks links derived by deriveImplicitLinks (re-derivable/disposable);
- *  user-authored links omit it and are never touched by re-derivation. */
-export interface CausalLink {
-  id: string;
-  from: EntityRef;
-  to: EntityRef;
-  relation: CausalRelation;
-  time?: number;     // optional geological time the relation refers to
-  note?: string;     // optional user annotation
-  auto?: boolean;    // true = derived from implicit model links
-}
-
 export interface WorldState {
   plates: TectonicPlate[];
   currentTime: number;
@@ -660,9 +628,6 @@ export interface WorldState {
   riftAxes?: RiftAxis[];        // All rift axes (active, frozen, dead)
   tripleJunctions?: TripleJunction[];  // Junction points where 2+ axes converge
 
-  // Causality layer (pure metadata; see CausalLink). Auto-seeded on import.
-  causalLinks?: CausalLink[];
-
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
   mantlePlumes?: MantlePlume[]; // Active mantle plumes
@@ -673,6 +638,18 @@ export interface WorldState {
   pendingEventId?: string | null;          // Event awaiting user decision (popup open)
 }
 
+/**
+ * A boundary segment between two tectonic plates, derived from plate motion.
+ *
+ * `Boundary.type` ('convergent' | 'divergent' | 'transform') is a *derived*
+ * property: `BoundarySystem` computes it from the relative motion of the two
+ * adjacent plates. It describes the kinematic relationship along the boundary.
+ *
+ * This is semantically independent from `LineType`
+ * ('divergent' | 'convergent' | 'transform' | 'generic'), which is an
+ * *authored* property of line entities drawn by the user. The two share
+ * vocabulary but serve different purposes and must not be unified.
+ */
 export interface Boundary {
   id: string;
   type: 'convergent' | 'divergent' | 'transform';
@@ -822,8 +799,6 @@ export function createDefaultWorldState(): WorldState {
     // Rift axis defaults
     riftAxes: [],
     tripleJunctions: [],
-    // Causality layer defaults
-    causalLinks: [],
     // Event system defaults
     tectonicEvents: [],
     pendingEventId: null

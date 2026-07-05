@@ -39,7 +39,6 @@ export class BoundarySystem {
 
                 // PRE-CHECK VELOCITY BEFORE EXPENSIVE GEOMETRY
                 // Previously skipped diverging entirely, but visualization is fine
-                // The freeze is in GeologicalAutomation, not here
                 // Note: preVelocity check removed as it was not being used
 
                 // 1. Check for basic Overlap (Convergent)

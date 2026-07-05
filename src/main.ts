@@ -33,7 +33,6 @@ import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
 import { remapImportedWorld, migrateWorldLineTypes } from './importHelpers';
-import { reseedAutoLinks } from './causality/CausalGraph';
 import { pointPositionAt, ensureMotionModel, getMotionModel } from './motion/RotationModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
@@ -1508,9 +1507,6 @@ class TectoLiteApp {
                             activeTool: (activeTool as ToolType) ?? this.state.activeTool,
                             activeFeatureType: (activeFeatureType as FeatureType) ?? this.state.activeFeatureType
                         };
-                        // Auto-seed the causal graph (legacy saves lack causalLinks);
-                        // preserves any user-authored links already in the file.
-                        this.state.world.causalLinks = reseedAutoLinks(this.state.world, this.state.world.causalLinks || []);
 
                         this.updateExplorer();
                         this.updateUI();
@@ -1543,13 +1539,9 @@ class TectoLiteApp {
                             ...this.state.world,
                             plates: [...this.state.world.plates, ...processedPlates],
                             riftAxes: [...(this.state.world.riftAxes || []), ...remapped.riftAxes],
-                            tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions],
-                            causalLinks: [...(this.state.world.causalLinks || []), ...remapped.causalLinks]
+                            tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions]
                         }
                     };
-                    // Re-seed auto-derived causal links over the merged world so
-                    // ancestry/event links reflect the newly added plates.
-                    this.state.world.causalLinks = reseedAutoLinks(this.state.world, this.state.world.causalLinks || []);
 
                     // Restoring Settings Logic
                     if (importedWorld.globalOptions) {

@@ -6,11 +6,11 @@ import {
     normalize,
     calculateSphericalCentroid,
     nlerpCoord,
-    rotateCoordByQuat
+    rotateCoordByQuat,
+    isPointInPolygon,
 } from './utils/sphericalMath';
 import { getMotionModel, activeStage, plateRotation, pointPositionAt } from './motion/RotationModel';
 import { BoundarySystem } from './BoundarySystem';
-// import { GeologicalAutomationSystem } from './systems/GeologicalAutomation'; // DISABLED
 import { EventEffectsProcessor } from './systems/EventEffectsProcessor';
 import { eventSystem } from './systems/EventSystem';
 
@@ -19,51 +19,13 @@ export class SimulationEngine {
     private isRunning = false;
     private lastUpdate = 0;
     private animationId: number | null = null;
-    // private geologicalAutomation: GeologicalAutomationSystem; // DISABLED
     private eventEffectsProcessor: EventEffectsProcessor;
 
     constructor(
         private getState: () => AppState,
         private setState: (updater: (state: AppState) => AppState) => void
     ) {
-        // this.geologicalAutomation = new GeologicalAutomationSystem(); // DISABLED
         this.eventEffectsProcessor = new EventEffectsProcessor();
-    }
-
-    // Helper: Check if a point is inside a spherical polygon using ray casting
-    private isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
-        if (polygon.length < 3) return false;
-
-        const pLat = point[1];
-        const pLon = point[0];
-        let windingNumber = 0;
-
-        let prev = polygon[polygon.length - 1];
-        for (let i = 0; i < polygon.length; i++) {
-            const curr = polygon[i];
-            const lat1 = prev[1];
-            const lat2 = curr[1];
-            const lon1 = prev[0];
-            const lon2 = curr[0];
-
-            if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
-                const t = (pLat - lat1) / (lat2 - lat1);
-                let lonAtIntersection = lon1 + t * (lon2 - lon1);
-
-                if (Math.abs(lon2 - lon1) > 180) {
-                    if (lon2 < lon1) lonAtIntersection = lon1 + t * (lon2 + 360 - lon1);
-                    else lonAtIntersection = lon1 + t * (lon2 - 360 - lon1);
-                }
-
-                if (pLon < lonAtIntersection) {
-                    windingNumber += (lat2 > lat1) ? 1 : -1;
-                }
-            }
-
-            prev = curr;
-        }
-
-        return windingNumber !== 0;
     }
 
     public start(): void {
@@ -1792,7 +1754,7 @@ export class SimulationEngine {
 
             const featuresToInherit = candidateFeatures.filter(f => {
                 return plate.initialPolygons.some(poly =>
-                    this.isPointInPolygon(f.position, poly.points)
+                    isPointInPolygon(f.position, poly.points)
                 );
             }).filter(f => {
                 return !plate.features.some(existing => existing.id === f.id) &&

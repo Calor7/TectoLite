@@ -63,6 +63,7 @@ After each task completes:
 3. Run `npx vite build` — must pass
 4. Review the diff for architectural consistency
 5. Update this checklist: mark `[x]` when complete
+6. Note out of scope findings and tasks and write them to docs\restructure-tasks\out-of-scope-list
 
 ## Completion Criteria
 All 23 tasks complete, all three verify commands pass, no `app: any` back-references remain, no file > 800 lines (except `types.ts`), test coverage ≥ 15%.

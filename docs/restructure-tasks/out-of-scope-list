@@ -1,0 +1,45 @@
+# Out-of-Scope Findings & Tasks
+
+Findings noted during restructure tasks that are NOT addressed by the current
+task scope. Append new entries below.
+
+---
+
+## From TASK_03 — Extract Shared Geometry Utils
+
+### `lerpCoordinate` in `EventEffectsProcessor.ts` (not duplicated)
+- `src/systems/EventEffectsProcessor.ts` defines a private `lerpCoordinate`
+  method (lines ~138, ~157) that does antimeridian-aware linear interpolation
+  of `[lon, lat]` coordinates.
+- It is **not duplicated** elsewhere in `src/` (only one definition), so it
+  does not satisfy the "consolidate duplicated helpers" criterion of TASK_03.
+- However, it is functionally similar to `nlerpCoord` in
+  `src/utils/sphericalMath.ts` (which does *spherical* nlerp via 3D vectors).
+  `lerpCoordinate` is a cheaper equirectangular linear interpolation and is
+  not a drop-in replacement for `nlerpCoord`.
+- **Out of scope for TASK_03** (no duplication to remove). A future task could
+  consider exposing `lerpCoordinate` as a shared util if other consumers need
+  the equirectangular variant, or replacing it with `nlerpCoord` if spherical
+  accuracy is desired for event-effect point sampling.
+
+### `greatCircleDistance` / `normalizeLon` not found
+- Searched `src/` for `greatCircleDistance` and `normalizeLon` — no matches.
+  The existing `distance` in `sphericalMath.ts` already serves as the
+  great-circle distance helper (returns angular distance in radians via
+  `acos(dot)`). No consolidation needed.
+
+### `isPointInPolygon` algorithm limitations
+- The moved `isPointInPolygon` uses an equirectangular ray-casting
+  approximation. It is unreliable near the poles and for polygons that wrap
+  around a pole. This is a pre-existing limitation (the algorithm was not
+  changed by TASK_03) but is now documented in the JSDoc on the shared
+  function. A future task could implement a proper spherical point-in-polygon
+  test (e.g. via 3D winding number / signed solid angle) if pole-spanning
+  polygons become a use case.
+
+### Stale doc reference to `isPointInPolygon` import
+- `docs/ELEVATION_SYSTEM_INTEGRATION_PLAN.md` line 146 shows
+  `import { isPointInPolygon } from '../SplitTool';`. After TASK_03 the
+  canonical export lives in `src/utils/sphericalMath.ts`. The doc is a
+  historical plan and was not updated; if it is ever used as a live reference,
+  the import path should be corrected to `../utils/sphericalMath`.

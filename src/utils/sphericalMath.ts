@@ -222,3 +222,59 @@ export function distance(a: Coordinate, b: Coordinate): number {
     // Clamp to [-1, 1] to avoid NaN due to FP errors
     return Math.acos(clamp(dot(v1, v2), -1, 1));
 }
+
+/**
+ * Check if a point is inside a spherical polygon using equirectangular ray casting.
+ *
+ * The polygon is given as an array of `[lon, lat]` coordinates. The algorithm
+ * casts a ray in the longitude direction and counts winding-number crossings
+ * against each polygon edge. When an edge spans the antimeridian (|Δlon| > 180°)
+ * the longitude is unwrapped so the intersection test stays consistent.
+ *
+ * Limitations:
+ * - This is a planar approximation on the equirectangular projection. It is
+ *   accurate for small-to-mid-size polygons but becomes unreliable near the
+ *   poles (where longitude lines converge) and for polygons that wrap around a
+ *   pole.
+ * - Polygons spanning the antimeridian are handled via longitude unwrapping,
+ *   but polygons that cross a pole are not.
+ * - Polygons with fewer than 3 vertices return `false`.
+ */
+export function isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
+    if (polygon.length < 3) return false;
+
+    const pLat = point[1];
+    const pLon = point[0];
+    let windingNumber = 0;
+
+    let prev = polygon[polygon.length - 1];
+    for (let i = 0; i < polygon.length; i++) {
+        // Check vertical crossing (simplified spherical version)
+        const curr = polygon[i];
+        const lat1 = prev[1];
+        const lat2 = curr[1];
+        const lon1 = prev[0];
+        const lon2 = curr[0];
+
+        // Ray casting using longitude
+        if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
+            // Compute longitude at intersection
+            const t = (pLat - lat1) / (lat2 - lat1);
+            let lonAtIntersection = lon1 + t * (lon2 - lon1);
+
+            // Handle wrap-around
+            if (Math.abs(lon2 - lon1) > 180) {
+                if (lon2 < lon1) lonAtIntersection = lon1 + t * (lon2 + 360 - lon1);
+                else lonAtIntersection = lon1 + t * (lon2 - 360 - lon1);
+            }
+
+            if (pLon < lonAtIntersection) {
+                windingNumber += (lat2 > lat1) ? 1 : -1;
+            }
+        }
+
+        prev = curr;
+    }
+
+    return windingNumber !== 0;
+}

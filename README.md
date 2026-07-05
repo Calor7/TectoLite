@@ -24,8 +24,10 @@
 
 ## Project Evolution
 
-- **Automation Removed**: Tectonic event detection and guided creation systems have been removed in favor of manual tool-based creation to reduce complexity.
-- **Mesh System Removed**: The experimental mesh-based tectonic model has been retired to focus on the core polygon-based simulator.
+- **Event System (active)**: `EventSystem` (guided geological event creation) and `EventEffectsProcessor` (applies committed event effects to state) run every simulation tick inside `SimulationEngine.ts`. These are the only automation paths still wired in.
+- **Geological Automation Removed**: The former `GeologicalAutomation.ts` hotspot-volcanism module has been deleted. The simulation loop retains a labeled "Geological Automation — DISABLED" bypass seam where it used to run.
+- **Elevation System Removed**: The experimental `ElevationSystem.ts` mesh-based elevation runtime was never wired in and the file is absent. `HeightmapGenerator.ts` remains for raster export only.
+- **Mesh System Removed**: The experimental mesh-based tectonic model has been retired to focus on the core polygon-based simulator. No mesh runtime remains in `src/`.
 - **Timeline Centralization**: The timeline has been moved to the bottom bar, with its configuration residing in the main "Settings" menu.
 - **Recursive Motion Inheritance**: Plates can now be linked in hierarchical chains (e.g., A -> B -> C). A child plate correctly inherits the cumulative motion of all its ancestors.
 - **Motion Clustering (Lock Motion)**: When a plate is locked to a parent, its local Euler Pole is dynamically transformed by the parent's motion, ensuring true "locked" behavior where the internal rotation axis moves with the parent landmass.

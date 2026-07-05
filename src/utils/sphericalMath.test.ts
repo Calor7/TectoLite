@@ -14,6 +14,7 @@ import {
     quatFromAxisAngle,
     quatMultiply,
     axisAngleFromQuat,
+    isPointInPolygon,
 } from './sphericalMath';
 import { Coordinate } from '../types';
 
@@ -160,5 +161,49 @@ describe('quaternions', () => {
         const q2 = quatFromAxisAngle(axis, toRad(45));
         const combined = axisAngleFromQuat(quatMultiply(q2, q1));
         expect(toDeg(combined.angle)).toBeCloseTo(75, 8);
+    });
+});
+
+describe('isPointInPolygon', () => {
+    // A small square polygon around the origin
+    const square: Coordinate[] = [[-10, -10], [10, -10], [10, 10], [-10, 10]];
+
+    it('returns true for a point clearly inside the polygon', () => {
+        expect(isPointInPolygon([0, 0], square)).toBe(true);
+        expect(isPointInPolygon([5, 5], square)).toBe(true);
+    });
+
+    it('returns false for a point clearly outside the polygon', () => {
+        expect(isPointInPolygon([20, 20], square)).toBe(false);
+        expect(isPointInPolygon([-50, 0], square)).toBe(false);
+    });
+
+    it('returns false for a degenerate polygon (2 points)', () => {
+        expect(isPointInPolygon([0, 0], [[-10, -10], [10, 10]])).toBe(false);
+    });
+
+    it('returns false for an empty polygon', () => {
+        expect(isPointInPolygon([0, 0], [])).toBe(false);
+    });
+
+    it('handles a polygon spanning the antimeridian (lon ~180)', () => {
+        // Triangle pointing east across the antimeridian: the edge from
+        // [175,-10] to [-175,10] crosses lon=180 (|Δlon|>180) and triggers
+        // the algorithm's longitude unwrapping.
+        const antimeridianPoly: Coordinate[] = [
+            [175, -10], [-175, 10], [175, 10],
+        ];
+        // Point at lon=179 should be inside (between 175 and 180)
+        expect(isPointInPolygon([179, 0], antimeridianPoly)).toBe(true);
+        // Point at lon=0 should be outside
+        expect(isPointInPolygon([0, 0], antimeridianPoly)).toBe(false);
+    });
+
+    it('treats a point on the boundary deterministically (edge case)', () => {
+        // A point exactly on a horizontal edge: the algorithm uses strict
+        // inequalities so boundary points are not double-counted. We only
+        // assert the call does not throw and returns a boolean.
+        const onEdge = isPointInPolygon([0, 10], square);
+        expect(typeof onEdge).toBe('boolean');
     });
 });

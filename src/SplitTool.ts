@@ -17,6 +17,7 @@ import {
     dot,
     normalize,
     calculateSphericalCentroid,
+    isPointInPolygon,
 } from './utils/sphericalMath';
 import { derivePlateGeometry, pointPositionAt } from './motion/RotationModel';
 
@@ -29,46 +30,6 @@ interface SplitLine {
 // For polyline splits - array of points
 interface SplitPolyline {
     points: Coordinate[];
-}
-
-// Check if a point is inside a spherical polygon using ray casting
-export function isPointInPolygon(point: Coordinate, polygon: Coordinate[]): boolean {
-    if (polygon.length < 3) return false;
-
-    const pLat = point[1];
-    const pLon = point[0];
-    let windingNumber = 0;
-
-    let prev = polygon[polygon.length - 1];
-    for (let i = 0; i < polygon.length; i++) {
-        // Check vertical crossing (simplified spherical version)
-        const curr = polygon[i];
-        const lat1 = prev[1];
-        const lat2 = curr[1];
-        const lon1 = prev[0];
-        const lon2 = curr[0];
-
-        // Ray casting using longitude
-        if ((lat1 <= pLat && lat2 > pLat) || (lat2 <= pLat && lat1 > pLat)) {
-            // Compute longitude at intersection
-            const t = (pLat - lat1) / (lat2 - lat1);
-            let lonAtIntersection = lon1 + t * (lon2 - lon1);
-
-            // Handle wrap-around
-            if (Math.abs(lon2 - lon1) > 180) {
-                if (lon2 < lon1) lonAtIntersection = lon1 + t * (lon2 + 360 - lon1);
-                else lonAtIntersection = lon1 + t * (lon2 - 360 - lon1);
-            }
-
-            if (pLon < lonAtIntersection) {
-                windingNumber += (lat2 > lat1) ? 1 : -1;
-            }
-        }
-
-        prev = curr;
-    }
-
-    return windingNumber !== 0;
 }
 
 // Find intersection of two line segments on sphere (great circle arcs)
