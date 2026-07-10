@@ -140,28 +140,29 @@ class TectoLiteApp {
                 this.updateUI(); // Centralized UI update
                 this.canvasManager?.markDirty();
             },
-            (points) => this.handleDrawComplete(points),
-            (pos, type) => this.handleFeaturePlace(pos, type),
-            (plateId, featureId, featureIds, plumeId) => this.handleSelect(plateId, featureId, featureIds, plumeId),
-            (points) => this.handleSplitApply(points),
-            (active) => this.handleSplitPreviewChange(active),
-            (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
-            (plateId, axis, angleRad) => this.handleDragTargetRequest(plateId, axis, angleRad),
-            undefined,
-            (active) => {
-                const el = document.getElementById('motion-controls');
-                if (el) el.style.display = active ? 'block' : 'none';
-            },
-            (count) => this.handleDrawUpdate(count),
-            (rate) => {
-                const speedCmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
-                const speedDegInput = document.getElementById('speed-input-deg') as HTMLInputElement;
-                if (speedDegInput) speedDegInput.value = rate.toFixed(2);
-                if (speedCmInput) speedCmInput.value = this.convertDegMaToCmYr(rate).toFixed(2);
-            },
-            (active) => {
-                const el = document.getElementById('edit-controls');
-                if (el) el.style.display = active ? 'block' : 'none';
+            {
+                onDrawComplete: (points) => this.handleDrawComplete(points),
+                onFeaturePlace: (pos, type) => this.handleFeaturePlace(pos, type),
+                onSelect: (plateId, featureId, featureIds, plumeId) => this.handleSelect(plateId, featureId, featureIds, plumeId),
+                onSplitApply: (points) => this.handleSplitApply(points),
+                onSplitPreviewChange: (active) => this.handleSplitPreviewChange(active),
+                onMotionChange: (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
+                onDragTargetRequest: (plateId, axis, angleRad) => this.handleDragTargetRequest(plateId, axis, angleRad),
+                onMotionPreviewChange: (active) => {
+                    const el = document.getElementById('motion-controls');
+                    if (el) el.style.display = active ? 'block' : 'none';
+                },
+                onDrawUpdate: (count) => this.handleDrawUpdate(count),
+                onGizmoUpdate: (rate) => {
+                    const speedCmInput = document.getElementById('speed-input-cm') as HTMLInputElement;
+                    const speedDegInput = document.getElementById('speed-input-deg') as HTMLInputElement;
+                    if (speedDegInput) speedDegInput.value = rate.toFixed(2);
+                    if (speedCmInput) speedCmInput.value = this.convertDegMaToCmYr(rate).toFixed(2);
+                },
+                onEditPending: (active) => {
+                    const el = document.getElementById('edit-controls');
+                    if (el) el.style.display = active ? 'block' : 'none';
+                }
             }
         );
 
@@ -177,12 +178,14 @@ class TectoLiteApp {
         );
 
         // Initialize Timeline System
-        this.timelineSystem = new TimelineSystem(
-            'timeline-panel',
-            this.simulation!,
-            this.historyManager,
-            this
-        );
+        this.timelineSystem = new TimelineSystem({
+            getState: () => this.state,
+            pushState: () => this.pushState(),
+            updateUI: () => this.updateUI(),
+            showModal: (options) => this.showModal(options),
+            deletePlates: (plateIds) => this.deletePlates(plateIds),
+            setTime: (time) => this.simulation?.setTime(time)
+        });
         this.timelineSystem.setContainer(document.getElementById('timeline-panel')!);
 
         this.setupEventListeners();

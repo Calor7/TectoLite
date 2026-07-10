@@ -1,8 +1,7 @@
 
-import { TectonicPlate, MotionSegment, GeometryStage, Coordinate, PlateEvent } from '../types';
+import { AppState, TectonicPlate, MotionSegment, GeometryStage, Coordinate, PlateEvent } from '../types';
 import { ensureMotionModel } from '../motion/RotationModel';
-import { SimulationEngine } from '../SimulationEngine';
-import { HistoryManager } from '../HistoryManager';
+import type { ModalOptions } from '../ui/ModalSystem';
 // import toDisplayTime, toInternalTime removed
 
 
@@ -20,6 +19,15 @@ export interface TimelineEventItem {
     originalRef: MotionSegment | GeometryStage | PlateEvent | TectonicPlate;
 }
 
+export interface TimelineHost {
+    getState(): AppState;
+    pushState(): void;
+    updateUI(): void;
+    showModal(options: ModalOptions): void;
+    deletePlates(plateIds: string[]): void;
+    setTime(time: number): void;
+}
+
 const EVENT_ICONS: Record<string, string> = {
     birth: '★',
     motion: '⟳',
@@ -31,22 +39,8 @@ const EVENT_ICONS: Record<string, string> = {
 export class TimelineSystem {
     private container: HTMLElement | null = null;
     private plate: TectonicPlate | null = null;
-    private simulationEngine: SimulationEngine | null = null;
-    private app: any = null; // Reference to main app for state access if needed
 
-    constructor(
-        _containerId: string,
-        simulationEngine: SimulationEngine,
-        _historyManager: HistoryManager,
-        app: any
-    ) {
-        this.simulationEngine = simulationEngine;
-        this.app = app;
-
-        // We defer finding the element until render, or user can pass element
-        // But logic usually expects an ID or we create it.
-        // For now, allow external "mount" or auto-lookup
-    }
+    constructor(private host: TimelineHost) { }
 
     public setContainer(container: HTMLElement) {
         this.container = container;
@@ -63,9 +57,9 @@ export class TimelineSystem {
         let events: TimelineEventItem[] = [];
         if (plate) {
             events = this.buildEventList(plate);
-        } else if (this.app?.state?.world?.plates) {
+        } else {
             // Show all events from all plates
-            const allPlates = this.app.state.world.plates as TectonicPlate[];
+            const allPlates = this.host.getState().world.plates;
             allPlates.forEach((p: TectonicPlate) => {
                 events.push(...this.buildEventList(p));
             });
@@ -348,16 +342,14 @@ export class TimelineSystem {
     // --- Logic Handlers ---
 
     private pushHistory() {
-        if (this.app) {
-            this.app.pushState(); // Basic history hook
-        }
+        this.host.pushState();
     }
 
     private updateEventTime(event: TimelineEventItem, newTime: number, cascade: boolean) {
         const internalTime = newTime;
 
-        if (!this.app?.state) return;
-        const targetPlate = this.app.state.world.plates.find((p: TectonicPlate) => p.id === event.plateId);
+        const state = this.host.getState();
+        const targetPlate = state.world.plates.find((p: TectonicPlate) => p.id === event.plateId);
         if (!targetPlate) return;
 
         this.pushHistory();
@@ -380,7 +372,7 @@ export class TimelineSystem {
 
             // BIDIRECTIONAL: If this plate is a child of a split, update parent and sibling
             if (targetPlate.parentPlateId) {
-                const plates = this.app.state.world.plates as TectonicPlate[];
+                const plates = state.world.plates;
                 const parent = plates.find((p: TectonicPlate) => p.id === targetPlate.parentPlateId);
                 if (parent) {
                     // 1. Update Parent's Death Time
@@ -428,7 +420,7 @@ export class TimelineSystem {
             targetPlate.deathTime = newTime;
 
             // BIDIRECTIONAL: Update all children born from this split
-            const plates = this.app.state.world.plates as TectonicPlate[];
+            const plates = state.world.plates;
             const children = plates.filter((p: TectonicPlate) => p.parentPlateId === targetPlate.id && Math.abs(p.birthTime - (newTime - delta)) < 0.1);
 
             children.forEach((child: TectonicPlate) => {
@@ -458,12 +450,13 @@ export class TimelineSystem {
         if (changes.rate !== undefined) kf.eulerPole.rate = changes.rate;
         if (changes.position !== undefined) kf.eulerPole.position = changes.position;
 
-        const targetPlate = this.app?.state.world.plates.find((p: TectonicPlate) => p.id === event.plateId);
+        const state = this.host.getState();
+        const targetPlate = state.world.plates.find((p: TectonicPlate) => p.id === event.plateId);
 
         // Keep the active euler pole (speed inputs, gizmo, properties panel) in
         // sync when the edited segment is the one currently active
         if (targetPlate) {
-            const t = this.app.state.world.currentTime;
+            const t = state.world.currentTime;
             const active = [...ensureMotionModel(targetPlate).segments]
                 .filter((s: MotionSegment) => s.time <= t)
                 .sort((a: MotionSegment, b: MotionSegment) => b.time - a.time)[0];
@@ -477,14 +470,7 @@ export class TimelineSystem {
     }
 
     private deleteEvent(event: TimelineEventItem) {
-        if (!this.app || !this.app.showModal) {
-            if (confirm('Delete this event?')) {
-                this.performDeleteEvent(event);
-            }
-            return;
-        }
-
-        this.app.showModal({
+        this.host.showModal({
             title: 'Delete Event',
             content: 'Are you sure you want to delete this event?',
             buttons: [
@@ -507,14 +493,13 @@ export class TimelineSystem {
     private performDeleteEvent(event: TimelineEventItem) {
         this.pushHistory();
 
-        const targetPlate = this.app?.state?.world?.plates.find((p: TectonicPlate) => p.id === event.plateId);
-        if (!targetPlate && event.type !== 'birth') return;
-
+        const targetPlate = this.host.getState().world.plates.find((p: TectonicPlate) => p.id === event.plateId);
         if (event.type === 'birth') {
             const p = event.originalRef as TectonicPlate;
-            this.app.deletePlates([p.id]);
+            this.host.deletePlates([p.id]);
             return; // Early return as the plate (and this timeline) is gone
         }
+        if (!targetPlate) return;
 
         if (event.type === 'motion') {
             const seg = event.originalRef as MotionSegment;
@@ -537,13 +522,11 @@ export class TimelineSystem {
             }
 
             // Delete children born from this split
-            if (this.app && this.app.state) {
-                const plates = this.app.state.world.plates as TectonicPlate[];
-                // Identify children: Parent matches AND birthTime matches split time
-                const children = plates.filter((p: TectonicPlate) => p.parentPlateId === targetPlate.id && Math.abs(p.birthTime - evt.time) < 0.1);
+            const plates = this.host.getState().world.plates;
+            // Identify children: Parent matches AND birthTime matches split time
+            const children = plates.filter((p: TectonicPlate) => p.parentPlateId === targetPlate.id && Math.abs(p.birthTime - evt.time) < 0.1);
 
-                this.app.deletePlates(children.map((c: TectonicPlate) => c.id));
-            }
+            this.host.deletePlates(children.map((c: TectonicPlate) => c.id));
         }
 
         this.triggerUpdate(event.time, targetPlate);
@@ -552,9 +535,8 @@ export class TimelineSystem {
     private triggerUpdate(_invalidationTime: number = 0, _targetPlate?: TectonicPlate) {
         // Keyframe-less model: geometry is derived, so timeline edits need no
         // rebaking — re-derive the world at the current time and re-render.
-        if (this.simulationEngine && this.app?.state) {
-            this.simulationEngine.setTime(this.app.state.world.currentTime);
-        }
+        this.host.setTime(this.host.getState().world.currentTime);
+        this.host.updateUI();
         this.render(this.plate);
     }
 

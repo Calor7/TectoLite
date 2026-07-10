@@ -13,6 +13,21 @@ import { SelectionTool } from './tools/SelectionTool';
 import { PlacementTool } from './tools/PlacementTool';
 import { EditTool } from './tools/EditTool';
 
+export interface CanvasManagerCallbacks {
+    onDrawComplete: (points: Coordinate[]) => void;
+    onFeaturePlace: (position: Coordinate, type: FeatureType) => void;
+    onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[], plumeId?: string | null) => void;
+    onSplitApply: (points: Coordinate[]) => void;
+    onSplitPreviewChange: (active: boolean) => void;
+    onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void;
+    onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void;
+    onPolyFeatureComplete?: (points: Coordinate[], fillColor: string) => void;
+    onMotionPreviewChange?: (active: boolean) => void;
+    onDrawUpdate?: (count: number) => void;
+    onGizmoUpdate?: (rate: number) => void;
+    onEditPending?: (active: boolean) => void;
+}
+
 export class CanvasManager {
     private canvas: HTMLCanvasElement;
     private ctx: CanvasRenderingContext2D;
@@ -55,18 +70,7 @@ export class CanvasManager {
         canvas: HTMLCanvasElement,
         private getState: () => AppState,
         private setState: (updater: (state: AppState) => AppState) => void,
-        private onDrawComplete: (points: Coordinate[]) => void,
-        private onFeaturePlace: (position: Coordinate, type: FeatureType) => void,
-        private onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[], plumeId?: string | null) => void,
-        private onSplitApply: (points: Coordinate[]) => void,
-        private onSplitPreviewChange: (active: boolean) => void,
-        private onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void,
-        private onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void,
-        private onPolyFeatureComplete?: (points: Coordinate[], fillColor: string) => void,
-        private onMotionPreviewChange?: (active: boolean) => void,
-        private onDrawUpdate?: (count: number) => void,
-        private onGizmoUpdate?: (rate: number) => void,
-        private onEditPending?: (active: boolean) => void
+        private callbacks: CanvasManagerCallbacks
     ) {
         this.canvas = canvas;
         const ctx = canvas.getContext('2d');
@@ -90,8 +94,8 @@ export class CanvasManager {
     private initializeTools() {
         this.drawTool = new PathInputTool(
             this.projectionManager,
-            (c) => this.onDrawUpdate?.(c),
-            (points) => this.onDrawComplete(points),
+            (c) => this.callbacks.onDrawUpdate?.(c),
+            (points) => this.callbacks.onDrawComplete(points),
             () => this.cancelDrawing(),
             3, '#ffffff',
             () => this.getState().world.globalOptions.planetRadius || 6371
@@ -103,15 +107,15 @@ export class CanvasManager {
         this.splitTool = new PathInputTool(
             this.projectionManager,
             (c) => {
-                this.onDrawUpdate?.(c);
-                if (c >= 1) this.onSplitPreviewChange(true);
+                this.callbacks.onDrawUpdate?.(c);
+                if (c >= 1) this.callbacks.onSplitPreviewChange(true);
             },
             (points) => {
-                this.onSplitApply(points);
-                this.onSplitPreviewChange(false);
+                this.callbacks.onSplitApply(points);
+                this.callbacks.onSplitPreviewChange(false);
             },
             () => {
-                this.onSplitPreviewChange(false);
+                this.callbacks.onSplitPreviewChange(false);
             },
             2, '#ff4444',
             () => this.getState().world.globalOptions.planetRadius || 6371
@@ -123,7 +127,7 @@ export class CanvasManager {
             (_c) => { },
             (points) => {
                 const colorInput = document.getElementById('poly-feature-color') as HTMLInputElement;
-                this.onPolyFeatureComplete?.(points, colorInput?.value || '#ff6b6b');
+                this.callbacks.onPolyFeatureComplete?.(points, colorInput?.value || '#ff6b6b');
             },
             () => { },
             3, '#ff6b6b',
@@ -144,7 +148,7 @@ export class CanvasManager {
         const placementTool = new PlacementTool(
             () => this.getState().activeFeatureType,
             (geo, type) => {
-                this.onFeaturePlace(geo, type);
+                this.callbacks.onFeaturePlace(geo, type);
             },
             () => { }
         );
@@ -154,7 +158,7 @@ export class CanvasManager {
         this.editTool = new EditTool(
             this.projectionManager,
             () => this.getState(),
-            (hasChanges) => { this.markDirty(); this.onEditPending?.(hasChanges); },
+            (hasChanges) => { this.markDirty(); this.callbacks.onEditPending?.(hasChanges); },
             () => { document.getElementById('btn-edit-apply')?.click(); },
             (x, y) => this.findNearestBoundaryElement(x, y),
             () => this.markDirty()
@@ -181,18 +185,18 @@ export class CanvasManager {
         if (mod.ctrl && hit?.featureId) {
             const currentIds = state.world.selectedFeatureIds || [];
             if (currentIds.includes(hit.featureId)) {
-                this.onSelect(hit.plateId ?? state.world.selectedPlateId, null, currentIds.filter(id => id !== hit.featureId));
+                this.callbacks.onSelect(hit.plateId ?? state.world.selectedPlateId, null, currentIds.filter(id => id !== hit.featureId));
             } else {
-                this.onSelect(hit.plateId ?? state.world.selectedPlateId, null, [...currentIds, hit.featureId]);
+                this.callbacks.onSelect(hit.plateId ?? state.world.selectedPlateId, null, [...currentIds, hit.featureId]);
             }
         } else if (state.activeTool === 'select' && hit && 'plumeId' in hit && hit.plumeId) {
-            this.onSelect(null, null, [], hit.plumeId);
+            this.callbacks.onSelect(null, null, [], hit.plumeId);
         } else {
             if (hit?.plateId) {
-                this.onSelect(hit.plateId, hit.featureId ?? null);
+                this.callbacks.onSelect(hit.plateId, hit.featureId ?? null);
                 this.setState(s => ({ ...s, world: { ...s.world, selectedEdge: hit.edge || null } }));
             } else {
-                this.onSelect(null, null);
+                this.callbacks.onSelect(null, null);
                 this.setState(s => ({ ...s, world: { ...s.world, selectedEdge: null } }));
             }
         }
@@ -220,7 +224,7 @@ export class CanvasManager {
         }
 
         if (selectedFeatures.length > 0) {
-            this.onSelect(plateId, null, selectedFeatures);
+            this.callbacks.onSelect(plateId, null, selectedFeatures);
         }
     }
 
@@ -277,13 +281,13 @@ export class CanvasManager {
     }
 
     public applyMotion(): void {
-        if (this.isFineTuning && this.ghostRotation && this.onDragTargetRequest) {
+        if (this.isFineTuning && this.ghostRotation && this.callbacks.onDragTargetRequest) {
             const state = this.getState();
             const plate = state.world.plates.find(p => p.id === this.ghostRotation!.plateId);
             if (plate) {
                 const qTotal = this.getGhostTotalQuat(plate.center)!;
                 const { axis, angle } = axisAngleFromQuat(qTotal);
-                this.onDragTargetRequest(this.ghostRotation.plateId, axis, angle);
+                this.callbacks.onDragTargetRequest(this.ghostRotation.plateId, axis, angle);
             }
         }
         this.cancelMotion();
@@ -294,7 +298,7 @@ export class CanvasManager {
         this.ghostRotation = null;
         this.ghostPlateId = null;
         this.ghostSpin = 0;
-        if (this.onMotionPreviewChange) this.onMotionPreviewChange(false);
+        this.callbacks.onMotionPreviewChange?.(false);
         this.markDirty();
     }
 
@@ -556,7 +560,7 @@ export class CanvasManager {
                 this.pan(dx, dy);
             } else if (this.interactionMode === 'modify_velocity') {
                 const res = this.motionGizmo.updateDrag(screen.x, screen.y, this.projectionManager, this.getState().world.plates.find(p => p.id === this.getState().world.selectedPlateId)?.center || [0, 0]);
-                if (res && this.onGizmoUpdate && res.rate !== undefined) this.onGizmoUpdate(res.rate);
+                if (res?.rate !== undefined) this.callbacks.onGizmoUpdate?.(res.rate);
             } else if (this.interactionMode === 'drag_target') {
                 this.updateDragTarget(e);
             } else if (this.interactionMode === 'spin_ghost') {
@@ -581,12 +585,12 @@ export class CanvasManager {
             this.isDragging = false;
             if (this.interactionMode === 'modify_velocity') {
                 const res = this.motionGizmo.endDrag();
-                if (res) this.onMotionChange(this.motionGizmo.getPlateId()!, res.polePosition, res.rate);
+                if (res) this.callbacks.onMotionChange(this.motionGizmo.getPlateId()!, res.polePosition, res.rate);
             } else if (this.interactionMode === 'drag_target') {
                 if (this.ghostRotation) {
                     this.isFineTuning = true;
                     this.ghostSpin = 0;
-                    if (this.onMotionPreviewChange) this.onMotionPreviewChange(true);
+                    this.callbacks.onMotionPreviewChange?.(true);
                 }
             }
             this.interactionMode = 'none';
