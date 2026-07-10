@@ -1505,6 +1505,10 @@ class TectoLiteApp {
             this.redo();
         });
 
+        document.getElementById('btn-new-project')?.addEventListener('click', () => {
+            this.requestNewProject();
+        });
+
         // Export/Import JSON buttons
         document.getElementById('btn-export-json')?.addEventListener('click', async () => {
             await exportToJSON(this.state, this.cameraBookmarks);
@@ -4396,6 +4400,54 @@ class TectoLiteApp {
         const redoBtn = document.getElementById('btn-redo') as HTMLButtonElement;
         if (undoBtn) undoBtn.disabled = !this.historyManager.canUndo();
         if (redoBtn) redoBtn.disabled = !this.historyManager.canRedo();
+    }
+
+    private requestNewProject(): void {
+        const hasDocumentContent = this.state.world.plates.length > 0 || this.hasUnsavedChanges;
+        if (!hasDocumentContent) {
+            this.createNewProject();
+            return;
+        }
+
+        this.showModal({
+            title: 'Start a new project?',
+            content: 'This replaces the current world. Save it first if you want to keep your work.',
+            buttons: [
+                {
+                    text: 'Create Blank World',
+                    subtext: 'Discard the current session and reset all project state.',
+                    onClick: () => this.createNewProject()
+                },
+                {
+                    text: 'Cancel',
+                    isSecondary: true,
+                    onClick: () => { }
+                }
+            ]
+        });
+    }
+
+    private createNewProject(): void {
+        this.simulation?.stop();
+        eventSystem.reset();
+        this.historyManager.clear();
+        this.clearAutosave();
+
+        this.state = createDefaultAppState();
+        this.cameraBookmarks = [];
+        this.fusionFirstPlateId = null;
+        this.activeLinkSourceId = null;
+        this.momentumClipboard = null;
+        this.setUnsaved(false);
+
+        this.renderCameraViews();
+        this.updateUndoRedoButtons();
+        this.updateUI();
+        this.syncUIToState();
+        this.timelineSystem?.render(null);
+        this.setActiveTool('select');
+        this.canvasManager?.markDirty();
+        this.showToast('New blank project created');
     }
 
     // Helper for TimelineSystem to delete multiple plates

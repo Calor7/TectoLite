@@ -154,6 +154,17 @@ architecture, and true history editing.
 
 ### Later / parked (ideas with a reason to wait)
 
+Approved additions (2026-07-10):
+
+- **New Project / Clear World** — approved; first blank-world slice implemented,
+  with example templates to join BRIEF_07.
+- **Manual geological event tool** — approved; build on EventSystem's existing
+  placeholder after the event inspector establishes the authoring vocabulary.
+- **Event history inspector** — approved; fold into BRIEF_08's history editor so
+  detected interactions and chosen consequences share one timeline surface.
+- **Project templates** — approved; fold into BRIEF_07's bundled example-world and
+  welcome-flow work.
+
 - **Animation export** (PNG sequence / WebM of timeline playback) — high
   worldbuilder value; wants deterministic stepping (TASK_22) first so
   exports are reproducible. Candidate headline for v0.5.

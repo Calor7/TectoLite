@@ -292,6 +292,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <button id="btn-redo" class="btn btn-secondary" title="Redo (Ctrl+Y)">
               <span class="icon">↷</span> Redo
             </button>
+            <button id="btn-new-project" class="btn btn-secondary" title="Start a new project">
+              <span class="icon">+</span> New
+            </button>
             <button id="btn-export" class="btn btn-primary" title="Export (PNG, Heightmap, QGIS)">
               <span class="icon">📤</span> Export
             </button>
