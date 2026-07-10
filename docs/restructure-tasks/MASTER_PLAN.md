@@ -77,7 +77,7 @@ All 23 tasks complete, all three verify commands pass, no `app: any` back-refere
 - [x] Phase 0 (TASK_01, TASK_02) — executed in commit `4215f16` "T3 Redesign" (CausalGraph + GeologicalAutomation removed, docs corrected)
 - [x] Phase 1 (TASK_03–06) — executed in commits `4215f16`/`26cc057` "T3/T4 Redesign" (shared geometry extracted, @types moved, motion flag-day done, `src/migration.ts` + SAVE_VERSION 4 added); follow-ups recorded in `out-of-scope-list`
 - [x] Phase 2 (TASK_07–10) — executed 2026-07-10 (perf harness + `?perf=bench1`, dirty render loop, projection cache, plate derivation memoization, structural history snapshots); follow-ups recorded in `out-of-scope-list`
-- [ ] Phase 3 (TASK_11 complete 2026-07-10; TASK_12 pending)
+- [x] Phase 3 (TASK_11–12) — executed 2026-07-10 (typed canvas/timeline hosts and reset-safe event detection)
 - [ ] Phase 4 (TASK_13–15)
 - [ ] Phase 5 (TASK_16, TASK_17)
 - [ ] Phase 6 (TASK_18, TASK_19)

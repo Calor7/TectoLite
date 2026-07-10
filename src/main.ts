@@ -36,6 +36,7 @@ import { migrateSaveFile, type SaveFile } from './migration';
 import { pointPositionAt, ensureMotionModel, getMotionModel, activeEulerPole } from './motion/RotationModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
+import { eventSystem } from './systems/EventSystem';
 import { geoArea, geoCentroid } from 'd3-geo';
 import {
     getSpeedPresetData as _getSpeedPresetData,
@@ -252,6 +253,7 @@ class TectoLiteApp {
                             // full migration pipeline here (line-type rename
                             // + motion-model migration, gated by version).
                             migrateSaveFile(data);
+                            eventSystem.reset();
                             this.state = {
                                 ...this.state,
                                 world: data.world,
@@ -1542,6 +1544,7 @@ class TectoLiteApp {
                         // parseImportFile already ran migrateSaveFile on the
                         // imported world (line-type rename + motion-model
                         // migration), so no per-field migration is needed here.
+                        eventSystem.reset();
                         this.state = {
                             ...this.state,
                             world: importedWorld,
@@ -4358,6 +4361,7 @@ class TectoLiteApp {
         const prevState = this.historyManager.undo(this.state);
         if (prevState) {
             this.state = prevState;
+            eventSystem.reset();
             this.updateUI();
             this.canvasManager?.render();
             // Update timeline if visible
@@ -4374,6 +4378,7 @@ class TectoLiteApp {
         const nextState = this.historyManager.redo(this.state);
         if (nextState) {
             this.state = nextState;
+            eventSystem.reset();
             this.updateUI();
             this.canvasManager?.render();
             // Update timeline if visible

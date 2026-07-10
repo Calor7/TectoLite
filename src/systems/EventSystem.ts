@@ -359,9 +359,18 @@ export class EventSystem {
     }
 
     /**
-     * Clear interaction cache (e.g., when loading a new project)
+     * Clears cached interaction detection state while preserving the public
+     * EventSystem instance. Call when replacing or restoring application state.
      */
     public clearCache(): void {
+        this.reset();
+    }
+
+    /**
+     * Resets all session-scoped internal state. Use at project boundaries and
+     * after history restores so event detection is derived from the new state.
+     */
+    public reset(): void {
         this.processedInteractions.clear();
     }
 

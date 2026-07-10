@@ -164,3 +164,6 @@ task scope. Append new entries below.
 - Run a deliberate manual performance capture for BRIEF_09 playback, scrub, and 50-edit undo heap scenarios. The harness and idle smoke captures are in place, but browser slider automation timed out before producing trustworthy scrub/playback numbers.
 - Refactor TimelineSystem toward true copy-on-write before attempting a one-level shallow HistoryManager snapshot. Current timeline retiming/keyframe/delete paths still mutate plate and event objects in place.
 - Replace live-state calls to ensureMotionModel()/activeEulerPole() mutation patterns with pure or cloned alternatives. This is needed before history snapshots can safely share more owner objects.
+
+2026-07-10 - TASK_12 follow-up
+- No explicit New Project / Clear World workflow exists in `src/main.ts` or the current UI. TASK_12 therefore resets EventSystem state on autosave restore, replace-current import, undo, and redo only. If a New Project action is added, it must call `eventSystem.reset()` before installing the fresh state.
