@@ -48,9 +48,6 @@ class PerfMonitor {
     public beginFrame(): void {
         if (!this.enabled) return;
         this.frameStartedAt = performance.now();
-        this.phaseTotals.sim = 0;
-        this.phaseTotals.derive = 0;
-        this.phaseTotals.render = 0;
     }
 
     public endFrame(): void {
@@ -68,6 +65,9 @@ class PerfMonitor {
             this.lastOverlayUpdate = now;
             this.updateOverlay();
         }
+        this.phaseTotals.sim = 0;
+        this.phaseTotals.derive = 0;
+        this.phaseTotals.render = 0;
     }
 
     public beginPhase(phase: PerfPhase): PhaseSample | null {

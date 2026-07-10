@@ -18,6 +18,7 @@ export class CanvasManager {
     private ctx: CanvasRenderingContext2D;
     private animationId: number | null = null;
     private projectionManager: ProjectionManager;
+    private isDirty = true;
 
     private tools: Map<ToolType | string, InputTool> = new Map();
     private activeInputTool: InputTool | null = null;
@@ -72,6 +73,11 @@ export class CanvasManager {
         if (!ctx) throw new Error('Could not get 2D context');
         this.ctx = ctx;
         this.projectionManager = new ProjectionManager(ctx);
+        const originalSetState = this.setState;
+        this.setState = (updater) => {
+            originalSetState(updater);
+            this.markDirty();
+        };
 
         this.initializeTools();
         this.setupEventListeners();
@@ -148,10 +154,10 @@ export class CanvasManager {
         this.editTool = new EditTool(
             this.projectionManager,
             () => this.getState(),
-            (hasChanges) => { this.render(); this.onEditPending?.(hasChanges); },
+            (hasChanges) => { this.markDirty(); this.onEditPending?.(hasChanges); },
             () => { document.getElementById('btn-edit-apply')?.click(); },
             (x, y) => this.findNearestBoundaryElement(x, y),
-            () => this.render()
+            () => this.markDirty()
         );
         // Set up snap candidate provider for edit tool (same as draw tool)
         this.editTool.setSnapCandidateProvider(() => this.getAllPlateVertices());
@@ -235,25 +241,29 @@ export class CanvasManager {
     }
 
     public setTheme(_theme: string): void {
-        this.render();
+        this.markDirty();
     }
 
     // --- Public Methods for main.ts ---
 
     public applySplit(): void {
         this.splitTool.forceComplete();
+        this.markDirty();
     }
 
     public cancelSplit(): void {
         this.splitTool.cancel();
+        this.markDirty();
     }
 
     public cancelDrawing(): void {
         this.drawTool.cancel();
+        this.markDirty();
     }
 
     public applyDraw(): void {
         this.drawTool.forceComplete();
+        this.markDirty();
     }
 
     /** Total pending ghost transform (drag + spin) as a single quaternion. */
@@ -285,7 +295,7 @@ export class CanvasManager {
         this.ghostPlateId = null;
         this.ghostSpin = 0;
         if (this.onMotionPreviewChange) this.onMotionPreviewChange(false);
-        this.render();
+        this.markDirty();
     }
 
     public getEditResult() {
@@ -294,12 +304,13 @@ export class CanvasManager {
 
     public cancelEdit() {
         this.editTool.cancel();
+        this.markDirty();
     }
 
     public setMotionMode(mode: InteractionMode): void {
         this.motionMode = mode;
         this.motionGizmo.setMode(mode);
-        this.render();
+        this.markDirty();
     }
 
     /** Switch draw tool between polygon and line modes */
@@ -309,16 +320,19 @@ export class CanvasManager {
         } else {
             this.drawTool.configurePolygonMode();
         }
+        this.markDirty();
     }
 
     /** Toggle vertex snapping for the draw tool */
     public setSnappingEnabled(enabled: boolean): void {
         this.drawTool.snappingEnabled = enabled;
+        this.markDirty();
     }
 
     /** Toggle vertex snapping for the edit tool */
     public setEditSnappingEnabled(enabled: boolean): void {
         this.editTool.snappingEnabled = enabled;
+        this.markDirty();
     }
 
     /** Collect all vertices from all visible plate polygons for snapping */
@@ -358,20 +372,29 @@ export class CanvasManager {
                 translate: [rect.width / 2, rect.height / 2]
             }
         }));
-        this.render();
+        this.markDirty();
     }
 
     public startRenderLoop(): void {
         const loop = () => {
             perfMonitor.beginFrame();
-            this.render();
-            const state = this.getState();
-            const ringCount = state.world.plates.filter(plate => plate.riftAxisId || plate.junctionId || plate.slabId).length;
-            perfMonitor.setCounts(state.world.plates.length, ringCount);
+            if (this.isDirty) {
+                this.isDirty = false;
+                this.render();
+            }
+            if (perfMonitor.isEnabled()) {
+                const state = this.getState();
+                const ringCount = state.world.plates.filter(plate => plate.riftAxisId || plate.junctionId || plate.slabId).length;
+                perfMonitor.setCounts(state.world.plates.length, ringCount);
+            }
             perfMonitor.endFrame();
             this.animationId = requestAnimationFrame(loop);
         };
         loop();
+    }
+
+    public markDirty(): void {
+        this.isDirty = true;
     }
 
     public stopRenderLoop(): void {
@@ -447,6 +470,7 @@ export class CanvasManager {
 
         if (this.activeInputTool) {
             this.activeInputTool.onMouseDown(e, geo, screen);
+            this.markDirty();
         }
     }
 
@@ -543,6 +567,9 @@ export class CanvasManager {
         if (this.activeInputTool) {
             this.activeInputTool.onMouseMove(e, geo, screen);
         }
+        if (this.isDragging || this.activeInputTool) {
+            this.markDirty();
+        }
         this.lastMousePos = { x: e.clientX, y: e.clientY };
     }
 
@@ -564,25 +591,32 @@ export class CanvasManager {
             }
             this.interactionMode = 'none';
             this.canvas.style.cursor = 'default';
+            this.markDirty();
         }
 
         if (this.activeInputTool) {
             this.activeInputTool.onMouseUp(e, geo, screen);
+            this.markDirty();
         }
     }
 
     private handleDoubleClick(e: MouseEvent) {
-        if (this.activeInputTool?.onDoubleClick) this.activeInputTool.onDoubleClick(e, this.getGeoFromMouse(e), this.getMousePos(e));
+        if (this.activeInputTool?.onDoubleClick) {
+            this.activeInputTool.onDoubleClick(e, this.getGeoFromMouse(e), this.getMousePos(e));
+            this.markDirty();
+        }
     }
 
     private handleKeyDown(e: KeyboardEvent) {
         if (e.key === 'Shift') this.shiftKeyDown = true;
         if (this.activeInputTool) this.activeInputTool.onKeyDown(e);
+        this.markDirty();
     }
 
     private handleKeyUp(e: KeyboardEvent) {
         if (e.key === 'Shift') this.shiftKeyDown = false;
         if (this.activeInputTool) this.activeInputTool.onKeyUp(e);
+        this.markDirty();
     }
 
     private pan(dx: number, dy: number) {
@@ -622,7 +656,7 @@ export class CanvasManager {
         const res = axisAngleFromQuat(qFinal);
 
         this.ghostRotation = { plateId: p.id, axis: res.axis, angle: res.angle };
-        this.render();
+        this.markDirty();
     }
 
     /** Projected screen position of the ghost plate's (rotated) center during fine-tuning. */
@@ -645,7 +679,7 @@ export class CanvasManager {
         if (delta < -180) delta += 360;
         this.ghostSpin += delta;
         this.lastSpinAngle = curr;
-        this.render();
+        this.markDirty();
     }
 
     private startDragTarget(plateId: string, geo: Coordinate) {
@@ -677,6 +711,7 @@ export class CanvasManager {
         this.isDragging = true;
         this.interactionMode = 'drag_target';
         this.canvas.style.cursor = 'grabbing';
+        this.markDirty();
     }
 
     public render(): void {
@@ -1085,7 +1120,7 @@ export class CanvasManager {
         let img = this.cachedOverlayImages.get(overlay.imageData);
         if (!img) {
             img = new Image();
-            img.onload = () => { this.render(); };
+            img.onload = () => { this.markDirty(); };
             img.src = overlay.imageData;
             this.cachedOverlayImages.set(overlay.imageData, img);
             return;
@@ -1549,7 +1584,6 @@ export class CanvasManager {
             const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
             const newScale = Math.max(50, Math.min(10000, state.viewport.scale * zoomFactor));
             this.setState(s => ({ ...s, viewport: { ...s.viewport, scale: newScale } }));
-            this.render();
         });
     }
 

@@ -49,13 +49,54 @@ describe('HistoryManager', () => {
         expect(h.canRedo()).toBe(false);
     });
 
-    it('stores a deep clone — later mutation of the original does not leak in', () => {
+    it('isolates mutable owner objects from later mutation', () => {
         const h = new HistoryManager();
         const original = makeState(1);
         h.push(original);
         (original.world as { currentTime: number }).currentTime = 999;
         const restored = h.undo(makeState(2));
         expect(timeOf(restored)).toBe(1);
+    });
+
+    it('clones plate and motion metadata while sharing heavy geometry points', () => {
+        const h = new HistoryManager();
+        const points = [[0, 0], [1, 0], [1, 1]];
+        const plate = {
+            id: 'p1',
+            name: 'Original',
+            color: '#fff',
+            motionSegments: [{ time: 0, eulerPole: { position: [0, 90], rate: 1 } }],
+            geometryStages: [{ time: 0, polygons: [{ id: 'poly1', points, closed: true }], features: [] }],
+            polygons: [{ id: 'poly1', points, closed: true }],
+            features: [],
+            center: [0, 0],
+            birthTime: 0,
+            deathTime: null,
+            initialPolygons: [{ id: 'poly1', points, closed: true }],
+            initialFeatures: [],
+            connectedRiftIds: [],
+            events: [],
+            visible: true,
+            locked: false
+        };
+        const base = makeState(1);
+        const state = {
+            ...base,
+            world: {
+                ...base.world,
+                plates: [plate]
+            }
+        } as unknown as AppState;
+
+        h.push(state);
+        plate.name = 'Mutated';
+        plate.motionSegments[0].eulerPole.rate = 9;
+        const restored = h.undo(makeState(2))!;
+        const restoredPlate = restored.world.plates[0] as any;
+
+        expect(restoredPlate.name).toBe('Original');
+        expect(restoredPlate.motionSegments[0].eulerPole.rate).toBe(1);
+        expect(restoredPlate.polygons[0].points).toBe(points);
     });
 
     it('caps history at 50 entries, dropping the oldest', () => {

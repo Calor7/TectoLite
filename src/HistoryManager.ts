@@ -88,16 +88,108 @@ export class HistoryManager {
     }
 
     /**
-     * Deep clone state to prevent mutation issues.
-     * structuredClone is significantly faster than the JSON round-trip for
-     * large worlds; fall back to JSON if the state ever contains a value
-     * structuredClone can't handle (e.g. a function sneaking into state).
+     * Structural snapshot for undo/redo.
+     *
+     * The app still has some live in-place mutation paths, so a one-level shallow
+     * clone is not safe yet. Clone mutable owner boundaries, but keep heavy
+     * geometry coordinate arrays shared to avoid the old whole-world deep clone.
      */
     private cloneState(state: AppState): AppState {
-        try {
-            return structuredClone(state);
-        } catch {
-            return JSON.parse(JSON.stringify(state));
-        }
+        const cloneCoord = <T extends number[] | undefined>(coord: T): T =>
+            (Array.isArray(coord) ? [...coord] : coord) as T;
+        const cloneFeature = (feature: any) => ({
+            ...feature,
+            position: cloneCoord(feature.position),
+            originalPosition: cloneCoord(feature.originalPosition),
+            polygon: feature.polygon ? [...feature.polygon] : feature.polygon
+        });
+        const clonePlate = (plate: any) => ({
+            ...plate,
+            relativeEulerPole: plate.relativeEulerPole ? {
+                ...plate.relativeEulerPole,
+                position: cloneCoord(plate.relativeEulerPole.position)
+            } : plate.relativeEulerPole,
+            motionSegments: plate.motionSegments?.map((segment: any) => ({
+                ...segment,
+                eulerPole: {
+                    ...segment.eulerPole,
+                    position: cloneCoord(segment.eulerPole.position)
+                }
+            })) ?? [],
+            geometryStages: plate.geometryStages?.map((stage: any) => ({
+                ...stage,
+                polygons: [...(stage.polygons ?? [])],
+                features: (stage.features ?? []).map(cloneFeature)
+            })) ?? [],
+            polygons: [...(plate.polygons ?? [])],
+            features: (plate.features ?? []).map(cloneFeature),
+            initialPolygons: [...(plate.initialPolygons ?? [])],
+            initialFeatures: (plate.initialFeatures ?? []).map(cloneFeature),
+            parentPlateIds: plate.parentPlateIds ? [...plate.parentPlateIds] : plate.parentPlateIds,
+            connectedRiftIds: [...(plate.connectedRiftIds ?? [])],
+            events: (plate.events ?? []).map((event: any) => ({ ...event })),
+            flowlinesTrailCache: plate.flowlinesTrailCache ? plate.flowlinesTrailCache.map((trail: any) => [...trail]) : plate.flowlinesTrailCache,
+            center: cloneCoord(plate.center)
+        });
+        const cloneRiftAxis = (axis: any) => ({
+            ...axis,
+            birthPolyline: axis.birthPolyline ? [...axis.birthPolyline] : axis.birthPolyline,
+            isochrons: (axis.isochrons ?? []).map((isochron: any) => ({
+                ...isochron,
+                polyline: isochron.polyline ? [...isochron.polyline] : isochron.polyline
+            }))
+        });
+        const cloneTripleJunction = (junction: any) => ({
+            ...junction,
+            axisIds: [...(junction.axisIds ?? [])],
+            axisJunctionAtStart: [...(junction.axisJunctionAtStart ?? [])],
+            junctionHistory: junction.junctionHistory?.map((entry: any) => ({
+                ...entry,
+                point: cloneCoord(entry.point)
+            }))
+        });
+        const world: any = state.world;
+        const globalOptions = world.globalOptions ?? {};
+
+        return {
+            ...state,
+            viewport: {
+                ...state.viewport,
+                rotate: cloneCoord(state.viewport.rotate),
+                translate: cloneCoord(state.viewport.translate)
+            },
+            world: {
+                ...world,
+                plates: (world.plates ?? []).map(clonePlate),
+                selectedFeatureIds: [...(world.selectedFeatureIds ?? [])],
+                globalOptions: {
+                    ...globalOptions,
+                    ratePresets: globalOptions.ratePresets ? [...globalOptions.ratePresets] : globalOptions.ratePresets,
+                    lineTypeDefaults: globalOptions.lineTypeDefaults
+                        ? Object.fromEntries(Object.entries(globalOptions.lineTypeDefaults).map(([key, value]: [string, any]) => [
+                            key,
+                            { ...value, dash: [...(value.dash ?? [])] }
+                        ]))
+                        : globalOptions.lineTypeDefaults
+                },
+                riftAxes: world.riftAxes?.map(cloneRiftAxis),
+                tripleJunctions: world.tripleJunctions?.map(cloneTripleJunction),
+                boundaries: world.boundaries?.map((boundary: any) => ({
+                    ...boundary,
+                    points: boundary.points ? [...boundary.points] : boundary.points,
+                    plateIds: boundary.plateIds ? [...boundary.plateIds] : boundary.plateIds,
+                    polygonTypes: boundary.polygonTypes ? [...boundary.polygonTypes] : boundary.polygonTypes
+                })),
+                mantlePlumes: world.mantlePlumes?.map((plume: any) => ({
+                    ...plume,
+                    position: cloneCoord(plume.position)
+                })),
+                tectonicEvents: world.tectonicEvents?.map((event: any) => ({
+                    ...event,
+                    boundarySegment: event.boundarySegment ? [...event.boundarySegment] : event.boundarySegment
+                })),
+                imageOverlay: world.imageOverlay ? { ...world.imageOverlay } : world.imageOverlay
+            }
+        };
     }
 }

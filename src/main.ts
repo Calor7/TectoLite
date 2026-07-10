@@ -138,6 +138,7 @@ class TectoLiteApp {
             (updater) => {
                 this.state = updater(this.state);
                 this.updateUI(); // Centralized UI update
+                this.canvasManager?.markDirty();
             },
             (points) => this.handleDrawComplete(points),
             (pos, type) => this.handleFeaturePlace(pos, type),
@@ -170,6 +171,7 @@ class TectoLiteApp {
             (updater) => {
                 this.state = updater(this.state);
                 this.updateTimeDisplay();
+                this.canvasManager?.markDirty();
                 // Don't full re-render UI every tick, just canvas
             }
         );
@@ -815,22 +817,31 @@ class TectoLiteApp {
         // Automated Oceanic Crust
         document.getElementById('check-auto-oceanic')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.enableAutoOceanicCrust = (e.target as HTMLInputElement).checked;
+            this.simulation?.setTime(this.state.world.currentTime);
+            this.canvasManager?.markDirty();
         });
 
         document.getElementById('check-expanding-rifts')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.enableExpandingRifts = (e.target as HTMLInputElement).checked;
+            this.simulation?.setTime(this.state.world.currentTime);
+            this.canvasManager?.markDirty();
         });
 
         // Automation & Events toggles (Settings dropdown; all opt-in)
         document.getElementById('check-boundary-viz')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
+            this.simulation?.setTime(this.state.world.currentTime);
             this.canvasManager?.render();
         });
         document.getElementById('check-guided-creation')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.enableGuidedCreation = (e.target as HTMLInputElement).checked;
+            this.simulation?.setTime(this.state.world.currentTime);
+            this.canvasManager?.markDirty();
         });
         document.getElementById('check-pause-fusion')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.pauseOnFusionSuggestion = (e.target as HTMLInputElement).checked;
+            this.simulation?.setTime(this.state.world.currentTime);
+            this.canvasManager?.markDirty();
         });
         document.getElementById('check-show-event-icons')?.addEventListener('change', (e) => {
             this.state.world.globalOptions.showEventIcons = (e.target as HTMLInputElement).checked;
@@ -841,11 +852,14 @@ class TectoLiteApp {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
                 this.state.world.globalOptions.oceanicGenerationInterval = val;
+                this.simulation?.setTime(this.state.world.currentTime);
+                this.canvasManager?.markDirty();
             }
         });
 
         document.getElementById('input-oceanic-color')?.addEventListener('input', (e) => {
             this.state.world.globalOptions.oceanicCrustColor = (e.target as HTMLInputElement).value;
+            this.canvasManager?.markDirty();
         });
 
         document.getElementById('input-oceanic-opacity')?.addEventListener('input', (e) => {
@@ -1250,6 +1264,7 @@ class TectoLiteApp {
                     this.state.world.globalOptions.planetRadius = 6371;
                     radiusInput.value = "6371";
                     this.updateUI();
+                    this.canvasManager?.markDirty();
                 } else {
                     // Enable custom radius, restore user value
                     this.state.world.globalOptions.customRadiusEnabled = true;
@@ -1257,6 +1272,7 @@ class TectoLiteApp {
                     radiusInput.value = customVal.toString();
                     this.state.world.globalOptions.planetRadius = customVal;
                     this.updateUI();
+                    this.canvasManager?.markDirty();
                 }
             }
         });
@@ -1269,6 +1285,7 @@ class TectoLiteApp {
                     this.state.world.globalOptions.planetRadius = val;
                 }
                 this.updateUI(); // Refresh UI to update calculated stats
+                this.canvasManager?.markDirty();
             }
         });
 
@@ -1876,6 +1893,7 @@ class TectoLiteApp {
         }
 
         this.updateHint(hintText);
+        this.canvasManager?.markDirty();
     }
 
 
@@ -2969,6 +2987,7 @@ class TectoLiteApp {
                 // Bind events for Plume
                 document.getElementById('prop-plume-active')?.addEventListener('change', (e) => {
                     plume.active = (e.target as HTMLInputElement).checked;
+                    this.canvasManager?.markDirty();
                 });
 
                 const propPlumeRate = document.getElementById('prop-plume-rate-main') as HTMLInputElement;
@@ -2976,7 +2995,10 @@ class TectoLiteApp {
                 if (propPlumeRate) {
                     propPlumeRate.addEventListener('change', (e) => {
                         const val = parseFloat((e.target as HTMLInputElement).value);
-                        if (!isNaN(val) && val > 0) plume.spawnRate = val;
+                        if (!isNaN(val) && val > 0) {
+                            plume.spawnRate = val;
+                            this.canvasManager?.markDirty();
+                        }
                     });
                 }
 

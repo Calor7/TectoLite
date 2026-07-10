@@ -17,6 +17,9 @@ export class ProjectionManager {
     private projection: GeoProjection;
     private pathGenerator: GeoPath;
     private currentProjectionType: ProjectionType = 'orthographic';
+    private cachedKey = '';
+    private cacheHits = 0;
+    private cacheMisses = 0;
 
     constructor(context: CanvasRenderingContext2D) {
         this.projection = geoOrthographic()
@@ -25,6 +28,14 @@ export class ProjectionManager {
     }
 
     public update(type: ProjectionType, viewport: Viewport): void {
+        const key = this.getCacheKey(type, viewport);
+        if (key === this.cachedKey) {
+            this.cacheHits++;
+            this.currentProjectionType = type;
+            return;
+        }
+
+        this.cacheMisses++;
         this.currentProjectionType = type;
         
         // 1. Select Projection
@@ -60,6 +71,27 @@ export class ProjectionManager {
 
         // Update the path generator to use this new projection instance
         this.pathGenerator.projection(this.projection);
+        this.cachedKey = key;
+    }
+
+    public invalidateCache(): void {
+        this.cachedKey = '';
+    }
+
+    public getCacheStats(): { hits: number; misses: number } {
+        return { hits: this.cacheHits, misses: this.cacheMisses };
+    }
+
+    private getCacheKey(type: ProjectionType, viewport: Viewport): string {
+        return [
+            type,
+            viewport.scale,
+            viewport.translate[0],
+            viewport.translate[1],
+            viewport.rotate[0],
+            viewport.rotate[1],
+            viewport.rotate[2]
+        ].join('|');
     }
 
     public getProjection(): GeoProjection {

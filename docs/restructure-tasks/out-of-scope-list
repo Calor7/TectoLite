@@ -160,3 +160,7 @@ task scope. Append new entries below.
   through the later steps.
 - **Out of scope**: if git archaeology reveals a real v1→v2 transformation,
   it should be added to the v1→v2 block in `src/migration.ts`.
+2026-07-10 - Phase 2 follow-ups
+- Run a deliberate manual performance capture for BRIEF_09 playback, scrub, and 50-edit undo heap scenarios. The harness and idle smoke captures are in place, but browser slider automation timed out before producing trustworthy scrub/playback numbers.
+- Refactor TimelineSystem toward true copy-on-write before attempting a one-level shallow HistoryManager snapshot. Current timeline retiming/keyframe/delete paths still mutate plate and event objects in place.
+- Replace live-state calls to ensureMotionModel()/activeEulerPole() mutation patterns with pure or cloned alternatives. This is needed before history snapshots can safely share more owner objects.
