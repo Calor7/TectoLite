@@ -1,5 +1,10 @@
 # TectoLite Restructure — Master Plan
 
+> **Sequencing note (2026-07-10):** product direction and task sequencing now live in
+> [docs/ROADMAP.md](../ROADMAP.md). This plan remains the source of truth for the
+> individual TASK_XX specs; the roadmap says when (and inside which brief) they run.
+> Absorptions: TASK_07–10 → BRIEF_09 · TASK_13 → BRIEF_06 · TASK_18–19 → BRIEF_10.
+
 ## Goal
 Execute all 18 approved recommendations + 8 approved fence-item decisions from the architectural review (2026-07-05). Each task is a self-contained `TASK_XX.md` file in this directory, designed to be executed independently by a subagent from an empty chat.
 
@@ -69,9 +74,9 @@ After each task completes:
 All 23 tasks complete, all three verify commands pass, no `app: any` back-references remain, no file > 800 lines (except `types.ts`), test coverage ≥ 15%.
 
 ## Status
-- [ ] Phase 0 (TASK_01, TASK_02)
-- [ ] Phase 1 (TASK_03–06)
-- [ ] Phase 2 (TASK_07–10)
+- [x] Phase 0 (TASK_01, TASK_02) — executed in commit `4215f16` "T3 Redesign" (CausalGraph + GeologicalAutomation removed, docs corrected)
+- [x] Phase 1 (TASK_03–06) — executed in commits `4215f16`/`26cc057` "T3/T4 Redesign" (shared geometry extracted, @types moved, motion flag-day done, `src/migration.ts` + SAVE_VERSION 4 added); follow-ups recorded in `out-of-scope-list`
+- [ ] Phase 2 (TASK_07–10) — absorbed by [docs/briefs/BRIEF_09](../briefs/BRIEF_09_performance_program.md) (adds measurement harness; execute 07→08→09→10)
 - [ ] Phase 3 (TASK_11, TASK_12)
 - [ ] Phase 4 (TASK_13–15)
 - [ ] Phase 5 (TASK_16, TASK_17)

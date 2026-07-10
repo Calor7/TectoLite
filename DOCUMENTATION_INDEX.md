@@ -1,11 +1,17 @@
 # TectoLite Documentation Index
 
 Status: active living index
-Last reviewed: 2026-07-05
+Last reviewed: 2026-07-10
 
 This index reflects the current repository state. Older delivery documents remain useful as project history, but they should not be treated as the source of truth when they conflict with current code.
 
 ## Start here
+
+### Product direction (roadmap + briefs)
+
+- [docs/ROADMAP.md](docs/ROADMAP.md): vision, pillars, scope fences, and the v0.2 → v0.4 release plan. **Read this first for "what's next".**
+- [docs/briefs/](docs/briefs/): decision-complete briefs BRIEF_01–BRIEF_10, each sized for one session / one reviewable diff.
+- [docs/restructure-tasks/MASTER_PLAN.md](docs/restructure-tasks/MASTER_PLAN.md): the 23 technical restructure task specs (phases 0–1 complete; sequencing now governed by the roadmap).
 
 ### Current technical reference
 

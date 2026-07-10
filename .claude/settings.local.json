@@ -10,7 +10,9 @@
       "PowerShell(git -C c:\\\\GIT\\\\TectoLite diff --stat)",
       "PowerShell(npm run typecheck)",
       "PowerShell(npm run build)",
-      "PowerShell(git -C c:\\\\GIT\\\\TectoLite diff src/types.ts src/export.ts src/main.ts src/SplitTool.ts)"
+      "PowerShell(git -C c:\\\\GIT\\\\TectoLite diff src/types.ts src/export.ts src/main.ts src/SplitTool.ts)",
+      "Bash(npm run *)",
+      "Bash(xargs git log --oneline -1)"
     ]
   }
 }
