@@ -65,6 +65,7 @@ import { getAppHTML } from './ui/AppTemplate';
 import { TutorialOverlay } from './ui/TutorialOverlay';
 import { makeBenchmarkWorld } from './utils/benchmarkWorld';
 import { perfMonitor } from './utils/PerfMonitor';
+import { PROJECT_TEMPLATES, type ProjectTemplate } from './projectTemplates';
 
 type UnifiedExportOptions = NonNullable<Awaited<ReturnType<typeof showUnifiedExportDialog>>>;
 
@@ -4404,20 +4405,22 @@ class TectoLiteApp {
 
     private requestNewProject(): void {
         const hasDocumentContent = this.state.world.plates.length > 0 || this.hasUnsavedChanges;
-        if (!hasDocumentContent) {
-            this.createNewProject();
-            return;
-        }
-
         this.showModal({
-            title: 'Start a new project?',
-            content: 'This replaces the current world. Save it first if you want to keep your work.',
+            title: hasDocumentContent ? 'Start a new project?' : 'Choose a starting point',
+            content: hasDocumentContent
+                ? 'This replaces the current world. Save it first if you want to keep your work.'
+                : 'Begin with a blank sphere or a small playable example.',
             buttons: [
                 {
                     text: 'Create Blank World',
-                    subtext: 'Discard the current session and reset all project state.',
+                    subtext: 'Start from an empty sphere.',
                     onClick: () => this.createNewProject()
                 },
+                ...PROJECT_TEMPLATES.map(template => ({
+                    text: template.name,
+                    subtext: template.description,
+                    onClick: () => this.createProjectFromTemplate(template)
+                })),
                 {
                     text: 'Cancel',
                     isSecondary: true,
@@ -4428,17 +4431,27 @@ class TectoLiteApp {
     }
 
     private createNewProject(): void {
+        this.replaceProject(createDefaultAppState(), [], 'New blank project created', false);
+    }
+
+    private async createProjectFromTemplate(template: ProjectTemplate): Promise<void> {
+        const nextState = createDefaultAppState();
+        nextState.world = await template.createWorld();
+        this.replaceProject(nextState, [], `${template.name} template loaded`, true);
+    }
+
+    private replaceProject(nextState: AppState, cameraBookmarks: CameraView[], message: string, unsaved: boolean): void {
         this.simulation?.stop();
         eventSystem.reset();
         this.historyManager.clear();
         this.clearAutosave();
 
-        this.state = createDefaultAppState();
-        this.cameraBookmarks = [];
+        this.state = nextState;
+        this.cameraBookmarks = cameraBookmarks;
         this.fusionFirstPlateId = null;
         this.activeLinkSourceId = null;
         this.momentumClipboard = null;
-        this.setUnsaved(false);
+        this.setUnsaved(unsaved);
 
         this.renderCameraViews();
         this.updateUndoRedoButtons();
@@ -4447,7 +4460,8 @@ class TectoLiteApp {
         this.timelineSystem?.render(null);
         this.setActiveTool('select');
         this.canvasManager?.markDirty();
-        this.showToast('New blank project created');
+        this.simulation?.setTime(this.state.world.currentTime);
+        this.showToast(message);
     }
 
     // Helper for TimelineSystem to delete multiple plates
