@@ -5,6 +5,7 @@ import { toGeoJSON } from '../utils/geoHelpers';
 import { MotionGizmo } from './MotionGizmo';
 import { activeEulerPole } from '../motion/RotationModel';
 import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid } from '../utils/sphericalMath';
+import { perfMonitor } from '../utils/PerfMonitor';
 
 import { InputTool } from './tools/InputTool';
 import { PathInputTool } from './tools/PathInputTool';
@@ -362,7 +363,12 @@ export class CanvasManager {
 
     public startRenderLoop(): void {
         const loop = () => {
+            perfMonitor.beginFrame();
             this.render();
+            const state = this.getState();
+            const ringCount = state.world.plates.filter(plate => plate.riftAxisId || plate.junctionId || plate.slabId).length;
+            perfMonitor.setCounts(state.world.plates.length, ringCount);
+            perfMonitor.endFrame();
             this.animationId = requestAnimationFrame(loop);
         };
         loop();
@@ -674,78 +680,83 @@ export class CanvasManager {
     }
 
     public render(): void {
-        this.updateActiveTool();
+        const perfSample = perfMonitor.beginPhase('render');
+        try {
+            this.updateActiveTool();
 
-        const state = this.getState();
-        const width = this.canvas.width / (window.devicePixelRatio || 1);
-        const height = this.canvas.height / (window.devicePixelRatio || 1);
+            const state = this.getState();
+            const width = this.canvas.width / (window.devicePixelRatio || 1);
+            const height = this.canvas.height / (window.devicePixelRatio || 1);
 
-        this.projectionManager.update(state.world.projection, state.viewport);
-        const path = this.projectionManager.getPathGenerator();
+            this.projectionManager.update(state.world.projection, state.viewport);
+            const path = this.projectionManager.getPathGenerator();
 
-        this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-        this.ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+            this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+            this.ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 
-        const computedStyle = getComputedStyle(document.body);
-        const clearColor = computedStyle.getPropertyValue('--bg-canvas-clear').trim() || '#1a3a4a';
-        this.ctx.fillStyle = clearColor;
-        this.ctx.fillRect(0, 0, width, height);
+            const computedStyle = getComputedStyle(document.body);
+            const clearColor = computedStyle.getPropertyValue('--bg-canvas-clear').trim() || '#1a3a4a';
+            this.ctx.fillStyle = clearColor;
+            this.ctx.fillRect(0, 0, width, height);
 
-        if (state.world.projection === 'orthographic') {
-            this.ctx.beginPath();
-            path({ type: 'Sphere' } as any);
-            this.ctx.fillStyle = computedStyle.getPropertyValue('--bg-globe-ocean').trim() || '#0f2634';
-            this.ctx.fill();
-        }
-
-        if (state.world.showGrid && !state.world.globalOptions.gridOnTop) {
-            this.drawGraticule(path, computedStyle);
-        }
-
-        if (state.world.imageOverlay?.visible && state.world.imageOverlay.mode === 'fixed') {
-            this.drawImageOverlay(state);
-        }
-
-        this.drawPlates(state, path);
-        this.drawDerivedRiftLines(state, path);
-        this.drawSelectedEdge();
-        this.drawEventIcons(state);
-        this.drawPlumes(state);
-
-        if (state.world.globalOptions.showLinks !== false || state.activeTool === 'link') {
-            this.drawLinks(state, path);
-        }
-
-        const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
-        if (selectedPlate && state.activeTool === 'select' && selectedPlate.visible) {
-            this.motionGizmo.setPlate(selectedPlate.id, activeEulerPole(selectedPlate, state.world.currentTime));
-            this.motionGizmo.render(this.ctx, this.projectionManager, selectedPlate.center, state.world.globalOptions.planetRadius || 6371);
-        } else {
-            this.motionGizmo.clear();
-        }
-
-        if (this.activeInputTool) {
-            this.activeInputTool.render(this.ctx, width, height);
-        }
-
-        if (state.activeTool === 'edit') {
-            this.drawEditHighlights();
-        }
-
-        this.drawVelocityArrows(state, path);
-        this.drawPredictionFlowlines(state, path);
-
-        if (this.isFineTuning && this.ghostPlateId) {
-            const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
-            if (plate && this.ghostRotation) {
-                const vCenter = latLonToVector(plate.center);
-                const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
-                this.drawRotationWidget(vectorToLatLon(vRotCenter));
+            if (state.world.projection === 'orthographic') {
+                this.ctx.beginPath();
+                path({ type: 'Sphere' } as any);
+                this.ctx.fillStyle = computedStyle.getPropertyValue('--bg-globe-ocean').trim() || '#0f2634';
+                this.ctx.fill();
             }
-        }
 
-        if (state.world.showGrid && state.world.globalOptions.gridOnTop) {
-            this.drawGraticule(path, computedStyle);
+            if (state.world.showGrid && !state.world.globalOptions.gridOnTop) {
+                this.drawGraticule(path, computedStyle);
+            }
+
+            if (state.world.imageOverlay?.visible && state.world.imageOverlay.mode === 'fixed') {
+                this.drawImageOverlay(state);
+            }
+
+            this.drawPlates(state, path);
+            this.drawDerivedRiftLines(state, path);
+            this.drawSelectedEdge();
+            this.drawEventIcons(state);
+            this.drawPlumes(state);
+
+            if (state.world.globalOptions.showLinks !== false || state.activeTool === 'link') {
+                this.drawLinks(state, path);
+            }
+
+            const selectedPlate = state.world.plates.find(p => p.id === state.world.selectedPlateId);
+            if (selectedPlate && state.activeTool === 'select' && selectedPlate.visible) {
+                this.motionGizmo.setPlate(selectedPlate.id, activeEulerPole(selectedPlate, state.world.currentTime));
+                this.motionGizmo.render(this.ctx, this.projectionManager, selectedPlate.center, state.world.globalOptions.planetRadius || 6371);
+            } else {
+                this.motionGizmo.clear();
+            }
+
+            if (this.activeInputTool) {
+                this.activeInputTool.render(this.ctx, width, height);
+            }
+
+            if (state.activeTool === 'edit') {
+                this.drawEditHighlights();
+            }
+
+            this.drawVelocityArrows(state, path);
+            this.drawPredictionFlowlines(state, path);
+
+            if (this.isFineTuning && this.ghostPlateId) {
+                const plate = state.world.plates.find(p => p.id === this.ghostPlateId);
+                if (plate && this.ghostRotation) {
+                    const vCenter = latLonToVector(plate.center);
+                    const vRotCenter = rotateVector(vCenter, this.ghostRotation.axis, this.ghostRotation.angle);
+                    this.drawRotationWidget(vectorToLatLon(vRotCenter));
+                }
+            }
+
+            if (state.world.showGrid && state.world.globalOptions.gridOnTop) {
+                this.drawGraticule(path, computedStyle);
+            }
+        } finally {
+            perfMonitor.endPhase(perfSample);
         }
     }
 

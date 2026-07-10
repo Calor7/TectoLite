@@ -13,6 +13,7 @@ import { getMotionModel, activeStage, plateRotation, pointPositionAt } from './m
 import { BoundarySystem } from './BoundarySystem';
 import { EventEffectsProcessor } from './systems/EventEffectsProcessor';
 import { eventSystem } from './systems/EventSystem';
+import { perfMonitor } from './utils/PerfMonitor';
 
 
 export class SimulationEngine {
@@ -58,9 +59,11 @@ export class SimulationEngine {
     }
 
     public setTime(time: number): void {
+        const simSample = perfMonitor.beginPhase('sim');
         this.setState(state => {
             const { globalOptions } = state.world;
             // Recalculate ALL plates at the new time
+            const deriveSample = perfMonitor.beginPhase('derive');
             let newPlates = state.world.plates.map(plate => {
                 const isBorn = time >= plate.birthTime;
                 const isDead = plate.deathTime !== null && time >= plate.deathTime;
@@ -82,6 +85,7 @@ export class SimulationEngine {
                 // Automation off: still strip stale ephemeral plates from earlier frames
                 newPlates = newPlates.filter(p => !p.riftAxisId && !p.junctionId);
             }
+            perfMonitor.endPhase(deriveSample);
 
             // Calculate Boundaries if enabled
             // ALWAYS update boundaries if Visualization OR Guided Creation is enabled.
@@ -117,6 +121,7 @@ export class SimulationEngine {
             return postEffectState;
         });
         this.updateFlowlines();
+        perfMonitor.endPhase(simSample);
     }
 
     public setTimeScale(scale: number): void {
@@ -142,12 +147,14 @@ export class SimulationEngine {
     }
 
     private update(deltaMa: number): void {
+        const simSample = perfMonitor.beginPhase('sim');
         this.setState(state => {
             const { globalOptions } = state.world;
             const newTime = state.world.currentTime + deltaMa;
 
             // Re-calculate ALL plates based on absolute time
             // This enables scrubbing/resetting.
+            const deriveSample = perfMonitor.beginPhase('derive');
             let newPlates = state.world.plates.map(plate => {
                 // Check if plate exists at this time
                 const isBorn = newTime >= plate.birthTime;
@@ -207,6 +214,7 @@ export class SimulationEngine {
                     newPlates = [...newPlates, ...newSlabs];
                 }
             }
+            perfMonitor.endPhase(deriveSample);
 
             // Calculate Boundaries if enabled
             // ALWAYS update boundaries if Visualization OR Guided Creation is enabled.
@@ -238,6 +246,7 @@ export class SimulationEngine {
             return finalState;
         });
         this.updateFlowlines();
+        perfMonitor.endPhase(simSample);
     }
 
     // Helper: Interpolate points along a polyline to a fixed resolution (e.g. 1 degree)

@@ -62,6 +62,8 @@ import {
 } from './ui/ModalSystem';
 import { getAppHTML } from './ui/AppTemplate';
 import { TutorialOverlay } from './ui/TutorialOverlay';
+import { makeBenchmarkWorld } from './utils/benchmarkWorld';
+import { perfMonitor } from './utils/PerfMonitor';
 
 type UnifiedExportOptions = NonNullable<Awaited<ReturnType<typeof showUnifiedExportDialog>>>;
 
@@ -109,6 +111,18 @@ class TectoLiteApp {
 
     constructor() {
         this.state = createDefaultAppState();
+        const benchmarkScale = perfMonitor.getBenchmarkScale();
+        if (benchmarkScale !== null) {
+            this.state = {
+                ...this.state,
+                world: makeBenchmarkWorld(benchmarkScale),
+                viewport: {
+                    ...this.state.viewport,
+                    scale: benchmarkScale === 1 ? 230 : 180,
+                    rotate: [-20, -10, 0]
+                }
+            };
+        }
         this.init();
     }
 
@@ -170,6 +184,9 @@ class TectoLiteApp {
         this.timelineSystem.setContainer(document.getElementById('timeline-panel')!);
 
         this.setupEventListeners();
+        if (perfMonitor.getBenchmarkScale() !== null) {
+            this.simulation.setTime(this.state.world.currentTime);
+        }
         this.canvasManager.startRenderLoop();
         this.updateUI();
 
