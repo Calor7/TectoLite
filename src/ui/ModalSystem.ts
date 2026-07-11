@@ -7,7 +7,7 @@ export interface ModalButton {
     text: string;
     subtext?: string;
     isSecondary?: boolean;
-    onClick: () => void;
+    onClick: () => boolean | void;
 }
 
 export interface ModalOptions {
@@ -69,8 +69,10 @@ export function showModal(options: ModalOptions): void {
             b.addEventListener('mouseleave', () => b.style.borderColor = 'var(--border-default)');
 
             b.addEventListener('click', () => {
-                document.body.removeChild(overlay);
-                btn.onClick();
+                const result = btn.onClick();
+                if (result !== false) {
+                    document.body.removeChild(overlay);
+                }
             });
             btnContainer.appendChild(b);
         });
@@ -85,8 +87,10 @@ export function showModal(options: ModalOptions): void {
                 b.innerText = btn.text;
                 b.style.cssText = `padding: 6px 16px; margin-left: 8px;`;
                 b.addEventListener('click', () => {
-                    document.body.removeChild(overlay);
-                    btn.onClick();
+                    const result = btn.onClick();
+                    if (result !== false) {
+                        document.body.removeChild(overlay);
+                    }
                 });
                 row.appendChild(b);
             });

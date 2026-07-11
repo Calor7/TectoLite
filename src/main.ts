@@ -1677,7 +1677,7 @@ class TectoLiteApp {
                 </div>
                 <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-primary);cursor:pointer;">
                     <input type="checkbox" id="bug-screenshot" checked style="cursor:pointer;">
-                    Include screenshot of current canvas (copied to clipboard or downloaded)
+                    Include screenshot of current canvas
                 </label>
             </div>
         `;
@@ -1688,7 +1688,7 @@ class TectoLiteApp {
             width: '480px',
             buttons: [
                 {
-                    text: 'Send Report',
+                    text: 'Save Report',
                     onClick: () => {
                         const descEl = document.getElementById('bug-description') as HTMLTextAreaElement | null;
                         const stepsEl = document.getElementById('bug-steps') as HTMLTextAreaElement | null;
@@ -1703,8 +1703,8 @@ class TectoLiteApp {
                         const includeScreenshot = shotEl?.checked ?? false;
 
                         if (!description) {
-                            alert('Please describe the bug before sending.');
-                            return;
+                            alert('Please describe the bug before saving.');
+                            return false;
                         }
 
                         // Save email for next time
@@ -1712,47 +1712,53 @@ class TectoLiteApp {
                             localStorage.setItem('tectolite-bug-email', email);
                         }
 
+                        // Build report text
+                        const timestamp = new Date().toISOString();
+                        const reportId = `bug-${timestamp.replace(/[:.]/g, '-')}`;
+                        const reportText = [
+                            `TectoLite Bug Report`,
+                            `=====================`,
+                            ``,
+                            `Date: ${new Date().toLocaleString()}`,
+                            `Severity: ${severity}`,
+                            email ? `Reporter: ${email}` : `Reporter: (not provided)`,
+                            ``,
+                            `Description:`,
+                            description,
+                            ``,
+                            `Steps to reproduce:`,
+                            steps,
+                            ``,
+                            `--- App info ---`,
+                            `TectoLite version: ${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown'}`,
+                            `Platform: ${navigator.platform}`,
+                            `User agent: ${navigator.userAgent}`,
+                            ``,
+                            `--- Save file (JSON) ---`,
+                        ].join('\n');
+
+                        // Attach the current project state as JSON for debugging
+                        const saveJson = JSON.stringify({
+                            version: 4,
+                            world: this.state.world,
+                            viewport: this.state.viewport,
+                            cameraViews: this.cameraBookmarks
+                        }, null, 2);
+
+                        const fullReport = reportText + '\n' + saveJson + '\n';
+
                         // Capture screenshot if requested
+                        let screenshotDataUrl: string | null = null;
                         if (includeScreenshot && this.canvasManager) {
                             try {
-                                const dataUrl = this.canvasManager.captureScreenshot();
-                                const blob = this.dataUrlToBlob(dataUrl);
-                                if (blob && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
-                                    navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-                                        .then(() => { _showToast('Screenshot copied to clipboard — paste (Ctrl+V) into your email.'); })
-                                        .catch(() => { this.downloadScreenshot(dataUrl); });
-                                } else {
-                                    this.downloadScreenshot(dataUrl);
-                                }
+                                screenshotDataUrl = this.canvasManager.captureScreenshot();
                             } catch (e) {
                                 console.error('Screenshot capture failed:', e);
                             }
                         }
 
-                        // Build email body
-                        const body = [
-                            `Description: ${description}`,
-                            '',
-                            `Steps to reproduce:`,
-                            steps,
-                            '',
-                            `Severity: ${severity}`,
-                            '',
-                            '--- App info ---',
-                            `TectoLite version: ${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown'}`,
-                            `Platform: ${navigator.platform}`,
-                            `User agent: ${navigator.userAgent}`,
-                            email ? `\nReporter email: ${email}` : ''
-                        ].join('\n');
-
-                        const mailtoUrl = `mailto:mail@refracturedgames.com?subject=${encodeURIComponent('bug-tectolite')}&body=${encodeURIComponent(body)}`;
-
-                        // Try window.open first, then location.href fallback
-                        const opened = window.open(mailtoUrl);
-                        if (!opened) {
-                            // Fallback: try location.href
-                            window.location.href = mailtoUrl;
-                        }
+                        // Save via Electron IPC (writes to bug-reports/ folder) or download (web)
+                        this.saveBugReport(reportId, fullReport, screenshotDataUrl);
                     }
                 },
                 {
@@ -1764,28 +1770,97 @@ class TectoLiteApp {
         });
     }
 
-    private dataUrlToBlob(dataUrl: string): Blob | null {
-        try {
-            const [meta, base64] = dataUrl.split(',');
-            if (!meta || !base64) return null;
-            const mime = meta.match(/:(.*?);/)?.[1] || 'image/png';
-            const binary = atob(base64);
-            const arr = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) {
-                arr[i] = binary.charCodeAt(i);
-            }
-            return new Blob([arr], { type: mime });
-        } catch {
-            return null;
+    private saveBugReport(reportId: string, reportText: string, screenshotDataUrl: string | null): void {
+        const electronApi = (window as unknown as { electron?: { saveBugReport?: (id: string, text: string, screenshot: string | null) => Promise<string> } }).electron;
+        if (electronApi?.saveBugReport) {
+            // Electron: save to bugs/ folder via IPC
+            electronApi.saveBugReport(reportId, reportText, screenshotDataUrl)
+                .then((folder) => {
+                    this.showBugReportSentDialog(folder, reportText);
+                })
+                .catch((err) => {
+                    console.error('Failed to save bug report:', err);
+                    this.downloadBugReportFiles(reportId, reportText, screenshotDataUrl);
+                    this.showBugReportSentDialog('Downloads folder', reportText);
+                });
+        } else {
+            // Web fallback: download files
+            this.downloadBugReportFiles(reportId, reportText, screenshotDataUrl);
+            this.showBugReportSentDialog('Downloads folder', reportText);
         }
     }
 
-    private downloadScreenshot(dataUrl: string): void {
-        const link = document.createElement('a');
-        link.download = `tectolite-screenshot-${Date.now()}.png`;
-        link.href = dataUrl;
-        link.click();
-        _showToast('Screenshot saved to Downloads — attach it to your email.');
+    private showBugReportSentDialog(savedLocation: string, reportText: string): void {
+        const githubBody = encodeURIComponent(reportText.split('\n--- Save file (JSON) ---')[0].trim());
+        const githubUrl = `https://github.com/Calor7/TectoLite/issues/new?title=${encodeURIComponent('Bug Report')}&body=${githubBody}`;
+        const discordUrl = 'https://discord.com/channels/1463842783742922772/1477000139624284343';
+
+        _showModal({
+            title: 'Bug Report Saved',
+            content: `<div style="font-size:13px;color:var(--text-secondary);line-height:1.5;">
+                Your bug report has been saved to:<br>
+                <code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:12px;">${savedLocation}</code><br><br>
+                Choose how you'd like to submit it:
+            </div>`,
+            width: '420px',
+            buttons: [
+                {
+                    text: 'Open GitHub Issues',
+                    subtext: 'Pre-filled with your bug report text',
+                    onClick: () => {
+                        this.openExternalUrl(githubUrl);
+                    }
+                },
+                {
+                    text: '💬 Open Discord Bug Channel',
+                    subtext: 'Paste your report into the channel',
+                    onClick: () => {
+                        this.openExternalUrl(discordUrl);
+                    }
+                },
+                {
+                    text: 'Close',
+                    isSecondary: true,
+                    onClick: () => { /* no-op */ }
+                }
+            ]
+        });
+    }
+
+    private openExternalUrl(url: string): void {
+        const electronApi = (window as unknown as { electron?: { openExternal?: (url: string) => Promise<void> } }).electron;
+        if (electronApi?.openExternal) {
+            electronApi.openExternal(url);
+        } else {
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    }
+
+    private downloadBugReportFiles(reportId: string, reportText: string, screenshotDataUrl: string | null): void {
+        // Download the text report
+        const textBlob = new Blob([reportText], { type: 'text/plain' });
+        const textLink = document.createElement('a');
+        textLink.download = `${reportId}.txt`;
+        textLink.href = URL.createObjectURL(textBlob);
+        textLink.click();
+        URL.revokeObjectURL(textLink.href);
+
+        // Download the screenshot if available
+        if (screenshotDataUrl) {
+            const shotLink = document.createElement('a');
+            shotLink.download = `${reportId}-screenshot.png`;
+            shotLink.href = screenshotDataUrl;
+            shotLink.click();
+        }
+
+        _showToast('Bug report downloaded. Send the files to mail@refracturedgames.com', 5000);
     }
 
     private toggleTheme(): void {

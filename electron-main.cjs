@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const isDev = require('electron-is-dev');
@@ -118,6 +118,49 @@ function createWindow() {
     : `file://${path.join(__dirname, 'dist/index.html')}`; // Production build
 
   mainWindow.loadURL(startUrl);
+
+  // Delegate mailto: and external URLs to the OS default handler
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('mailto:') || url.startsWith('http:') || url.startsWith('https:')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith('mailto:') || url.startsWith('http:') || url.startsWith('https:')) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+  });
+
+  // IPC handler for opening external URLs from the renderer
+  ipcMain.handle('open-external', (_event, url) => {
+    if (typeof url === 'string' && (url.startsWith('mailto:') || url.startsWith('http:') || url.startsWith('https:'))) {
+      shell.openExternal(url);
+    }
+  });
+
+  // IPC handler for saving bug reports to a bugs/ folder next to the app
+  ipcMain.handle('save-bug-report', async (_event, reportId, reportText, screenshotDataUrl) => {
+    const bugsDir = path.join(__dirname, 'bugs');
+    fs.mkdirSync(bugsDir, { recursive: true });
+
+    // Write the text report
+    const textPath = path.join(bugsDir, `${reportId}.txt`);
+    fs.writeFileSync(textPath, reportText, 'utf-8');
+
+    // Write the screenshot if provided
+    if (typeof screenshotDataUrl === 'string' && screenshotDataUrl.startsWith('data:image/')) {
+      const base64 = screenshotDataUrl.split(',')[1];
+      if (base64) {
+        const shotPath = path.join(bugsDir, `${reportId}-screenshot.png`);
+        fs.writeFileSync(shotPath, Buffer.from(base64, 'base64'));
+      }
+    }
+
+    return bugsDir;
+  });
 
   // Open DevTools in development
   if (isDev && !smokeExportEnabled) {

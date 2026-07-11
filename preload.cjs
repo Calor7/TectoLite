@@ -2,8 +2,10 @@
 // This file runs in a sandboxed context with access to Node APIs
 // and can safely expose specific APIs to the renderer process
 
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electron', {
-  versions: process.versions
+  versions: process.versions,
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  saveBugReport: (reportId, reportText, screenshotDataUrl) => ipcRenderer.invoke('save-bug-report', reportId, reportText, screenshotDataUrl)
 });
