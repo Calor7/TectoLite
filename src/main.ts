@@ -1642,6 +1642,150 @@ class TectoLiteApp {
         document.getElementById('btn-tutorial-help')?.addEventListener('click', () => {
             TutorialOverlay.toggle();
         });
+
+        document.getElementById('btn-report-bug')?.addEventListener('click', () => {
+            this.showBugReportDialog();
+        });
+    }
+
+    private showBugReportDialog(): void {
+        const savedEmail = localStorage.getItem('tectolite-bug-email') || '';
+
+        const formHtml = `
+            <div style="display:flex;flex-direction:column;gap:12px;">
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-primary);">
+                    Description <span style="color:var(--accent-danger);font-size:11px;">(required)</span>
+                    <textarea id="bug-description" rows="4" style="background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:6px;padding:8px;color:var(--text-primary);font-size:13px;font-family:inherit;resize:vertical;" placeholder="What happened? What did you expect?"></textarea>
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-primary);">
+                    Steps to reproduce
+                    <textarea id="bug-steps" rows="3" style="background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:6px;padding:8px;color:var(--text-primary);font-size:13px;font-family:inherit;resize:vertical;" placeholder="1. ... 2. ... 3. ..."></textarea>
+                </label>
+                <div style="display:flex;gap:12px;">
+                    <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-primary);flex:1;">
+                        Severity
+                        <select id="bug-severity" style="background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:6px;padding:6px;color:var(--text-primary);font-size:13px;">
+                            <option value="Minor">Minor</option>
+                            <option value="Major">Major</option>
+                            <option value="Critical">Critical</option>
+                        </select>
+                    </label>
+                    <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-primary);flex:1;">
+                        Your email (optional)
+                        <input type="text" id="bug-email" value="${savedEmail.replace(/"/g, '&quot;')}" style="background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:6px;padding:6px;color:var(--text-primary);font-size:13px;" placeholder="you@example.com">
+                    </label>
+                </div>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-primary);cursor:pointer;">
+                    <input type="checkbox" id="bug-screenshot" checked style="cursor:pointer;">
+                    Include screenshot of current canvas (copied to clipboard or downloaded)
+                </label>
+            </div>
+        `;
+
+        _showModal({
+            title: 'Report a Bug',
+            content: formHtml,
+            width: '480px',
+            buttons: [
+                {
+                    text: 'Send Report',
+                    onClick: () => {
+                        const descEl = document.getElementById('bug-description') as HTMLTextAreaElement | null;
+                        const stepsEl = document.getElementById('bug-steps') as HTMLTextAreaElement | null;
+                        const sevEl = document.getElementById('bug-severity') as HTMLSelectElement | null;
+                        const emailEl = document.getElementById('bug-email') as HTMLInputElement | null;
+                        const shotEl = document.getElementById('bug-screenshot') as HTMLInputElement | null;
+
+                        const description = descEl?.value.trim() || '';
+                        const steps = stepsEl?.value.trim() || '(not provided)';
+                        const severity = sevEl?.value || 'Minor';
+                        const email = emailEl?.value.trim() || '';
+                        const includeScreenshot = shotEl?.checked ?? false;
+
+                        if (!description) {
+                            alert('Please describe the bug before sending.');
+                            return;
+                        }
+
+                        // Save email for next time
+                        if (email) {
+                            localStorage.setItem('tectolite-bug-email', email);
+                        }
+
+                        // Capture screenshot if requested
+                        if (includeScreenshot && this.canvasManager) {
+                            try {
+                                const dataUrl = this.canvasManager.captureScreenshot();
+                                const blob = this.dataUrlToBlob(dataUrl);
+                                if (blob && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+                                    navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+                                        .then(() => { _showToast('Screenshot copied to clipboard — paste (Ctrl+V) into your email.'); })
+                                        .catch(() => { this.downloadScreenshot(dataUrl); });
+                                } else {
+                                    this.downloadScreenshot(dataUrl);
+                                }
+                            } catch (e) {
+                                console.error('Screenshot capture failed:', e);
+                            }
+                        }
+
+                        // Build email body
+                        const body = [
+                            `Description: ${description}`,
+                            '',
+                            `Steps to reproduce:`,
+                            steps,
+                            '',
+                            `Severity: ${severity}`,
+                            '',
+                            '--- App info ---',
+                            `TectoLite version: ${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown'}`,
+                            `Platform: ${navigator.platform}`,
+                            `User agent: ${navigator.userAgent}`,
+                            email ? `\nReporter email: ${email}` : ''
+                        ].join('\n');
+
+                        const mailtoUrl = `mailto:mail@refracturedgames.com?subject=${encodeURIComponent('bug-tectolite')}&body=${encodeURIComponent(body)}`;
+
+                        // Try window.open first, then location.href fallback
+                        const opened = window.open(mailtoUrl);
+                        if (!opened) {
+                            // Fallback: try location.href
+                            window.location.href = mailtoUrl;
+                        }
+                    }
+                },
+                {
+                    text: 'Cancel',
+                    isSecondary: true,
+                    onClick: () => { /* no-op, modal auto-closes */ }
+                }
+            ]
+        });
+    }
+
+    private dataUrlToBlob(dataUrl: string): Blob | null {
+        try {
+            const [meta, base64] = dataUrl.split(',');
+            if (!meta || !base64) return null;
+            const mime = meta.match(/:(.*?);/)?.[1] || 'image/png';
+            const binary = atob(base64);
+            const arr = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                arr[i] = binary.charCodeAt(i);
+            }
+            return new Blob([arr], { type: mime });
+        } catch {
+            return null;
+        }
+    }
+
+    private downloadScreenshot(dataUrl: string): void {
+        const link = document.createElement('a');
+        link.download = `tectolite-screenshot-${Date.now()}.png`;
+        link.href = dataUrl;
+        link.click();
+        _showToast('Screenshot saved to Downloads — attach it to your email.');
     }
 
     private toggleTheme(): void {

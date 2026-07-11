@@ -304,6 +304,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <button id="btn-import-json" class="btn btn-secondary" title="Import JSON">
               <span class="icon">📂</span> Load
             </button>
+            <button id="btn-report-bug" class="btn btn-secondary" title="Report a Bug">
+              <span class="icon">🐛</span> Report Bug
+            </button>
             <input type="file" id="file-import" accept=".json" style="display: none;">
             <input type="file" id="file-overlay-upload" accept="image/*" style="display: none;">
           </div>

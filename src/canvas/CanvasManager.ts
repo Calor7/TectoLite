@@ -401,6 +401,11 @@ export class CanvasManager {
         this.isDirty = true;
     }
 
+    /** Capture the current canvas as a PNG data URL. */
+    public captureScreenshot(): string {
+        return this.canvas.toDataURL('image/png');
+    }
+
     public stopRenderLoop(): void {
         if (this.animationId !== null) {
             cancelAnimationFrame(this.animationId);
