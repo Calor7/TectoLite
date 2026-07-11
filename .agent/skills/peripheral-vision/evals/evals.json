@@ -1,0 +1,26 @@
+{
+  "skill_name": "peripheral-vision",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "add-field-roundtrip-wiring",
+      "prompt": "Repo: C:\\GIT\\StriveWebsite (React 19 + TS + Vite, Zustand, Supabase). Add an optional 'pronunciation' field to Archive entries: a short free-text hint for how to pronounce the entry's name. It should be editable in the Forge editor, persist with the entry, and display on the entry detail page near the title (small, muted, wrapped in /slashes/). Do not add it to search. Run the repo's verification gates (see CLAUDE.md) and write a report of what you changed and verified.",
+      "expected_output": "Field flows through the content JSONB (no new column invented), mapEntryToPayload passes it through with a round-trip test added, wired in template/editor/display/persistence layers, gates actually run, report distinguishes verified from needs-manual-pass.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "eval_name": "autocomplete-exclude-templates",
+      "prompt": "Repo: C:\\GIT\\StriveWebsite. The @-reference autocomplete in the Forge long-text editor suggests template entries (rows whose content.type is 'template'), but users should never link to templates. Exclude template entries from reference-search suggestions everywhere entry suggestions are offered to users. Run the repo's verification gates (see CLAUDE.md) and write a report of what you changed and verified.",
+      "expected_output": "All call sites / suggestion paths of the reference search are found and covered (not just the one obvious one), filtering happens at the right layer, no regression to legitimate template listing surfaces (admin template editor), gates run, report lists exact files.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "eval_name": "customize-key-collision-warning",
+      "prompt": "Repo: C:\\GIT\\StriveWebsite. In the template Customize editor (src/.../CustomizeEditor.tsx), users add custom fields on top of a base template. Nothing warns them when a new field's key collides with a key already defined by the base template - the collision silently shadows the base field. Add an inline warning (not a hard block) when a collision exists. Run the repo's verification gates (see CLAUDE.md) and write a report of what you changed and verified.",
+      "expected_output": "Warning covers where keys actually come from (base template schema incl. inherited/copied fields), handles case/normalization sensibly, appears live while editing, no draft-wiping state churn introduced, gates run, honest report.",
+      "files": []
+    }
+  ]
+}
