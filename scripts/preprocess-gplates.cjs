@@ -8,6 +8,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const polygonClipping = require('polygon-clipping');
 
 const ROOT = path.resolve(__dirname, '..');
 const GPLATES_DIR = path.join(ROOT, 'gplates_references');
@@ -222,9 +223,69 @@ function ringCenter(ring) {
     return [lon / ring.length, lat / ring.length];
 }
 
+// ── Polygon union (merge subplate fragments into one landmass) ───────
+
+/**
+ * Union all rings of a plate into one or more merged polygons using
+ * polygon-clipping. Returns array of outer rings (each a Coordinate[]).
+ * Handles MultiPolygon results (non-contiguous landmasses after merge).
+ */
+function unionRings(rings) {
+    if (rings.length === 0) return [];
+    if (rings.length === 1) return rings;
+
+    // polygon-clipping expects GeoJSON-style MultiPolygon:
+    // [[[[lon, lat], ...]]]  (array of polygons, each = array of rings, each ring = array of points)
+    const multipoly = rings.map(ring => {
+        // Ensure ring is closed (first === last)
+        const closed = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]
+            ? ring
+            : [...ring, ring[0]];
+        return [closed]; // one polygon with one outer ring
+    });
+
+    try {
+        const result = polygonClipping.union(...multipoly);
+        // result is a MultiPolygon: [[[[lon,lat],...]], ...]
+        // Extract outer ring of each polygon
+        return result.map(poly => simplifyRing(poly[0], 1.0));
+    } catch (e) {
+        // If union fails (self-intersecting input, etc.), fall back to individual rings
+        console.warn(`  Union failed for plate (${rings.length} rings): ${e.message}`);
+        return rings.map(r => simplifyRing(r, 1.0));
+    }
+}
+
+// ── Group by name (merge subplates with same geological name) ────────
+
+/**
+ * Group features by NAME instead of PLATEID1.
+ * All fragments sharing the same name become one plate.
+ * Falls back to PLATEID1 if NAME is empty.
+ * Returns Map<name, {name, rings, plateIds}>
+ */
+function groupByName(features) {
+    const plates = new Map();
+    for (const feature of features) {
+        const rawName = feature.properties?.NAME || '';
+        const plateId = feature.properties?.PLATEID1 ?? 0;
+        // Use name as key; fall back to plateId if no name
+        const key = rawName || `Plate ${plateId}`;
+        const rings = extractRings(feature.geometry).map(r => simplifyRing(r));
+
+        if (!plates.has(key)) {
+            plates.set(key, { name: rawName || `Plate ${plateId}`, rings: [], plateIds: new Set() });
+        }
+        const plate = plates.get(key);
+        plate.rings.push(...rings);
+        plate.plateIds.add(plateId);
+    }
+    return plates;
+}
+
 // ── Main processing ───────────────────────────────────────────────────
 
-function processTemplate(continentFile, cratonFile, rotations, targetTime, includeCratons) {
+function processTemplate(continentFile, cratonFile, rotations, targetTime, includeCratons, mergeRings) {
     const continents = loadGeoJSON(continentFile);
     const continentPlates = groupByPlate(continents.features);
 
@@ -248,6 +309,9 @@ function processTemplate(continentFile, cratonFile, rotations, targetTime, inclu
         const motion = getPlateMotion(rotations, plateId, targetTime);
         const center = ringCenter(data.rings.flat());
         const name = data.names[0] || `Plate ${plateId}`;
+
+        // Merge subplate fragments into one landmass if requested
+        const finalRings = mergeRings ? unionRings(data.rings) : data.rings;
 
         // Collect cratons for this plate
         let cratonData = [];
@@ -273,13 +337,80 @@ function processTemplate(continentFile, cratonFile, rotations, targetTime, inclu
             name,
             color: plateColor(plateId),
             center,
-            rings: data.rings,
+            rings: finalRings,
             motion,
             cratons: cratonData
         });
     }
 
     // Sort by plate ID for deterministic output
+    plates.sort((a, b) => a.plateId - b.plateId);
+
+    return {
+        time: targetTime,
+        plateCount: plates.length,
+        plates
+    };
+}
+
+// ── Full-detail processing (for manual curation) ─────────────────────
+
+/**
+ * Process with minimal simplification (0.01° tolerance) and all cratons.
+ * Keeps nearly all geometric detail — heavy on FPS but allows the user
+ * to manually merge/reduce in the app and save a curated version.
+ */
+function processTemplateFullDetail(continentFile, cratonFile, rotations, targetTime) {
+    const continents = loadGeoJSON(continentFile);
+    const continentPlates = groupByPlate(continents.features);
+
+    const cratonPlates = cratonFile ? groupByPlate(loadGeoJSON(cratonFile).features) : null;
+
+    const plates = [];
+
+    for (const [plateId, data] of continentPlates) {
+        if (plateId === 0) continue;
+
+        // Keep all plates, even tiny ones (for manual curation)
+        const totalPoints = data.rings.reduce((sum, r) => sum + r.length, 0);
+        if (totalPoints < 3) continue;
+
+        const motion = getPlateMotion(rotations, plateId, targetTime);
+        const center = ringCenter(data.rings.flat());
+        const name = data.names[0] || `Plate ${plateId}`;
+
+        // Minimal simplification — keep nearly all detail
+        const rings = data.rings.map(r => simplifyRing(r, 0.01));
+
+        // Collect cratons with minimal simplification
+        let cratonData = [];
+        if (cratonPlates && cratonPlates.has(plateId)) {
+            const cratons = cratonPlates.get(plateId);
+            for (let i = 0; i < cratons.rings.length; i++) {
+                const ring = cratons.rings[i];
+                if (ring.length >= 4) {
+                    const simplified = simplifyRing(ring, 0.01);
+                    if (simplified.length >= 4) {
+                        cratonData.push({
+                            points: simplified,
+                            name: cratons.names[i] || 'craton'
+                        });
+                    }
+                }
+            }
+        }
+
+        plates.push({
+            plateId,
+            name,
+            color: plateColor(plateId),
+            center,
+            rings,
+            motion,
+            cratons: cratonData
+        });
+    }
+
     plates.sort((a, b) => a.plateId - b.plateId);
 
     return {
@@ -339,5 +470,114 @@ const pangaeaAdv = processTemplate(
     rotations, 200, true
 );
 writeJSON('gplates-pangaea-adv.json', pangaeaAdv);
+
+// Process 2 merged templates (union subplate fragments into one landmass per plate)
+console.log('Processing merged templates...');
+
+const modernMerged = processTemplate(
+    'shapes_continents/reconstructed_0.00Ma.geojson',
+    null,
+    rotations, 0, false, true
+);
+writeJSON('gplates-modern-merged.json', modernMerged);
+
+const pangaeaMerged = processTemplate(
+    'shapes_continents/reconstructed_200.00Ma.geojson',
+    null,
+    rotations, 200, false, true
+);
+writeJSON('gplates-pangaea-merged.json', pangaeaMerged);
+
+// Process separate per-layer full-detail files for manual curation
+// Each file contains only one feature type so the user can inspect/merge
+// them independently in the app.
+console.log('Processing separate full-detail layers (for manual curation)...');
+
+// Helper: extract one layer as a TectoLite-compatible world with only that feature type
+function processLayerOnly(layerFile, layerType, rotations, targetTime, prefix) {
+    const features = loadGeoJSON(layerFile);
+    const grouped = groupByPlate(features.features);
+    const plates = [];
+
+    for (const [plateId, data] of grouped) {
+        if (plateId === 0) continue;
+        const totalPoints = data.rings.reduce((sum, r) => sum + r.length, 0);
+        if (totalPoints < 3) continue;
+
+        const motion = getPlateMotion(rotations, plateId, targetTime);
+        const center = ringCenter(data.rings.flat());
+        const name = data.names[0] || `Plate ${plateId}`;
+        const rings = data.rings.map(r => simplifyRing(r, 0.01));
+
+        plates.push({
+            plateId,
+            name,
+            color: plateColor(plateId),
+            center,
+            rings,
+            motion,
+            cratons: [] // empty — this is a single-layer file
+        });
+    }
+
+    plates.sort((a, b) => a.plateId - b.plateId);
+    return { time: targetTime, plateCount: plates.length, plates };
+}
+
+// Modern Earth — 2 separate layers (continents/coastlines + cratons)
+// Note: GPlates data has only one continents file (coastlines = continents).
+// There is no separate coastline layer — the continent polygons ARE the coastlines.
+writeJSON('gplates-modern-plates.json',
+    processLayerOnly('shapes_continents/reconstructed_0.00Ma.geojson', 'plates', rotations, 0, 'modern-plates'));
+writeJSON('gplates-modern-cratons.json',
+    processLayerOnly('shapes_cratons/reconstructed_0.00Ma.geojson', 'cratons', rotations, 0, 'modern-cratons'));
+
+// Pangaea — 2 separate layers
+writeJSON('gplates-pangaea-plates.json',
+    processLayerOnly('shapes_continents/reconstructed_200.00Ma.geojson', 'plates', rotations, 200, 'pangaea-plates'));
+writeJSON('gplates-pangaea-cratons.json',
+    processLayerOnly('shapes_cratons/reconstructed_200.00Ma.geojson', 'cratons', rotations, 200, 'pangaea-cratons'));
+
+// Process auto-merged templates (group by NAME + union rings)
+// Merges all subplate fragments sharing the same geological name into
+// one plate with unioned geometry. Reduces 424 plates → ~250.
+console.log('Processing auto-merged-by-name templates...');
+
+function processMergedByName(continentFile, rotations, targetTime) {
+    const continents = loadGeoJSON(continentFile);
+    const grouped = groupByName(continents.features);
+    const plates = [];
+
+    for (const [name, data] of grouped) {
+        const totalPoints = data.rings.reduce((sum, r) => sum + r.length, 0);
+        if (totalPoints < 20) continue;
+
+        // Use the first plate ID for motion lookup
+        const primaryPlateId = [...data.plateIds][0];
+        const motion = getPlateMotion(rotations, primaryPlateId, targetTime);
+        const center = ringCenter(data.rings.flat());
+
+        // Union all rings into clean landmasses
+        const mergedRings = unionRings(data.rings);
+
+        plates.push({
+            plateId: primaryPlateId,
+            name,
+            color: plateColor(primaryPlateId),
+            center,
+            rings: mergedRings,
+            motion,
+            cratons: []
+        });
+    }
+
+    plates.sort((a, b) => a.plateId - b.plateId);
+    return { time: targetTime, plateCount: plates.length, plates };
+}
+
+writeJSON('gplates-modern-auto.json',
+    processMergedByName('shapes_continents/reconstructed_0.00Ma.geojson', rotations, 0));
+writeJSON('gplates-pangaea-auto.json',
+    processMergedByName('shapes_continents/reconstructed_200.00Ma.geojson', rotations, 200));
 
 console.log('Done!');

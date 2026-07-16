@@ -95,7 +95,7 @@
     <li><strong>Escape</strong>: Cancel the current operation or close the tutorial</li>
     <li><strong>Enter</strong>: Apply the active Draw or Split path</li>
     <li><strong>Ctrl+Z / Ctrl+Y</strong>: Undo / Redo; <strong>Ctrl+D</strong>: duplicate the selected entity</li>
-    <li><strong>V, H, D, E, F, S, L, G</strong>: Select, Rotate, Draw, Edit, Feature, Split, Link, Fuse</li>
+    <li><strong>V, H, P, D, E, F, S, L, G</strong>: Select, Rotate View, Move View, Draw, Edit, Feature, Split, Link, Fuse</li>
     <li><strong>C</strong>: Center the camera on the selected entity</li>
     <li><strong>← / →</strong>: Step 1 Ma; hold <strong>Shift</strong> to step 10 Ma</li>
     <li><strong>Delete / Backspace</strong>: Delete the current selection</li>
@@ -113,7 +113,7 @@
       timeline length, and global parameters.
     </div>
     <div data-selector="#btn-view-panels">Configure which UI panels and visual effects are toggled on or off.</div>
-    <div data-selector="#btn-reset-camera">Resets the 3D globe camera to default zoom and orientation.</div>
+    <div data-selector="#btn-reset-camera">Resets view translation, globe/projection rotation, and zoom.</div>
     <div data-selector="#btn-fullscreen">Toggles the application into fullscreen mode.</div>
     <div data-selector="#btn-theme-toggle">Toggle between <strong style="color:var(--accent-primary);">Light</strong>
       and <strong style="color:var(--accent-primary);">Dark</strong> UI themes.</div>
@@ -190,11 +190,11 @@
     </div>
     <div data-selector="[data-tool='select']">The <strong style="color:var(--accent-primary);">Select Tool</strong> lets
       you pick plates to view their properties, select boundaries, or prepare for splitting/fusion.</div>
-    <div data-selector="[data-tool='pan']"
-      data-nested='{"euler-pole": "The axis of rotation for a tectonic plate on the sphere."}'>
-      The <strong style="color:var(--accent-primary);">Rotate Tool</strong> is used to assign <span class="help-link"
-        data-target="euler-pole">Euler Poles</span> for plate movement across the surface.
-    </div>
+    <div data-selector="[data-tool='pan']">The <strong style="color:var(--accent-primary);">Rotate View</strong> tool
+      changes which longitude and latitude face the user without moving any map entity.</div>
+    <div data-selector="[data-tool='view_pan']">The <strong style="color:var(--accent-primary);">Move View</strong>
+      tool translates the rendered map across the screen without rotating the globe, changing the projection, or
+      moving map entities.</div>
     <div data-selector="[data-tool='draw']">The <strong style="color:var(--accent-primary);">Draw Tool</strong> allows
       you to sketch new continental structures and oceanic rifts.</div>
     <div data-selector="#draw-mode-polygon">Draw continuous closed polygons for continents and oceanic plates.</div>

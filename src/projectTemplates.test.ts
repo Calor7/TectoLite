@@ -122,6 +122,25 @@ describe('project templates', () => {
             .not.toBe(pangaeaRegions[1].motionSegments[0].eulerPole.rate);
     });
 
+    it('uses the identical curated cover set in both variants of each epoch', async () => {
+        const signature = (templateId: string) => PROJECT_TEMPLATES
+            .find(template => template.id === templateId)!
+            .createWorld()
+            .then(world => world.plates
+                .filter(plate => plate.name.startsWith('Cover — '))
+                .map(plate => ({
+                    name: plate.name,
+                    groupId: plate.groupId,
+                    points: plate.polygons[0].points.length,
+                    motion: plate.motionSegments[0].eulerPole
+                })));
+
+        await expect(signature('modern-earth-overview'))
+            .resolves.toEqual(await signature('modern-earth-curation-covers'));
+        await expect(signature('pangaea-200ma-overview'))
+            .resolves.toEqual(await signature('pangaea-200ma-covers'));
+    });
+
     it('adds simplified continental plates and cratons to the combined templates', async () => {
         const expected = [
             { id: 'modern-earth-overview', covers: 600, timelineMax: 50 },

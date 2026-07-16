@@ -275,7 +275,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
 
 
-            <button id="btn-reset-camera" class="btn btn-secondary" title="Reset Camera">
+            <button id="btn-reset-camera" class="btn btn-secondary" title="Reset View (position, rotation, and zoom)">
                 <span class="icon">⟲</span><span class="oldschool-text">RESET</span>
             </button>
 
@@ -334,7 +334,12 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                   <button class="tool-btn" data-tool="pan" style="flex:1;">
                     <span class="tool-icon">🔄</span>
                     <span class="tool-label">Rotate</span>
-                    <span class="info-icon" data-tooltip="Move camera or rotate globe (Hotkey: H)">(i)</span>
+                    <span class="info-icon" data-tooltip="Rotate the globe or projection without changing map geometry (Hotkey: H)">(i)</span>
+                  </button>
+                  <button class="tool-btn" data-tool="view_pan" style="flex:1;">
+                    <span class="tool-icon">✥</span>
+                    <span class="tool-label">Move View</span>
+                    <span class="info-icon" data-tooltip="Move the rendered view on screen without rotating the globe or changing geometry (Hotkey: P)">(i)</span>
                   </button>
               </div>
               <div style="display: flex; gap: 4px; flex-wrap: wrap;">

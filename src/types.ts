@@ -667,7 +667,7 @@ export interface Boundary {
   crustTypes?: undefined; // Deprecated
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'fuse' | 'link' | 'edit' | 'paint';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'view_pan' | 'fuse' | 'link' | 'edit' | 'paint';
 
 export type PaintMode = 'brush' | 'poly_fill';
 
@@ -718,6 +718,8 @@ export interface CameraView {
   name: string;
   rotate: [number, number, number];
   scale: number;
+  /** Screen-space offset from the center of the canvas. */
+  offset?: [number, number];
 }
 
 export interface Viewport {

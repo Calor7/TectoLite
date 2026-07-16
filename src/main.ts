@@ -508,6 +508,10 @@ class TectoLiteApp {
         document.getElementById('btn-reset-camera')?.addEventListener('click', () => {
             this.state.viewport.scale = 250;
             this.state.viewport.rotate = [0, 0, 0];
+            this.state.viewport.translate = [
+                this.state.viewport.width / 2,
+                this.state.viewport.height / 2
+            ];
             this.canvasManager?.resizeCanvas();
         });
 
@@ -1347,7 +1351,8 @@ class TectoLiteApp {
 
             switch (e.key.toLowerCase()) {
                 case 'v': this.setActiveTool('select'); break;
-                case 'h': this.setActiveTool('pan'); break; // Now Rotate/Pan
+                case 'h': this.setActiveTool('pan'); break;
+                case 'p': this.setActiveTool('view_pan'); break;
                 case 'd':
                     if (this.state.activeTool === 'draw') {
                         // Cycle draw mode when already in draw tool
@@ -2098,7 +2103,10 @@ class TectoLiteApp {
                 hintText = "Click a plate or feature to select it.";
                 break;
             case 'pan':
-                hintText = "Drag to rotate the globe. Scroll to zoom.";
+                hintText = "Drag to rotate the globe or map projection. Geometry is unchanged; scroll to zoom.";
+                break;
+            case 'view_pan':
+                hintText = "Drag to move the rendered view on screen without rotating the globe or changing geometry.";
                 break;
             case 'edit':
                 hintText = "Select a plate, then drag edges to add points or drag vertices to move. Ctrl/Shift+drag moves the whole shape (drag the yellow ring to rotate).";
@@ -4667,10 +4675,14 @@ class TectoLiteApp {
 
     // --- Camera bookmarks (unlimited, nameable; hotkeys Shift+1..9 / 1..9 cover the first nine) ---
 
-    private currentCameraSnapshot(): { rotate: [number, number, number]; scale: number } {
+    private currentCameraSnapshot(): { rotate: [number, number, number]; scale: number; offset: [number, number] } {
         return {
             rotate: [...this.state.viewport.rotate] as [number, number, number],
-            scale: this.state.viewport.scale
+            scale: this.state.viewport.scale,
+            offset: [
+                this.state.viewport.translate[0] - this.state.viewport.width / 2,
+                this.state.viewport.translate[1] - this.state.viewport.height / 2
+            ]
         };
     }
 
@@ -4705,6 +4717,11 @@ class TectoLiteApp {
         }
         this.state.viewport.rotate = [...bm.rotate] as [number, number, number];
         this.state.viewport.scale = bm.scale;
+        const offset = bm.offset ?? [0, 0];
+        this.state.viewport.translate = [
+            this.state.viewport.width / 2 + offset[0],
+            this.state.viewport.height / 2 + offset[1]
+        ];
         this.canvasManager?.render();
     }
 

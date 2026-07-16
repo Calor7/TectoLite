@@ -56,7 +56,10 @@ export function exportToPNG(
         width: width,
         height: height,
         scale: state.viewport.scale * ratio,
-        translate: [width / 2, height / 2] as [number, number]
+        translate: [
+            width / 2 + (state.viewport.translate[0] - state.viewport.width / 2) * ratio,
+            height / 2 + (state.viewport.translate[1] - state.viewport.height / 2) * ratio
+        ] as [number, number]
     };
 
     // Use requested projection

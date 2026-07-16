@@ -48,7 +48,7 @@ export class CanvasManager {
     private isDragging = false;
     private lastMousePos: Point = { x: 0, y: 0 };
     // private currentMouseGeo: Coordinate | null = null; // Unused
-    private interactionMode: 'pan' | 'modify_velocity' | 'drag_target' | 'spin_ghost' | 'none' = 'none';
+    private interactionMode: 'rotate_view' | 'translate_view' | 'modify_velocity' | 'drag_target' | 'spin_ghost' | 'none' = 'none';
 
     // Motion state
     private dragStartGeo: Coordinate | null = null;
@@ -168,6 +168,10 @@ export class CanvasManager {
         this.tools.set('edit', this.editTool);
 
         this.tools.set('pan', {
+            onMouseDown: () => { }, onMouseMove: () => { }, onMouseUp: () => { },
+            onKeyDown: () => { }, onKeyUp: () => { }, render: () => { }, cancel: () => { }
+        });
+        this.tools.set('view_pan', {
             onMouseDown: () => { }, onMouseMove: () => { }, onMouseUp: () => { },
             onKeyDown: () => { }, onKeyUp: () => { }, render: () => { }, cancel: () => { }
         });
@@ -373,7 +377,12 @@ export class CanvasManager {
                 ...s.viewport,
                 width: rect.width,
                 height: rect.height,
-                translate: [rect.width / 2, rect.height / 2]
+                // Preserve the user's screen-space view offset when panels or
+                // the window resize, relative to the old and new canvas centers.
+                translate: [
+                    rect.width / 2 + (s.viewport.translate[0] - s.viewport.width / 2),
+                    rect.height / 2 + (s.viewport.translate[1] - s.viewport.height / 2)
+                ]
             }
         }));
         this.markDirty();
@@ -442,7 +451,14 @@ export class CanvasManager {
 
         if (e.button === 1 || (e.button === 0 && state.activeTool === 'pan')) {
             this.isDragging = true;
-            this.interactionMode = 'pan';
+            this.interactionMode = 'rotate_view';
+            this.canvas.style.cursor = 'grabbing';
+            return;
+        }
+
+        if (e.button === 0 && state.activeTool === 'view_pan') {
+            this.isDragging = true;
+            this.interactionMode = 'translate_view';
             this.canvas.style.cursor = 'grabbing';
             return;
         }
@@ -561,8 +577,10 @@ export class CanvasManager {
         if (this.isDragging) {
             const dx = e.clientX - this.lastMousePos.x;
             const dy = e.clientY - this.lastMousePos.y;
-            if (this.interactionMode === 'pan') {
-                this.pan(dx, dy);
+            if (this.interactionMode === 'rotate_view') {
+                this.rotateView(dx, dy);
+            } else if (this.interactionMode === 'translate_view') {
+                this.translateView(dx, dy);
             } else if (this.interactionMode === 'modify_velocity') {
                 const res = this.motionGizmo.updateDrag(screen.x, screen.y, this.projectionManager, this.getState().world.plates.find(p => p.id === this.getState().world.selectedPlateId)?.center || [0, 0]);
                 if (res?.rate !== undefined) this.callbacks.onGizmoUpdate?.(res.rate);
@@ -628,7 +646,7 @@ export class CanvasManager {
         this.markDirty();
     }
 
-    private pan(dx: number, dy: number) {
+    private rotateView(dx: number, dy: number) {
         const state = this.getState();
         const sens = (180 / Math.PI) / (state.viewport.scale || 250);
         const newRotate = [...state.viewport.rotate] as [number, number, number];
@@ -636,6 +654,16 @@ export class CanvasManager {
         newRotate[1] -= dy * sens;
         newRotate[1] = Math.max(-90, Math.min(90, newRotate[1]));
         this.setState(s => ({ ...s, viewport: { ...s.viewport, rotate: newRotate } }));
+    }
+
+    private translateView(dx: number, dy: number) {
+        this.setState(s => ({
+            ...s,
+            viewport: {
+                ...s.viewport,
+                translate: [s.viewport.translate[0] + dx, s.viewport.translate[1] + dy]
+            }
+        }));
     }
 
     private updateDragTarget(e: MouseEvent) {
