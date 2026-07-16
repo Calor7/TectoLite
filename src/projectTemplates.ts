@@ -4,7 +4,6 @@ import {
     createDefaultWorldState,
     generateId,
     type Coordinate,
-    type Feature,
     type Polygon,
     type TectonicPlate,
     type WorldState
@@ -19,11 +18,6 @@ export interface ProjectTemplate {
 
 // ── Preprocessed GPlates data format ──────────────────────────────────
 
-interface GPlatesRing {
-    points: Coordinate[];
-    name: string;
-}
-
 interface GPlatesPlate {
     plateId: number;
     name: string;
@@ -31,7 +25,6 @@ interface GPlatesPlate {
     center: Coordinate;
     rings: Coordinate[][];
     motion: { pole: Coordinate; rate: number };
-    cratons: GPlatesRing[];
 }
 
 interface GPlatesData {
@@ -49,10 +42,12 @@ function loadGPlatesData(filename: string): Promise<GPlatesData> {
     if (!promise) {
         // Static imports for each file — avoids Vite dynamic-import warning
         const loaders: Record<string, () => Promise<string>> = {
-            'gplates-modern.json': () => import('./assets/gplates-modern.json?raw').then(m => m.default),
-            'gplates-pangaea.json': () => import('./assets/gplates-pangaea.json?raw').then(m => m.default),
-            'gplates-modern-adv.json': () => import('./assets/gplates-modern-adv.json?raw').then(m => m.default),
-            'gplates-pangaea-adv.json': () => import('./assets/gplates-pangaea-adv.json?raw').then(m => m.default),
+            'gplates-modern-overview-covers.json': () => import('./assets/gplates-modern-overview-covers.json?raw').then(m => m.default),
+            'gplates-modern-overview-plates.json': () => import('./assets/gplates-modern-overview-plates.json?raw').then(m => m.default),
+            'gplates-modern-overview-cratons.json': () => import('./assets/gplates-modern-overview-cratons.json?raw').then(m => m.default),
+            'gplates-pangaea-overview-covers.json': () => import('./assets/gplates-pangaea-overview-covers.json?raw').then(m => m.default),
+            'gplates-pangaea-overview-plates.json': () => import('./assets/gplates-pangaea-overview-plates.json?raw').then(m => m.default),
+            'gplates-pangaea-overview-cratons.json': () => import('./assets/gplates-pangaea-overview-cratons.json?raw').then(m => m.default),
         };
         const loader = loaders[filename];
         if (!loader) throw new Error(`Unknown GPlates data file: ${filename}`);
@@ -64,9 +59,11 @@ function loadGPlatesData(filename: string): Promise<GPlatesData> {
 
 // ── Plate construction ────────────────────────────────────────────────
 
-function makePlate(data: GPlatesPlate, prefix: string, includeCratons: boolean): TectonicPlate {
+function makePlate(data: GPlatesPlate): TectonicPlate {
+    // Use generateId for guaranteed unique plate IDs.
+    const plateId = generateId();
     const polygons: Polygon[] = data.rings.map((points, index) => ({
-        id: `${prefix}-${data.plateId}-${index}`,
+        id: `${plateId}-${index}`,
         points,
         closed: true,
         polygonType: 'continental_plate' as const
@@ -82,40 +79,20 @@ function makePlate(data: GPlatesPlate, prefix: string, includeCratons: boolean):
         }
     };
 
-    // Build craton features if advanced template
-    const features: Feature[] = [];
-    if (includeCratons) {
-        for (const craton of data.cratons) {
-            features.push({
-                id: generateId(),
-                type: 'poly_region',
-                position: craton.points[0] ?? data.center,
-                originalPosition: craton.points[0] ?? data.center,
-                rotation: 0,
-                scale: 1,
-                properties: { name: craton.name, source: 'gplates-craton' },
-                generatedAt: 0,
-                polygon: craton.points,
-                fillColor: data.color,
-                name: craton.name
-            });
-        }
-    }
-
     return {
-        id: `${prefix}-${data.plateId}`,
+        id: plateId,
         name: data.name,
         color: data.color,
         polygonType: 'continental_plate',
         motionSegments,
         geometryStages: createDefaultGeometryStage(0, polygons),
         polygons,
-        features,
+        features: [],
         center: data.center,
         birthTime: 0,
         deathTime: null,
         initialPolygons: polygons,
-        initialFeatures: features,
+        initialFeatures: [],
         connectedRiftIds: [],
         events: [],
         visible: true,
@@ -125,13 +102,62 @@ function makePlate(data: GPlatesPlate, prefix: string, includeCratons: boolean):
 
 // ── Template world creation ──────────────────────────────────────────
 
-async function createGPlatesWorld(dataFile: string, prefix: string, includeCratons: boolean, timelineMax: number): Promise<WorldState> {
+function makeCurationCover(data: GPlatesPlate, index: number): TectonicPlate {
+    const plate = makePlate(data);
+    plate.name = `Cover — ${data.name}`;
+    plate.polygonType = 'generic';
+    plate.zIndex = 1000 + index;
+    return plate;
+}
+
+function makeOverviewDetail(
+    data: GPlatesPlate,
+    layer: 'Plate' | 'Craton',
+    index: number
+): TectonicPlate {
+    const plate = makePlate(data);
+    plate.name = `${layer} — ${data.name}`;
+    plate.polygonType = layer === 'Craton' ? 'craton' : 'continental_plate';
+    plate.zIndex = (layer === 'Craton' ? 200 : 100) + index;
+    return plate;
+}
+
+async function createCoverWorld(key: 'modern' | 'pangaea', timelineMax: number): Promise<WorldState> {
     const world = createDefaultWorldState();
-    const data = await loadGPlatesData(dataFile);
+    const covers = await loadGPlatesData(`gplates-${key}-overview-covers.json`);
+    return {
+        ...world,
+        plates: covers.plates.map((plate, index) => makeCurationCover(plate, index)),
+        projection: 'orthographic',
+        currentTime: 0,
+        globalOptions: {
+            ...world.globalOptions,
+            timelineMaxTime: timelineMax
+        }
+    };
+}
+
+async function createOverviewWorld(key: 'modern' | 'pangaea', timelineMax: number): Promise<WorldState> {
+    const world = createDefaultWorldState();
+    const [covers, detailedPlates, detailedCratons] = await Promise.all([
+        loadGPlatesData(`gplates-${key}-overview-covers.json`),
+        loadGPlatesData(`gplates-${key}-overview-plates.json`),
+        loadGPlatesData(`gplates-${key}-overview-cratons.json`)
+    ]);
 
     return {
         ...world,
-        plates: data.plates.map(plate => makePlate(plate, prefix, includeCratons)),
+        plates: [
+            ...covers.plates.map((plate, index) => {
+                const cover = makeCurationCover(plate, index);
+                // Keep even a large detailed island set wholly below the
+                // simplified plate (100+) and craton (200+) overlays.
+                cover.zIndex = -1000 + index;
+                return cover;
+            }),
+            ...detailedPlates.plates.map((plate, index) => makeOverviewDetail(plate, 'Plate', index)),
+            ...detailedCratons.plates.map((plate, index) => makeOverviewDetail(plate, 'Craton', index))
+        ],
         projection: 'orthographic',
         currentTime: 0,
         globalOptions: {
@@ -151,27 +177,27 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
         createWorld: async () => createDefaultWorldState()
     },
     {
-        id: 'modern-earth',
-        name: 'Modern Earth',
-        description: 'Present-day continents from GPlates (Müller et al. 2022), grouped into tectonic plates with real plate motion.',
-        createWorld: () => createGPlatesWorld('gplates-modern.json', 'modern', false, 50)
+        id: 'modern-earth-curation-covers',
+        name: 'Earth — Covers',
+        description: 'High-detail present-day continuous landmasses and notable islands, each as one editable cover with approximate local plate motion.',
+        createWorld: () => createCoverWorld('modern', 50)
     },
     {
-        id: 'pangaea-200ma',
-        name: 'Pangaea (~200 Ma)',
-        description: 'Early Jurassic supercontinent reconstructed by GPlates from the EarthByte rotation model.',
-        createWorld: () => createGPlatesWorld('gplates-pangaea.json', 'pangaea', false, 200)
+        id: 'pangaea-200ma-covers',
+        name: 'Pangaea — Covers',
+        description: 'Continuous reconstructed landmasses at 200 Ma with editable coastlines and approximate local plate motion.',
+        createWorld: () => createCoverWorld('pangaea', 200)
     },
     {
-        id: 'modern-earth-adv',
-        name: 'Modern Earth (Advanced)',
-        description: 'Present-day continents with cratons linked to their parent plates. Full geological detail.',
-        createWorld: () => createGPlatesWorld('gplates-modern-adv.json', 'modern-adv', true, 50)
+        id: 'modern-earth-overview',
+        name: 'Earth — Covers + Plates',
+        description: 'Detailed modern covers with simplified continental plates and major cratons. Oceanic plates are omitted.',
+        createWorld: () => createOverviewWorld('modern', 50)
     },
     {
-        id: 'pangaea-200ma-adv',
-        name: 'Pangaea (Advanced)',
-        description: '200 Ma supercontinent with cratons linked to their parent plates. Full geological detail.',
-        createWorld: () => createGPlatesWorld('gplates-pangaea-adv.json', 'pangaea-adv', true, 200)
+        id: 'pangaea-200ma-overview',
+        name: 'Pangaea — Covers + Plates',
+        description: 'Continuous 200 Ma covers with simplified reconstructed continental plates and major cratons. Oceanic plates are omitted.',
+        createWorld: () => createOverviewWorld('pangaea', 200)
     }
 ];
