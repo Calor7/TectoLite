@@ -31,7 +31,7 @@ function makePlate(id: string, overrides: Partial<TectonicPlate> = {}): Tectonic
 }
 
 function makeWorld(plates: TectonicPlate[], overrides: Partial<WorldState> = {}): WorldState {
-    return { plates, ...overrides } as unknown as WorldState;
+    return { plates, entityGroups: [], ...overrides } as unknown as WorldState;
 }
 
 describe('remapImportedWorld', () => {
@@ -41,6 +41,19 @@ describe('remapImportedWorld', () => {
         expect(result.plates[0].id).not.toBe('a');
         expect(result.plates[1].id).not.toBe('b');
         expect(result.plates[0].id).not.toBe(result.plates[1].id);
+    });
+
+    it('remaps Explorer groups without affecting entity membership', () => {
+        const world = makeWorld([
+            makePlate('a', { groupId: 'old-group' }),
+            makePlate('b')
+        ], { entityGroups: [{ id: 'old-group', name: 'Region', collapsed: true }] });
+        const result = remapImportedWorld(world, 0);
+        expect(result.entityGroups).toHaveLength(1);
+        expect(result.entityGroups[0].id).not.toBe('old-group');
+        expect(result.entityGroups[0].name).toBe('Region');
+        expect(result.plates[0].groupId).toBe(result.entityGroups[0].id);
+        expect(result.plates[1].groupId).toBeUndefined();
     });
 
     it('remaps parent and link references onto the new IDs', () => {

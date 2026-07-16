@@ -22,6 +22,9 @@ describe('project templates', () => {
 
             const plateIds = new Set(first.plates.map(plate => plate.id));
             expect(plateIds.size).toBe(first.plates.length);
+            const groupIds = new Set(first.entityGroups.map(group => group.id));
+            expect(groupIds.size).toBe(first.entityGroups.length);
+            expect(first.plates.every(plate => !plate.groupId || groupIds.has(plate.groupId))).toBe(true);
             for (const axis of first.riftAxes ?? []) {
                 expect(plateIds.has(axis.plateIdA)).toBe(true);
                 expect(plateIds.has(axis.plateIdB)).toBe(true);
@@ -32,12 +35,12 @@ describe('project templates', () => {
     it('creates detailed cover-only Earth and Pangaea worlds with approximate motion', async () => {
         const expected = [
             {
-                id: 'modern-earth-curation-covers', covers: 594, timelineMax: 50,
-                names: ['Afro-Eurasia', 'Americas', 'Great Britain', 'Ireland', 'New Guinea', 'Borneo', 'Sumatra', 'Java', 'Luzon', 'Mindanao']
+                id: 'modern-earth-curation-covers', covers: 600, timelineMax: 50,
+                names: ['Africa', 'Europe', 'Asia', 'Arabian Peninsula', 'Indian Subcontinent', 'North America', 'Central America', 'South America', 'Great Britain', 'Ireland', 'New Guinea', 'Borneo', 'Sumatra', 'Java', 'Luzon', 'Mindanao']
             },
             {
-                id: 'pangaea-200ma-covers', covers: 14, timelineMax: 200,
-                names: ['Pangaea']
+                id: 'pangaea-200ma-covers', covers: 15, timelineMax: 200,
+                names: ['Laurasia', 'Gondwana']
             }
         ];
 
@@ -58,6 +61,46 @@ describe('project templates', () => {
         }
 
         const earth = await PROJECT_TEMPLATES.find(template => template.id === 'modern-earth-curation-covers')!.createWorld();
+        expect(earth.entityGroups.map(group => group.name)).toEqual(expect.arrayContaining([
+            'Major continuous landmasses', 'Africa & nearby islands', 'Asia & nearby islands',
+            'Europe & nearby islands', 'North America & Caribbean', 'South America & nearby islands',
+            'Oceania & Pacific islands', 'Antarctica & subantarctic islands'
+        ]));
+        expect(earth.plates.every(plate => !!plate.groupId)).toBe(true);
+        const continentalCovers = ['Africa', 'Europe', 'Asia'].map(name =>
+            earth.plates.find(plate => plate.name === `Cover — ${name}`)!
+        );
+        expect(earth.plates.some(plate => plate.name === 'Cover — Afro-Eurasia')).toBe(false);
+        expect(continentalCovers.every(cover => cover.polygons.length === 1)).toBe(true);
+        expect(continentalCovers.every(cover => cover.polygons[0].points.length > 2000)).toBe(true);
+        expect(continentalCovers.every(cover =>
+            earth.entityGroups.find(group => group.id === cover.groupId)?.name === 'Major continuous landmasses'
+        )).toBe(true);
+        expect(continentalCovers[0].motionSegments[0].eulerPole.rate)
+            .not.toBe(continentalCovers[1].motionSegments[0].eulerPole.rate);
+        const americanCovers = ['North America', 'South America'].map(name =>
+            earth.plates.find(plate => plate.name === `Cover — ${name}`)!
+        );
+        expect(earth.plates.some(plate => plate.name === 'Cover — Americas')).toBe(false);
+        expect(americanCovers.every(cover => cover.polygons.length === 1)).toBe(true);
+        expect(americanCovers.every(cover => cover.polygons[0].points.length > 3000)).toBe(true);
+        expect(americanCovers.every(cover =>
+            earth.entityGroups.find(group => group.id === cover.groupId)?.name === 'Major continuous landmasses'
+        )).toBe(true);
+        expect(americanCovers[0].motionSegments[0].eulerPole.rate)
+            .not.toBe(americanCovers[1].motionSegments[0].eulerPole.rate);
+        const regionalCovers = ['Central America', 'Arabian Peninsula', 'Indian Subcontinent'].map(name =>
+            earth.plates.find(plate => plate.name === `Cover — ${name}`)!
+        );
+        expect(regionalCovers.every(cover => cover.polygons.length === 1)).toBe(true);
+        expect(regionalCovers.every(cover => cover.polygons[0].points.length > 500)).toBe(true);
+        expect(earth.entityGroups.find(group => group.id === regionalCovers[0].groupId)?.name)
+            .toBe('North America & Caribbean');
+        expect(regionalCovers.slice(1).every(cover =>
+            earth.entityGroups.find(group => group.id === cover.groupId)?.name === 'Asia & nearby islands'
+        )).toBe(true);
+        expect(regionalCovers[1].motionSegments[0].eulerPole.rate)
+            .not.toBe(regionalCovers[2].motionSegments[0].eulerPole.rate);
         for (const name of ['Great Britain', 'Ireland', 'New Guinea', 'Borneo', 'Sumatra', 'Java', 'Luzon', 'Mindanao']) {
             const cover = earth.plates.find(plate => plate.name === `Cover — ${name}`);
             expect(cover?.polygons[0].points.length).toBeGreaterThan(100);
@@ -65,13 +108,24 @@ describe('project templates', () => {
         expect(earth.plates.reduce((sum, cover) => sum + cover.polygons[0].points.length, 0)).toBeGreaterThan(70000);
 
         const pangaea = await PROJECT_TEMPLATES.find(template => template.id === 'pangaea-200ma-covers')!.createWorld();
-        expect(pangaea.plates.find(plate => plate.name === 'Cover — Pangaea')?.polygons[0].points.length).toBeGreaterThan(4000);
+        expect(pangaea.entityGroups.map(group => group.name)).toEqual([
+            'Main Pangaea regions', 'Independent reconstructed landmasses'
+        ]);
+        const pangaeaRegions = ['Laurasia', 'Gondwana'].map(name =>
+            pangaea.plates.find(plate => plate.name === `Cover — ${name}`)!
+        );
+        expect(pangaea.plates.some(plate => plate.name === 'Cover — Pangaea')).toBe(false);
+        expect(pangaeaRegions.every(region => region.polygons.length === 1)).toBe(true);
+        expect(pangaeaRegions.every(region => region.polygons[0].points.length > 1500)).toBe(true);
+        expect(pangaeaRegions.every(region => region.groupId === 'pangaea-main')).toBe(true);
+        expect(pangaeaRegions[0].motionSegments[0].eulerPole.rate)
+            .not.toBe(pangaeaRegions[1].motionSegments[0].eulerPole.rate);
     });
 
     it('adds simplified continental plates and cratons to the combined templates', async () => {
         const expected = [
-            { id: 'modern-earth-overview', covers: 594, timelineMax: 50 },
-            { id: 'pangaea-200ma-overview', covers: 14, timelineMax: 200 }
+            { id: 'modern-earth-overview', covers: 600, timelineMax: 50 },
+            { id: 'pangaea-200ma-overview', covers: 15, timelineMax: 200 }
         ];
 
         for (const definition of expected) {

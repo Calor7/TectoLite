@@ -26,7 +26,7 @@ export interface SaveFile {
 }
 
 /** Current save file version. Bump this whenever the on-disk format changes. */
-export const CURRENT_SAVE_VERSION = 4;
+export const CURRENT_SAVE_VERSION = 5;
 
 /**
  * Migrate a parsed save file to {@link CURRENT_SAVE_VERSION}.
@@ -69,6 +69,21 @@ export function migrateSaveFile(data: SaveFile): SaveFile {
     if (data.version < 4) {
         migrateWorldMotion(data.world);
         data.version = 4;
+    }
+
+    // v4 → v5: persistent, non-mechanical Explorer entity groups.
+    if (data.version < 5) {
+        const groups = Array.isArray(data.world.entityGroups) ? data.world.entityGroups : [];
+        const uniqueGroups = groups.filter((group, index) =>
+            group && typeof group.id === 'string' && typeof group.name === 'string'
+            && groups.findIndex(candidate => candidate?.id === group.id) === index
+        );
+        data.world.entityGroups = uniqueGroups;
+        const validIds = new Set(uniqueGroups.map(group => group.id));
+        for (const plate of data.world.plates) {
+            if (plate.groupId && !validIds.has(plate.groupId)) delete plate.groupId;
+        }
+        data.version = 5;
     }
 
     return data;

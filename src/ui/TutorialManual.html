@@ -1,29 +1,105 @@
 <div class="manual-content">
   <h1>Welcome to TectoLite</h1>
   <p>
-    This is the Beta of the restructured version I have been working on. I decided to release it directly
-    as even though it is less tested, it has fewer bugs than the old version.
-    If you still need to use the old version, feel free to visit
-    <a href="https://www.refracturedgames.com/tectolite-legacy/">TectoLite Legacy</a> (available for a limited time).
-    You can also grab GitHub versions to revert to a previous state or make personal changes.
-  </p>
-  <p>
-    This is the general manual for TectoLite (in progress). Hover over the flashing red
-    highlights on the UI elements to learn more about each tool's function.
+    TectoLite is an editable plate-tectonics sandbox for drawing land, assigning spherical motion, and building a
+    geological timeline. This help screen is both a quick-start guide and a map reference. The red outlines around the
+    interface are interactive: hover one to see a focused explanation. Press <kbd>Escape</kbd> or click the red
+    <strong>?</strong> again to close the tutorial.
   </p>
 
-  <h2>Getting Started</h2>
+  <h2>Quick Start</h2>
+  <ol>
+    <li>Choose <strong>New</strong>, then start blank or load an Earth/Pangaea template.</li>
+    <li>Use <strong>Select</strong> to inspect an entity. Its editable values appear in Properties.</li>
+    <li>Use <strong>Draw</strong> for a closed polygon or a typed boundary line; press <kbd>Enter</kbd> to finish.</li>
+    <li>Set motion with the red <strong>Euler pole</strong> and blue rate arc, or enter speed and pole values.</li>
+    <li>Use <strong>Split</strong>, <strong>Fuse</strong>, and <strong>Link</strong> to build relationships over time.</li>
+    <li>Scrub the timeline or press <kbd>Space</kbd> to preview motion. Use velocity arrows and flowlines to check it.</li>
+    <li>Save the editable project as JSON; use Export for images, heightmaps, GeoJSON, or GeoPackage output.</li>
+  </ol>
+
+  <h2>Template Layers</h2>
+  <div class="legend-grid tutorial-reference-grid">
+    <section class="legend-section">
+      <h4>Cover — landmass</h4>
+      <p>A detailed coastline or island silhouette intended for manual map curation. Covers are ordinary editable
+        entities and carry approximate motion at the template epoch.</p>
+    </section>
+    <section class="legend-section">
+      <h4>Plate — continental region</h4>
+      <p>A broad, deliberately simplified non-oceanic tectonic region. It may overlap one or more land covers.</p>
+    </section>
+    <section class="legend-section">
+      <h4>Craton — stable core</h4>
+      <p>A coherent approximation of an ancient continental core. Cratons are independent overlays drawn above covers
+        and plate regions; the cover is not cut away beneath them.</p>
+    </section>
+    <section class="legend-section">
+      <h4>Oceanic crust</h4>
+      <p>An oceanic plate or seafloor strip generated away from an active rift. Its opacity is controlled separately in
+        Settings.</p>
+    </section>
+  </div>
+  <p><strong>Important:</strong> overlap between covers, plates, and cratons is intentional. The templates are detailed,
+    editable starting approximations—not precision GPlates reconstructions.</p>
+  <p>The largest continuous covers are divided into familiar editing regions: Africa, Europe, Asia, Arabia, and the
+    Indian subcontinent; North, Central, and South America; and the reconstructed Pangaea body into Laurasia and
+    Gondwana. The American cuts follow the Isthmus of Tehuantepec and Panama–Darién conventions. These are
+    organizational coastline-preserving cuts, not extra plate boundaries.</p>
+
+  <h2>Explorer Groups</h2>
   <p>
-    Start by drawing continental polygons using the toolbar on the left. Once you have a few plates, you can define
-    their velocities and let the simulation run over time.
+    Explorer groups organize entities by continent, island region, plate layer, or craton layer. Drag an entity onto a
+    group header or use the selected-entity Group dropdown at the top of Explorer. Groups can be collapsed and support bulk visibility, locking,
+    recoloring, and deletion. <strong>Grouping alone has no mechanical effect:</strong> it does not fuse geometry, link
+    motion, or alter the simulation. Only an explicit bulk action changes group members.
+  </p>
+
+  <h2>Motion and Geological Time</h2>
+  <ul>
+    <li><strong>Ma</strong> means millions of years ago: 0 Ma is the present and larger values are farther in the past.</li>
+    <li><strong>Euler pole</strong> is the spherical rotation axis; <strong>°/Ma</strong> is angular rate.</li>
+    <li><strong>cm/yr</strong> is the approximate surface speed at the entity for the configured planet radius.</li>
+    <li><strong>Motion segments</strong> let speed and direction change at different points in the timeline.</li>
+    <li><strong>Birth/death times</strong> determine when an entity exists, including results of splits and fusions.</li>
+    <li><strong>Parent links</strong> are teal dashed lines; a linked child inherits the parent's motion plus any relative motion.</li>
+    <li><strong>Velocity arrows</strong> show current direction; their length is a visual rate cue, not travelled distance.</li>
+  </ul>
+
+  <h2>Lines, Features, and Map Cues</h2>
+  <ul>
+    <li><strong>Divergent</strong> lines mark spreading, <strong>convergent</strong> lines mark collision/subduction,
+      <strong>transform</strong> lines mark lateral motion, and <strong>generic</strong> lines carry no automatic meaning.</li>
+    <li>Line colors and dash patterns are editable under Settings → Line Entity Defaults.</li>
+    <li>Automated boundary visualization is separate: detected convergent boundaries are red, divergent blue, and
+      transform green.</li>
+    <li>Feature types include mountains, volcanoes, hotspots, rifts, trenches, islands, weaknesses, polygon regions,
+      and seafloor. Mountains/volcanoes raise heightmaps; rifts/trenches lower them.</li>
+    <li>A <strong>white outline</strong> marks selection, a <strong>cyan line</strong> marks a selected edge, white dots are
+      editable vertices, and red/amber highlights show the hovered vertex or edge.</li>
+    <li>A red <strong>EP</strong> is an Euler pole, pale arrows are velocity, amber dashed arcs are drag predictions, and
+      entity-colored trails are flowlines.</li>
+  </ul>
+
+  <h2>Editing Safely</h2>
+  <p>
+    Save before structural edits. Lock finished entities to prevent accidental movement. Shape edits can rewrite an
+    entity from birth or be inserted as a timeline event. Split results inherit their source group; duplicates remain in
+    the same group; fused entities keep a group only when both parents shared it. Undo/redo covers normal editing and
+    group bulk actions.
   </p>
 
   <h2>Keyboard Shortcuts</h2>
   <ul>
     <li><strong>Space</strong>: Play/Pause simulation</li>
-    <li><strong>Escape</strong>: Exit current tool / Close tutorial</li>
-    <li><strong>Ctrl+Z / Ctrl+Y</strong>: Undo / Redo</li>
-    <li><strong>V, H, D, E, S, L, G</strong>: Tool hotkeys (Select, Rotate, Draw, Edit, Split, Link, Fuse)</li>
+    <li><strong>Escape</strong>: Cancel the current operation or close the tutorial</li>
+    <li><strong>Enter</strong>: Apply the active Draw or Split path</li>
+    <li><strong>Ctrl+Z / Ctrl+Y</strong>: Undo / Redo; <strong>Ctrl+D</strong>: duplicate the selected entity</li>
+    <li><strong>V, H, D, E, F, S, L, G</strong>: Select, Rotate, Draw, Edit, Feature, Split, Link, Fuse</li>
+    <li><strong>C</strong>: Center the camera on the selected entity</li>
+    <li><strong>← / →</strong>: Step 1 Ma; hold <strong>Shift</strong> to step 10 Ma</li>
+    <li><strong>Delete / Backspace</strong>: Delete the current selection</li>
+    <li><strong>1–9</strong>: Recall a camera view; <strong>Shift+1–9</strong>: save/update one</li>
   </ul>
 
   <!-- Tooltip Data Definitions (Parsed dynamically by TutorialOverlay.ts) -->
@@ -43,9 +119,11 @@
       and <strong style="color:var(--accent-primary);">Dark</strong> UI themes.</div>
     <div data-selector="#btn-undo">Undo the last action (Shortcut: <kbd>Ctrl+Z</kbd>).</div>
     <div data-selector="#btn-redo">Redo previously undone action (Shortcut: <kbd>Ctrl+Y</kbd>).</div>
+    <div data-selector="#btn-new-project">Start a blank world or choose one of the curated Earth and Pangaea templates.</div>
     <div data-selector="#btn-export">Exports the current view as PNG or heightmap.</div>
     <div data-selector="#btn-export-json">Save the current simulation state to a JSON file on your computer.</div>
     <div data-selector="#btn-import-json">Load a previously saved JSON simulation state.</div>
+    <div data-selector="#btn-report-bug">Prepare a bug report with reproduction steps and optional diagnostic data.</div>
     <div data-selector=".app-title a:first-child">TectoLite Official GitHub Repository. Open source and available for
       your contributions!</div>
     <div data-selector=".app-subtitle a">Refractured Games Website. Check out our other educational games and tools!
@@ -68,6 +146,10 @@
       more polygons and lower performance.</div>
     <div data-selector="#input-oceanic-color">The base color assigned to newly generated oceanic crust.</div>
     <div data-selector="#input-oceanic-opacity">Adjust the transparency of oceanic crust polygons specifically.</div>
+    <div data-selector="#input-line-color-divergent">Default color for newly drawn divergent/spreading lines.</div>
+    <div data-selector="#select-line-dash-divergent">Default dash pattern for divergent/spreading lines.</div>
+    <div data-selector="#input-line-color-convergent">Default color for convergent/collision or subduction lines.</div>
+    <div data-selector="#input-line-color-transform">Default color for transform/strike-slip lines.</div>
 
     <!-- View Menu Inputs -->
     <div data-selector="#check-view-tools">Toggle the left-side tool bar.</div>
@@ -90,6 +172,9 @@
     <div data-selector="#check-future-features">If enabled, shows features that will appear in the future as faint
       outlines based on birth time.</div>
     <div data-selector="#check-show-links">Visualize parent-child kinematic dependencies directly on the map.</div>
+    <div data-selector="#check-prediction-flowlines">Show amber travel arcs while previewing a drag-to-target motion change.</div>
+    <div data-selector="#check-velocity-arrows">Show a direction and relative-rate arrow at each visible entity.</div>
+    <div data-selector="#check-hover-tooltips">Show entity name, age, and speed while hovering over the map.</div>
     <div data-selector="#check-show-hidden-plates">Force all plates to render, overriding individual plate visibility
       settings.</div>
     <div data-selector="#check-grid-on-top">Draw the grid lines above the continental plates instead of below them.
@@ -245,7 +330,11 @@
 
     <div data-selector="#timeline-panel"><strong style="color:var(--accent-primary);">Timeline Box:</strong> View recent
       significant geological events like continent splits and collisions.</div>
-    <div data-selector="#plate-sidebar">The <strong style="color:var(--accent-primary);">Explorer</strong> lists all
-      tectonic plates currently active in the simulation. Select them from here.</div>
+    <div data-selector="#plate-sidebar">The <strong style="color:var(--accent-primary);">Explorer</strong> organizes
+      every editable entity and its actions. Select entities, search by name, and collapse regional groups here.</div>
+    <div data-selector=".entity-group-create">Create an organizational group. If an entity is selected, it is added automatically.</div>
+    <div data-selector=".entity-group-assign">Move the selected entity into a group or back to Ungrouped.</div>
+    <div data-selector=".entity-group-header">Collapse a group or drop a dragged entity onto it. Header buttons provide
+      bulk visibility, locking, recoloring, rename, ungroup, and delete actions.</div>
   </div>
 </div>

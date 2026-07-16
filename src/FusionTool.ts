@@ -150,6 +150,8 @@ export function fusePlates(
     const fusedPlate: TectonicPlate = {
         id: generateId(),
         name: `${plate1.name}-${plate2.name} (Fused)`,
+        // Explorer organization is inherited only when both parents agree.
+        groupId: plate1.groupId === plate2.groupId ? plate1.groupId : undefined,
         color: mixedColor,
         description: combinedDesc,
         zIndex: zIndex,

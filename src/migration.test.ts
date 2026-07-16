@@ -28,7 +28,7 @@ function makePlate(id: string, overrides: Partial<TectonicPlate> = {}): Tectonic
 }
 
 function makeSave(plates: TectonicPlate[], version: number, extra: Partial<SaveFile> = {}): SaveFile {
-    const world = { plates, currentTime: 0 } as unknown as WorldState;
+    const world = { plates, entityGroups: [], currentTime: 0 } as unknown as WorldState;
     return { version, world, ...extra };
 }
 
@@ -86,6 +86,16 @@ describe('migrateSaveFile', () => {
         const before = JSON.stringify(save);
         migrateSaveFile(save);
         expect(JSON.stringify(save)).toBe(before);
+    });
+
+    it('migrates v4 saves to empty, valid Explorer groups and clears dangling membership', () => {
+        const plate = makePlate('a', { groupId: 'missing-group' });
+        const save = makeSave([plate], 4);
+        delete (save.world as Partial<WorldState>).entityGroups;
+        migrateSaveFile(save);
+        expect(save.version).toBe(5);
+        expect(save.world.entityGroups).toEqual([]);
+        expect(save.world.plates[0].groupId).toBeUndefined();
     });
 
     it('handles v0 / undefined version gracefully', () => {

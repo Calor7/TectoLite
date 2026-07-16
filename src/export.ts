@@ -162,6 +162,7 @@ function drawFeature(
 
 // JSON Export functionality
 // Save version history:
+//   v5: persistent Explorer entity groups (organizational metadata only)
 //   v4: motion model migration — plates carry motionSegments/geometryStages
 //       only (legacy motion/motionKeyframes removed from the type; old saves
 //       are migrated at load time via migrateSaveFile → ensureMotionModel).

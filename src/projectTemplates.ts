@@ -4,6 +4,7 @@ import {
     createDefaultWorldState,
     generateId,
     type Coordinate,
+    type EntityGroup,
     type Polygon,
     type TectonicPlate,
     type WorldState
@@ -122,12 +123,83 @@ function makeOverviewDetail(
     return plate;
 }
 
+const majorModernCovers = new Set([
+    'Cover — Africa', 'Cover — Europe', 'Cover — Asia',
+    'Cover — North America', 'Cover — South America', 'Cover — Antarctica',
+    'Cover — Australia', 'Cover — Greenland'
+]);
+
+function modernCoverRegion(plate: TectonicPlate): string {
+    if (majorModernCovers.has(plate.name)) return 'modern-cover-major';
+    const [longitude, latitude] = plate.center;
+    const name = plate.name.toLowerCase();
+    if (latitude < -60) return 'modern-cover-antarctica';
+    if (/australia|tasmania|new zealand|new guinea|new caledonia|fiji|solomon|vanuatu|samoa|tonga/.test(name)
+        || (longitude > 130 && latitude < 5)
+        || (longitude < -130 && latitude < 5)) return 'modern-cover-oceania';
+    if (longitude < -30) return latitude >= 10 ? 'modern-cover-north-america' : 'modern-cover-south-america';
+    if (latitude >= 35 && longitude < 45) return 'modern-cover-europe';
+    if (longitude >= 45 || (longitude >= 25 && latitude >= 30)) return 'modern-cover-asia';
+    return 'modern-cover-africa';
+}
+
+function organizeTemplateEntities(
+    plates: TectonicPlate[],
+    key: 'modern' | 'pangaea',
+    includeLayers: boolean
+): { plates: TectonicPlate[]; entityGroups: EntityGroup[] } {
+    const groups: EntityGroup[] = key === 'modern'
+        ? [
+            { id: 'modern-cover-major', name: 'Major continuous landmasses', collapsed: false },
+            { id: 'modern-cover-africa', name: 'Africa & nearby islands', collapsed: true },
+            { id: 'modern-cover-asia', name: 'Asia & nearby islands', collapsed: true },
+            { id: 'modern-cover-europe', name: 'Europe & nearby islands', collapsed: true },
+            { id: 'modern-cover-north-america', name: 'North America & Caribbean', collapsed: true },
+            { id: 'modern-cover-south-america', name: 'South America & nearby islands', collapsed: true },
+            { id: 'modern-cover-oceania', name: 'Oceania & Pacific islands', collapsed: true },
+            { id: 'modern-cover-antarctica', name: 'Antarctica & subantarctic islands', collapsed: true },
+            ...(includeLayers ? [
+                { id: 'modern-plates', name: 'Continental plate regions', collapsed: true },
+                { id: 'modern-cratons', name: 'Major cratons', collapsed: true }
+            ] : [])
+        ]
+        : [
+            { id: 'pangaea-main', name: 'Main Pangaea regions', collapsed: false },
+            { id: 'pangaea-independent', name: 'Independent reconstructed landmasses', collapsed: true },
+            ...(includeLayers ? [
+                { id: 'pangaea-plates', name: 'Reconstructed continental plate regions', collapsed: true },
+                { id: 'pangaea-cratons', name: 'Reconstructed major cratons', collapsed: true }
+            ] : [])
+        ];
+
+    const groupedPlates = plates.map(plate => {
+        let groupId: string;
+        if (plate.name.startsWith('Plate — ')) groupId = `${key}-plates`;
+        else if (plate.name.startsWith('Craton — ')) groupId = `${key}-cratons`;
+        else if (key === 'pangaea') groupId = ['Cover — Laurasia', 'Cover — Gondwana'].includes(plate.name)
+            ? 'pangaea-main'
+            : 'pangaea-independent';
+        else groupId = modernCoverRegion(plate);
+        return { ...plate, groupId };
+    });
+    const usedGroupIds = new Set(groupedPlates.map(plate => plate.groupId));
+    return {
+        plates: groupedPlates,
+        entityGroups: groups.filter(group => usedGroupIds.has(group.id))
+    };
+}
+
 async function createCoverWorld(key: 'modern' | 'pangaea', timelineMax: number): Promise<WorldState> {
     const world = createDefaultWorldState();
     const covers = await loadGPlatesData(`gplates-${key}-overview-covers.json`);
+    const organized = organizeTemplateEntities(
+        covers.plates.map((plate, index) => makeCurationCover(plate, index)),
+        key,
+        false
+    );
     return {
         ...world,
-        plates: covers.plates.map((plate, index) => makeCurationCover(plate, index)),
+        ...organized,
         projection: 'orthographic',
         currentTime: 0,
         globalOptions: {
@@ -145,9 +217,7 @@ async function createOverviewWorld(key: 'modern' | 'pangaea', timelineMax: numbe
         loadGPlatesData(`gplates-${key}-overview-cratons.json`)
     ]);
 
-    return {
-        ...world,
-        plates: [
+    const organized = organizeTemplateEntities([
             ...covers.plates.map((plate, index) => {
                 const cover = makeCurationCover(plate, index);
                 // Keep even a large detailed island set wholly below the
@@ -157,7 +227,10 @@ async function createOverviewWorld(key: 'modern' | 'pangaea', timelineMax: numbe
             }),
             ...detailedPlates.plates.map((plate, index) => makeOverviewDetail(plate, 'Plate', index)),
             ...detailedCratons.plates.map((plate, index) => makeOverviewDetail(plate, 'Craton', index))
-        ],
+        ], key, true);
+    return {
+        ...world,
+        ...organized,
         projection: 'orthographic',
         currentTime: 0,
         globalOptions: {

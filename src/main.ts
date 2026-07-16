@@ -77,6 +77,11 @@ declare global {
     }
 }
 
+function escapeHtml(value: string): string {
+    return value.replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+    })[character]!);
+}
 
 
 class TectoLiteApp {
@@ -1588,6 +1593,7 @@ class TectoLiteApp {
                         world: {
                             ...this.state.world,
                             plates: [...this.state.world.plates, ...processedPlates],
+                            entityGroups: [...this.state.world.entityGroups, ...remapped.entityGroups],
                             riftAxes: [...(this.state.world.riftAxes || []), ...remapped.riftAxes],
                             tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions]
                         }
@@ -2926,6 +2932,287 @@ class TectoLiteApp {
         this.canvasManager?.render();
     }
 
+    private createEntityGroup(): void {
+        this.showModal({
+            title: 'Create Entity Group',
+            content: '<label class="property-label" for="entity-group-name-input">Group name</label><input id="entity-group-name-input" class="property-input" maxlength="80" placeholder="e.g. Northern Islands" style="width:100%; margin-top:6px;">',
+            buttons: [
+                {
+                    text: 'Create Group',
+                    subtext: this.state.world.selectedPlateId ? 'The selected entity will be added automatically.' : 'You can drag entities into it afterwards.',
+                    onClick: () => {
+                        const name = (document.getElementById('entity-group-name-input') as HTMLInputElement | null)?.value.trim();
+                        if (!name) { this.showToast('Enter a group name'); return false; }
+                        if (this.state.world.entityGroups.some(group => group.name.toLowerCase() === name.toLowerCase())) {
+                            this.showToast('A group with that name already exists');
+                            return false;
+                        }
+                        this.pushState();
+                        const id = generateId();
+                        this.state.world.entityGroups = [...this.state.world.entityGroups, { id, name, collapsed: false }];
+                        if (this.state.world.selectedPlateId) {
+                            this.state.world.plates = this.state.world.plates.map(plate =>
+                                plate.id === this.state.world.selectedPlateId ? { ...plate, groupId: id } : plate
+                            );
+                        }
+                        this.updateExplorer();
+                    }
+                },
+                { text: 'Cancel', isSecondary: true, onClick: () => undefined }
+            ]
+        });
+        window.setTimeout(() => (document.getElementById('entity-group-name-input') as HTMLInputElement | null)?.focus(), 0);
+    }
+
+    private assignPlateToEntityGroup(plateId: string, groupId: string | null): void {
+        const plate = this.state.world.plates.find(candidate => candidate.id === plateId);
+        if (!plate || (plate.groupId ?? null) === groupId) return;
+        this.pushState();
+        this.state.world.plates = this.state.world.plates.map(candidate =>
+            candidate.id === plateId ? { ...candidate, groupId: groupId ?? undefined } : candidate
+        );
+        this.updateExplorer();
+    }
+
+    private renameEntityGroup(groupId: string): void {
+        const group = this.state.world.entityGroups.find(candidate => candidate.id === groupId);
+        if (!group) return;
+        this.showModal({
+            title: 'Rename Entity Group',
+            content: `<label class="property-label" for="entity-group-name-input">Group name</label><input id="entity-group-name-input" class="property-input" maxlength="80" value="${escapeHtml(group.name)}" style="width:100%; margin-top:6px;">`,
+            buttons: [
+                {
+                    text: 'Rename Group',
+                    onClick: () => {
+                        const name = (document.getElementById('entity-group-name-input') as HTMLInputElement | null)?.value.trim();
+                        if (!name) { this.showToast('Enter a group name'); return false; }
+                        if (name === group.name) return;
+                        this.pushState();
+                        this.state.world.entityGroups = this.state.world.entityGroups.map(candidate =>
+                            candidate.id === groupId ? { ...candidate, name } : candidate
+                        );
+                        this.updateExplorer();
+                    }
+                },
+                { text: 'Cancel', isSecondary: true, onClick: () => undefined }
+            ]
+        });
+        window.setTimeout(() => {
+            const input = document.getElementById('entity-group-name-input') as HTMLInputElement | null;
+            input?.focus();
+            input?.select();
+        }, 0);
+    }
+
+    private removeEntityGroup(groupId: string): void {
+        this.pushState();
+        this.state.world.entityGroups = this.state.world.entityGroups.filter(group => group.id !== groupId);
+        this.state.world.plates = this.state.world.plates.map(plate =>
+            plate.groupId === groupId ? { ...plate, groupId: undefined } : plate
+        );
+        this.updateExplorer();
+    }
+
+    private toggleEntityGroupCollapsed(groupId: string): void {
+        this.state.world.entityGroups = this.state.world.entityGroups.map(group =>
+            group.id === groupId ? { ...group, collapsed: !group.collapsed } : group
+        );
+        this.updateExplorer();
+    }
+
+    private toggleEntityGroupVisibility(groupId: string): void {
+        const members = this.state.world.plates.filter(plate => plate.groupId === groupId);
+        if (!members.length) return;
+        const visible = !members.some(plate => plate.visible);
+        this.pushState();
+        this.state.world.plates = this.state.world.plates.map(plate =>
+            plate.groupId === groupId ? { ...plate, visible } : plate
+        );
+        this.updateExplorer();
+        this.canvasManager?.render();
+    }
+
+    private toggleEntityGroupLocked(groupId: string): void {
+        const members = this.state.world.plates.filter(plate => plate.groupId === groupId);
+        if (!members.length) return;
+        const locked = !members.every(plate => plate.locked);
+        this.pushState();
+        this.state.world.plates = this.state.world.plates.map(plate =>
+            plate.groupId === groupId ? { ...plate, locked } : plate
+        );
+        this.updateExplorer();
+        this.updatePropertiesPanel();
+    }
+
+    private recolorEntityGroup(groupId: string): void {
+        const members = this.state.world.plates.filter(plate => plate.groupId === groupId);
+        if (!members.length) return;
+        this.showModal({
+            title: 'Recolor Group Entities',
+            content: `<label class="property-label" for="entity-group-color-input">Color applied to all ${members.length} entities</label><input id="entity-group-color-input" type="color" value="${members[0].color}" style="width:100%; height:42px; margin-top:6px;">`,
+            buttons: [
+                {
+                    text: `Apply to ${members.length} entities`,
+                    onClick: () => {
+                        const color = (document.getElementById('entity-group-color-input') as HTMLInputElement | null)?.value;
+                        if (!color) return false;
+                        this.pushState();
+                        this.state.world.plates = this.state.world.plates.map(plate =>
+                            plate.groupId === groupId ? { ...plate, color } : plate
+                        );
+                        this.updateExplorer();
+                        this.canvasManager?.render();
+                    }
+                },
+                { text: 'Cancel', isSecondary: true, onClick: () => undefined }
+            ]
+        });
+    }
+
+    private deleteEntityGroupMembers(groupId: string): void {
+        const group = this.state.world.entityGroups.find(candidate => candidate.id === groupId);
+        const ids = this.state.world.plates.filter(plate => plate.groupId === groupId).map(plate => plate.id);
+        if (!group || !ids.length) return;
+        this.showModal({
+            title: 'Delete Group Entities',
+            content: `Delete all <strong>${ids.length}</strong> entities in <strong>${escapeHtml(group.name)}</strong>? This changes the map and can be undone.`,
+            buttons: [
+                {
+                    text: `Delete ${ids.length} entities`,
+                    onClick: () => {
+                        this.pushState();
+                        this.state.world.entityGroups = this.state.world.entityGroups.filter(candidate => candidate.id !== groupId);
+                        this.deletePlates(ids);
+                    }
+                },
+                { text: 'Cancel', isSecondary: true, onClick: () => undefined }
+            ]
+        });
+    }
+
+    private renderExplorerPlateRows(container: HTMLElement, plates: TectonicPlate[]): void {
+        container.innerHTML = plates.map(plate => `
+            <div class="plate-item ${plate.id === this.state.world.selectedPlateId ? 'selected' : ''}"
+                 draggable="true" data-plate-id="${plate.id}" title="Drag to another group">
+              <span class="plate-color" style="background: ${plate.color}"></span>
+              <span class="plate-name">${escapeHtml(plate.name)}</span>
+              <button class="plate-visibility" data-visible="${plate.visible}" title="Toggle visibility">
+                ${plate.visible ? '👁️' : '🚫'}
+              </button>
+            </div>
+        `).join('');
+        container.querySelectorAll<HTMLElement>('.plate-item').forEach(item => {
+            item.addEventListener('click', event => {
+                if ((event.target as HTMLElement).classList.contains('plate-visibility')) return;
+                this.handleSelect(item.dataset.plateId ?? null, null);
+            });
+            item.addEventListener('dragstart', event => {
+                if (!item.dataset.plateId) return;
+                event.dataTransfer?.setData('application/x-tectolite-plate', item.dataset.plateId);
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+            });
+        });
+        container.querySelectorAll<HTMLElement>('.plate-visibility').forEach(button => {
+            button.addEventListener('click', event => {
+                event.stopPropagation();
+                const plateId = button.closest<HTMLElement>('.plate-item')?.dataset.plateId;
+                if (plateId) this.togglePlateVisibility(plateId);
+            });
+        });
+    }
+
+    private renderGroupedExplorer(content: HTMLElement, visiblePlates: TectonicPlate[], filterText: string): void {
+        const groups = this.state.world.entityGroups ?? [];
+        const selectedPlate = this.state.world.plates.find(plate => plate.id === this.state.world.selectedPlateId);
+        const toolbar = document.createElement('div');
+        toolbar.className = 'entity-group-toolbar';
+        toolbar.innerHTML = `
+            <button class="entity-group-create" title="Create a group; the selected entity is added automatically">+ Group</button>
+            <select class="entity-group-assign" title="Move the selected entity to a group" ${selectedPlate ? '' : 'disabled'}>
+                <option value="">Ungrouped</option>
+                ${groups.map(group => `<option value="${group.id}" ${selectedPlate?.groupId === group.id ? 'selected' : ''}>${escapeHtml(group.name)}</option>`).join('')}
+            </select>
+        `;
+        toolbar.querySelector('.entity-group-create')?.addEventListener('click', () => this.createEntityGroup());
+        toolbar.querySelector<HTMLSelectElement>('.entity-group-assign')?.addEventListener('change', event => {
+            if (selectedPlate) this.assignPlateToEntityGroup(selectedPlate.id, (event.target as HTMLSelectElement).value || null);
+        });
+        content.appendChild(toolbar);
+
+        const renderGroup = (groupId: string | null, name: string, collapsed: boolean, editable: boolean) => {
+            const allMembers = this.state.world.plates.filter(plate => (plate.groupId ?? null) === groupId);
+            const groupMatches = !!filterText && name.toLowerCase().includes(filterText);
+            const members = groupMatches ? allMembers : visiblePlates.filter(plate => (plate.groupId ?? null) === groupId);
+            if (filterText && members.length === 0) return;
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'entity-group';
+            const header = document.createElement('div');
+            header.className = 'entity-group-header';
+            header.dataset.groupId = groupId ?? '';
+            const allVisible = allMembers.length > 0 && allMembers.every(plate => plate.visible);
+            const allLocked = allMembers.length > 0 && allMembers.every(plate => plate.locked);
+            header.innerHTML = `
+                <span class="entity-group-chevron">${collapsed && !filterText ? '▶' : '▼'}</span>
+                <span class="entity-group-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                <span class="entity-group-count">${allMembers.length}</span>
+                ${editable ? `<span class="entity-group-actions">
+                    <button data-action="visibility" title="Show/hide every entity in this group">${allVisible ? '👁️' : '🚫'}</button>
+                    <button data-action="lock" title="Lock/unlock every entity in this group">${allLocked ? '🔒' : '🔓'}</button>
+                    <button data-action="color" title="Set one color for every entity in this group">🎨</button>
+                    <button data-action="rename" title="Rename group">✎</button>
+                    <button data-action="ungroup" title="Delete group but keep its entities">×</button>
+                    <button data-action="delete" title="Delete every entity in this group">🗑</button>
+                </span>` : ''}
+            `;
+            header.addEventListener('click', event => {
+                const action = (event.target as HTMLElement).closest<HTMLButtonElement>('button')?.dataset.action;
+                if (action && groupId) {
+                    event.stopPropagation();
+                    if (action === 'visibility') this.toggleEntityGroupVisibility(groupId);
+                    if (action === 'lock') this.toggleEntityGroupLocked(groupId);
+                    if (action === 'color') this.recolorEntityGroup(groupId);
+                    if (action === 'rename') this.renameEntityGroup(groupId);
+                    if (action === 'ungroup') this.removeEntityGroup(groupId);
+                    if (action === 'delete') this.deleteEntityGroupMembers(groupId);
+                    return;
+                }
+                if (groupId) this.toggleEntityGroupCollapsed(groupId);
+            });
+            header.addEventListener('dragover', event => {
+                event.preventDefault();
+                header.classList.add('drag-over');
+            });
+            header.addEventListener('dragleave', () => header.classList.remove('drag-over'));
+            header.addEventListener('drop', event => {
+                event.preventDefault();
+                header.classList.remove('drag-over');
+                const plateId = event.dataTransfer?.getData('application/x-tectolite-plate');
+                if (plateId) this.assignPlateToEntityGroup(plateId, groupId);
+            });
+            wrapper.appendChild(header);
+
+            if (!collapsed || filterText) {
+                const rows = document.createElement('div');
+                rows.className = 'entity-group-members';
+                if (members.length) this.renderExplorerPlateRows(rows, members);
+                else rows.innerHTML = '<p class="empty-message">Empty group — drag an entity here</p>';
+                wrapper.appendChild(rows);
+            }
+            content.appendChild(wrapper);
+        };
+
+        for (const group of groups) renderGroup(group.id, group.name, !!group.collapsed, true);
+        const ungrouped = this.state.world.plates.filter(plate => !plate.groupId);
+        if (ungrouped.length) renderGroup(null, 'Ungrouped', false, false);
+        if (visiblePlates.length === 0 && !groups.some(group => group.name.toLowerCase().includes(filterText))) {
+            const empty = document.createElement('p');
+            empty.className = 'empty-message';
+            empty.textContent = 'No entities or groups match the filter';
+            content.appendChild(empty);
+        }
+    }
+
     private updateExplorer(): void {
         const list = document.getElementById('plate-list');
         if (!list) return;
@@ -2958,52 +3245,16 @@ class TectoLiteApp {
             ? this.state.world.plates.filter(p => p.name.toLowerCase().includes(filterText))
             : this.state.world.plates;
 
-        // --- 1. PLATES SECTION ---
-        const platesSection = this.createExplorerSection('Plates', 'plates', visiblePlates.length);
+        // --- 1. ENTITIES / GROUPS SECTION ---
+        const platesSection = this.createExplorerSection('Entities', 'plates', visiblePlates.length);
         list.appendChild(platesSection.header);
 
         if (this.explorerState.sections['plates']) {
             const content = platesSection.content;
             if (this.state.world.plates.length === 0) {
                 content.innerHTML = '<p class="empty-message">Draw a landmass to create a plate</p>';
-            } else if (visiblePlates.length === 0) {
-                content.innerHTML = '<p class="empty-message">No plates match the filter</p>';
             } else {
-                content.innerHTML = visiblePlates.map(plate => `
-      <div class="plate-item ${plate.id === this.state.world.selectedPlateId ? 'selected' : ''}" 
-           data-plate-id="${plate.id}">
-        <span class="plate-color" style="background: ${plate.color}"></span>
-        <span class="plate-name">${plate.name}</span>
-        <button class="plate-visibility" data-visible="${plate.visible}">
-          ${plate.visible ? '👁️' : '🚫'}
-        </button>
-      </div>
-    `).join('');
-
-                content.querySelectorAll('.plate-item').forEach(item => {
-                    item.addEventListener('click', (e) => {
-                        if ((e.target as HTMLElement).classList.contains('plate-visibility')) return;
-                        const plateId = item.getAttribute('data-plate-id');
-                        // Use original handleSelect which now probably needs to support modifiers in other contexts, 
-                        // but here we just select the plate. 
-                        // If user wants to multiselect plates, that's a different feature request not strictly asked for, 
-                        // but let's be safe and check Modifier keys if we were rewriting handleSelect.
-                        // For now keep standard select.
-                        this.handleSelect(plateId, null);
-                    });
-                });
-
-                // Visibility toggle
-                content.querySelectorAll('.plate-visibility').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        const item = (e.target as HTMLElement).closest('.plate-item');
-                        const plateId = item?.getAttribute('data-plate-id');
-                        if (plateId) {
-                            this.togglePlateVisibility(plateId);
-                        }
-                    });
-                });
+                this.renderGroupedExplorer(content, visiblePlates, filterText);
             }
             list.appendChild(content);
         }
@@ -4554,6 +4805,7 @@ class TectoLiteApp {
         const dup: TectonicPlate = {
             ...clone,
             name: `${plate.name} Copy`,
+            groupId: plate.groupId,
             center: shiftLon(clone.center),
             polygons: shiftPolys(clone.polygons),
             initialPolygons: shiftPolys(clone.initialPolygons),

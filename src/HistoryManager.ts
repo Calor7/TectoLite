@@ -1,5 +1,5 @@
 // History Manager for Undo/Redo functionality
-import { AppState } from './types';
+import { AppState, EntityGroup } from './types';
 
 export class HistoryManager {
     private history: AppState[] = [];
@@ -161,6 +161,7 @@ export class HistoryManager {
             world: {
                 ...world,
                 plates: (world.plates ?? []).map(clonePlate),
+                entityGroups: (world.entityGroups ?? []).map((group: EntityGroup) => ({ ...group })),
                 selectedFeatureIds: [...(world.selectedFeatureIds ?? [])],
                 globalOptions: {
                     ...globalOptions,

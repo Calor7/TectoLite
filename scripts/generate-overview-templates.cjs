@@ -431,48 +431,210 @@ function closestMotionSource(center, sources) {
         }, null);
 }
 
+// Conventional continent boundaries for the one continuous Afro-Eurasian
+// source cover. The cuts run through water where possible, then follow the
+// Suez/Red Sea and Turkish Straits-Caucasus-Ural conventions on land.
+const africaMask = [[[
+    [-30, -45], [60, -45], [60, 11.5], [43.2, 11.5],
+    [40, 15], [36, 22], [33, 28], [32.5, 31.5],
+    [25, 34], [20, 35], [15, 36], [10, 38], [5, 38],
+    [1, 37.2], [-2, 36.5], [-5.6, 35.95], [-8, 36],
+    [-30, 36], [-30, -45]
+]]];
+
+const europeMask = [[[
+    [-30, 34], [26, 34], [26, 39.8], [29, 41],
+    [35, 42], [40, 43.5], [47, 41], [51, 46],
+    [55, 50], [57, 51], [58, 55], [59, 60],
+    [60, 66], [68, 70], [82, 90], [-30, 90], [-30, 34]
+]]];
+
+// Use the Panama-Darien convention for the Americas. The short land cut is
+// deliberately placed near the Panama-Colombia border; the rest of the mask
+// runs through ocean so the source coastline remains untouched.
+const southAmericaMask = [[[
+    [-100, -65], [-25, -65], [-25, 20], [-77, 20],
+    [-77.2, 8.7], [-78.9, 7.2], [-100, 7.2], [-100, -65]
+]]];
+
+// Central America is separated at the narrow Isthmus of Tehuantepec. The
+// mask includes the Yucatan and runs south to the already-defined Darien cut.
+const centralAmericaMask = [[[
+    [-100, 7.2], [-75, 7.2], [-75, 25], [-90, 25],
+    [-94.5, 18.7], [-96.5, 15.7], [-100, 15.7], [-100, 7.2]
+]]];
+
+// Familiar Asian subregions whose coasts are already part of the continuous
+// source cover. Only their short overland margins are introduced here.
+const arabianPeninsulaMask = [[[
+    [31, 10], [60, 10], [60, 33], [49, 33],
+    [48, 30.5], [43, 31], [39, 31], [35, 29.5], [31, 28], [31, 10]
+]]];
+
+const indianSubcontinentMask = [[[
+    [58, 5], [95, 5], [95, 28], [90, 29],
+    [85, 31], [80, 32.5], [75, 36.5], [69, 37],
+    [64, 31], [61, 26], [58, 25], [58, 5]
+]]];
+
+function clippedCoverRing(result, name) {
+    const rings = result
+        .map(polygon => clockwiseRing(polygon[0]))
+        .filter(ring => physicalRingArea(ring) >= minimumCoverArea)
+        .sort((a, b) => physicalRingArea(b) - physicalRingArea(a));
+    if (!rings.length) throw new Error(`${name} split produced no cover`);
+    // The source layer also contains separate island covers. Keep the largest
+    // connected mainland result here so each continent remains one editable
+    // polygon instead of absorbing boundary slivers or duplicate islands.
+    return rings[0];
+}
+
+function splitAfroEurasiaCover(cover, motionSources) {
+    const source = cover.rings.map(ring => [ring]);
+    const africaResult = polygonClipping.intersection(source, africaMask);
+    const outsideAfrica = polygonClipping.difference(source, africaMask);
+    const europeResult = polygonClipping.intersection(outsideAfrica, europeMask);
+    const asiaResult = polygonClipping.difference(outsideAfrica, europeMask);
+    const arabianPeninsulaResult = polygonClipping.intersection(asiaResult, arabianPeninsulaMask);
+    const indianSubcontinentResult = polygonClipping.intersection(asiaResult, indianSubcontinentMask);
+    const remainingAsiaResult = polygonClipping.difference(
+        asiaResult,
+        arabianPeninsulaMask,
+        indianSubcontinentMask
+    );
+
+    return [
+        { name: 'Africa', plateId: cover.plateId, color: '#9c4a6d', result: africaResult },
+        { name: 'Europe', plateId: 919000, color: '#6e79a8', result: europeResult },
+        { name: 'Asia', plateId: 919001, color: '#a66f45', result: remainingAsiaResult },
+        { name: 'Arabian Peninsula', plateId: 919003, color: '#b18a55', result: arabianPeninsulaResult },
+        { name: 'Indian Subcontinent', plateId: 919004, color: '#8f8b4e', result: indianSubcontinentResult }
+    ].map(piece => {
+        const ring = clippedCoverRing(piece.result, piece.name);
+        const center = geoCentroid({ type: 'Polygon', coordinates: [ring] });
+        const sourcePlate = closestMotionSource(center, motionSources);
+        return {
+            plateId: piece.plateId,
+            name: piece.name,
+            color: piece.color,
+            center,
+            rings: [ring],
+            motion: sourcePlate.motion,
+            cratons: []
+        };
+    });
+}
+
+function splitAmericasCover(cover, motionSources) {
+    const source = cover.rings.map(ring => [ring]);
+    const southAmericaResult = polygonClipping.intersection(source, southAmericaMask);
+    const outsideSouthAmerica = polygonClipping.difference(source, southAmericaMask);
+    const centralAmericaResult = polygonClipping.intersection(outsideSouthAmerica, centralAmericaMask);
+    const northAmericaResult = polygonClipping.difference(outsideSouthAmerica, centralAmericaMask);
+
+    return [
+        { name: 'North America', plateId: cover.plateId, color: '#4f83a8', result: northAmericaResult },
+        { name: 'Central America', plateId: 919005, color: '#4f9a83', result: centralAmericaResult },
+        { name: 'South America', plateId: 919002, color: '#8a6a3f', result: southAmericaResult }
+    ].map(piece => {
+        const ring = clippedCoverRing(piece.result, piece.name);
+        const center = geoCentroid({ type: 'Polygon', coordinates: [ring] });
+        const sourcePlate = closestMotionSource(center, motionSources);
+        return {
+            plateId: piece.plateId,
+            name: piece.name,
+            color: piece.color,
+            center,
+            rings: [ring],
+            motion: sourcePlate.motion,
+            cratons: []
+        };
+    });
+}
+
 function createModernCovers(time, plateFeatures) {
     const covers = readJson(path.join(assets, 'gplates-modern-continent-covers.json'));
     const motionSources = createMotionSources(plateFeatures, time);
-    return covers.plates.map(cover => {
+    return covers.plates.flatMap(cover => {
+        if (cover.name === 'Afro-Eurasia') return splitAfroEurasiaCover(cover, motionSources);
+        if (cover.name === 'Americas') return splitAmericasCover(cover, motionSources);
         const source = closestMotionSource(cover.center, motionSources);
-        return {
+        return [{
             ...cover,
             // Covers deliberately ignore plate boundaries. Approximate their
             // drift using the detailed continental region at/nearest center.
             motion: source.motion
+        }];
+    });
+}
+
+function featurePolygons(feature) {
+    if (feature.geometry.type === 'Polygon') return [feature.geometry.coordinates];
+    if (feature.geometry.type === 'MultiPolygon') return feature.geometry.coordinates;
+    return [];
+}
+
+function createPangaeaRegions(mainRing, plateFeatures, motionSources) {
+    // The reconstruction model's plate IDs retain their continental families.
+    // 1/3/4/6 are the Laurasian families (Laurentia, Europe, Siberia and East
+    // Asia); the remaining main-body families form Gondwana. Intersecting that
+    // source distinction with the continuous cover preserves its detailed
+    // external coastline while giving the editor one polygon per super-region.
+    const laurasianFamilies = new Set(['1', '3', '4', '6']);
+    const laurasianPolygons = plateFeatures
+        .filter(feature => laurasianFamilies.has(String(feature.properties?.PLATEID1)[0]))
+        .flatMap(featurePolygons);
+    const laurasianUnion = polygonClipping.union(...laurasianPolygons);
+    const laurasiaResult = polygonClipping.intersection([[mainRing]], laurasianUnion);
+    const laurasiaRing = clippedCoverRing(laurasiaResult, 'Laurasia');
+    const gondwanaResult = polygonClipping.difference([[mainRing]], [[laurasiaRing]]);
+    const gondwanaRing = clippedCoverRing(gondwanaResult, 'Gondwana');
+
+    return [
+        { name: 'Laurasia', plateId: 930000, color: '#786b9d', ring: laurasiaRing },
+        { name: 'Gondwana', plateId: 939000, color: '#8b6f47', ring: gondwanaRing }
+    ].map(region => {
+        const center = geoCentroid({ type: 'Polygon', coordinates: [region.ring] });
+        const source = closestMotionSource(center, motionSources);
+        return {
+            plateId: region.plateId,
+            name: region.name,
+            color: region.color,
+            center,
+            rings: [region.ring],
+            motion: source.motion,
+            cratons: []
         };
     });
 }
 
 function createPangaeaCovers(plateFeatures, time) {
-    const polygons = plateFeatures.flatMap(feature => {
-        if (feature.geometry.type === 'Polygon') return [feature.geometry.coordinates];
-        if (feature.geometry.type === 'MultiPolygon') return feature.geometry.coordinates;
-        return [];
-    });
+    const polygons = plateFeatures.flatMap(featurePolygons);
     const motionSources = createMotionSources(plateFeatures, time);
-    const usedNames = new Map();
-    return polygonClipping.union(...polygons)
+    const connectedRings = polygonClipping.union(...polygons)
         .map(polygon => clockwiseRing(polygon[0]))
         .filter(ring => physicalRingArea(ring) >= minimumCoverArea)
-        .sort((a, b) => physicalRingArea(b) - physicalRingArea(a))
-        .map((ring, index) => {
-            const center = geoCentroid({ type: 'Polygon', coordinates: [ring] });
-            const source = closestMotionSource(center, motionSources);
-            const baseName = index === 0 ? 'Pangaea' : `${source.name} — landmass`;
-            const duplicate = (usedNames.get(baseName) ?? 0) + 1;
-            usedNames.set(baseName, duplicate);
-            return {
-                plateId: 930000 + index,
-                name: duplicate === 1 ? baseName : `${baseName} ${duplicate}`,
-                color: index === 0 ? '#8b6f47' : colorFor(source.plateId),
-                center,
-                rings: [ring],
-                motion: source.motion,
-                cratons: []
-            };
-        });
+        .sort((a, b) => physicalRingArea(b) - physicalRingArea(a));
+    const [mainRing, ...independentRings] = connectedRings;
+    const regions = createPangaeaRegions(mainRing, plateFeatures, motionSources);
+    const usedNames = new Map();
+    const independent = independentRings.map((ring, index) => {
+        const center = geoCentroid({ type: 'Polygon', coordinates: [ring] });
+        const source = closestMotionSource(center, motionSources);
+        const baseName = `${source.name} — landmass`;
+        const duplicate = (usedNames.get(baseName) ?? 0) + 1;
+        usedNames.set(baseName, duplicate);
+        return {
+            plateId: 930001 + index,
+            name: duplicate === 1 ? baseName : `${baseName} ${duplicate}`,
+            color: colorFor(source.plateId),
+            center,
+            rings: [ring],
+            motion: source.motion,
+            cratons: []
+        };
+    });
+    return [...regions, ...independent];
 }
 
 function writeLayer(filename, time, plates) {

@@ -475,6 +475,8 @@ export type DrawMode = 'polygon' | 'line';
 export interface TectonicPlate {
   id: string;
   name: string;
+  /** Optional Explorer-only organization. Never used by simulation systems. */
+  groupId?: string;
   description?: string; // User-defined description
   linkedToPlateId?: string; // Parent plate id this plate's motion is linked to (inherits parent motion + optional relative)
   linkTime?: number; // Geological time when this plate was linked to parent (child motion independent before this)
@@ -545,12 +547,24 @@ export interface TectonicPlate {
   locked: boolean;
 }
 
+/**
+ * Explorer-only organization metadata. Groups deliberately contain no
+ * mechanical settings; visibility/lock bulk actions are applied to member
+ * plates explicitly by the UI.
+ */
+export interface EntityGroup {
+  id: string;
+  name: string;
+  collapsed?: boolean;
+}
+
 // ============================================================================
 // CAUSALITY LAYER — user-authorable + auto-derived causal graph
 // ============================================================================
 // Pure document metadata. Never read by SimulationEngine / motion / geometry.
 export interface WorldState {
   plates: TectonicPlate[];
+  entityGroups: EntityGroup[];
   currentTime: number;
   // timeMode removed - simplify to internal positive time
 
@@ -737,6 +751,7 @@ export function createDefaultGeometryStage(currentTime: number, polygons: Polygo
 export function createDefaultWorldState(): WorldState {
   return {
     plates: [],
+    entityGroups: [],
     currentTime: 0,
 
     projection: 'orthographic', // Default to globe as requested

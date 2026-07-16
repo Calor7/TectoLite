@@ -5,6 +5,7 @@
 import {
     TectonicPlate,
     WorldState,
+    EntityGroup,
     Feature,
     RiftAxis,
     TripleJunction,
@@ -15,6 +16,7 @@ import { ensureMotionModel } from './motion/RotationModel';
 
 export interface RemappedImport {
     plates: TectonicPlate[];
+    entityGroups: EntityGroup[];
     riftAxes: RiftAxis[];
     tripleJunctions: TripleJunction[];
 }
@@ -33,16 +35,23 @@ export interface RemappedImport {
  * re-derived each frame from the imported rift axes.
  */
 export function remapImportedWorld(
-    importedWorld: Pick<WorldState, 'plates' | 'riftAxes' | 'tripleJunctions'>,
+    importedWorld: Pick<WorldState, 'plates'>
+        & Partial<Pick<WorldState, 'entityGroups' | 'riftAxes' | 'tripleJunctions'>>,
     timeOffset: number
 ): RemappedImport {
     const idMap = new Map<string, string>(); // old plate id -> new plate id
+    const groupIdMap = new Map<string, string>(); // old Explorer group id -> new group id
     const featureIdMap = new Map<string, string>(); // old feature id -> new feature id
 
     const platesToImport = importedWorld.plates.filter(p => !p.riftAxisId && !p.junctionId);
 
     // Pre-assign plate IDs so cross-references can be remapped below
     platesToImport.forEach(plate => idMap.set(plate.id, generateId()));
+    const entityGroups = (importedWorld.entityGroups || []).map(group => {
+        const id = generateId();
+        groupIdMap.set(group.id, id);
+        return { ...group, id };
+    });
 
     const mapFeatureId = (oldId: string): string => {
         let newId = featureIdMap.get(oldId);
@@ -83,6 +92,7 @@ export function remapImportedWorld(
     const plates = platesToImport.map(plate => ({
         ...plate,
         id: idMap.get(plate.id)!,
+        groupId: plate.groupId ? groupIdMap.get(plate.groupId) : undefined,
         // Remap cross-plate references; dangling ones are stripped so motion
         // inheritance and parent-chain lookups don't fail on stale IDs.
         parentPlateId: remapRef(plate.parentPlateId),
@@ -154,7 +164,7 @@ export function remapImportedWorld(
             };
         });
 
-    return { plates, riftAxes, tripleJunctions };
+    return { plates, entityGroups, riftAxes, tripleJunctions };
 }
 
 /**
