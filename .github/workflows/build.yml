@@ -34,19 +34,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type-check application
-        run: npm run typecheck
-
-      - name: Run unit tests
-        run: npm run test
-
-      - name: Build application
-        run: npm run build
+      - name: Verify application
+        run: npm run verify
       
       - name: Package Electron app (all OS)
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          npm run build
           npx electron-builder --publish=never
 
       - name: Upload artifacts (per OS)

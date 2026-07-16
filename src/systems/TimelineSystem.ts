@@ -69,7 +69,7 @@ export class TimelineSystem {
         if (events.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'empty-message';
-            empty.textContent = 'No events recorded.';
+            empty.textContent = 'No history recorded.';
             this.container.appendChild(empty);
             return;
         }

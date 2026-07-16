@@ -12,7 +12,6 @@ import {
     createDefaultAppState,
     getNextPlateColor,
     Coordinate,
-    ProjectionType,
     EulerPole,
     MantlePlume,
     DrawMode,
@@ -36,7 +35,6 @@ import { migrateSaveFile, type SaveFile } from './migration';
 import { pointPositionAt, ensureMotionModel, getMotionModel, activeEulerPole } from './motion/RotationModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
-import { eventSystem } from './systems/EventSystem';
 import { geoArea, geoCentroid } from 'd3-geo';
 import {
     getSpeedPresetData as _getSpeedPresetData,
@@ -66,6 +64,7 @@ import { TutorialOverlay } from './ui/TutorialOverlay';
 import { makeBenchmarkWorld } from './utils/benchmarkWorld';
 import { perfMonitor } from './utils/PerfMonitor';
 import { PROJECT_TEMPLATES, type ProjectTemplate } from './projectTemplates';
+import { bindProjectSettings, syncProjectSettings, type ProjectSettingEffect } from './ui/SettingsBindings';
 
 type UnifiedExportOptions = NonNullable<Awaited<ReturnType<typeof showUnifiedExportDialog>>>;
 
@@ -196,6 +195,7 @@ class TectoLiteApp {
         this.timelineSystem.setContainer(document.getElementById('timeline-panel')!);
 
         this.setupEventListeners();
+        this.setupHeaderMenus();
         if (perfMonitor.getBenchmarkScale() !== null) {
             this.simulation.setTime(this.state.world.currentTime);
         }
@@ -259,7 +259,6 @@ class TectoLiteApp {
                             // full migration pipeline here (line-type rename
                             // + motion-model migration, gated by version).
                             migrateSaveFile(data);
-                            eventSystem.reset();
                             this.state = {
                                 ...this.state,
                                 world: data.world,
@@ -354,6 +353,46 @@ class TectoLiteApp {
             globalOptions: this.state.world.globalOptions,
             realWorldPresetListHtml: this.generateRealWorldPresetList(),
             customPresetListHtml: this.generateCustomPresetList()
+        });
+    }
+
+    private setupHeaderMenus(): void {
+        const viewBtn = document.getElementById('btn-view-panels');
+        const viewMenu = document.getElementById('view-dropdown-menu');
+        const settingsBtn = document.getElementById('btn-planet');
+        const settingsMenu = document.getElementById('planet-dropdown-menu');
+
+        const closeMenus = () => {
+            viewMenu?.classList.remove('show');
+            settingsMenu?.classList.remove('show');
+            viewBtn?.setAttribute('aria-expanded', 'false');
+            settingsBtn?.setAttribute('aria-expanded', 'false');
+        };
+
+        viewBtn?.addEventListener('click', event => {
+            event.stopPropagation();
+            const willOpen = !viewMenu?.classList.contains('show');
+            closeMenus();
+            if (willOpen) viewMenu?.classList.add('show');
+            viewBtn.setAttribute('aria-expanded', String(willOpen));
+        });
+
+        settingsBtn?.addEventListener('click', event => {
+            event.stopPropagation();
+            const willOpen = !settingsMenu?.classList.contains('show');
+            closeMenus();
+            if (willOpen) settingsMenu?.classList.add('show');
+            settingsBtn.setAttribute('aria-expanded', String(willOpen));
+        });
+
+        document.addEventListener('click', event => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            if (viewMenu?.contains(target) || settingsMenu?.contains(target)) return;
+            closeMenus();
+        });
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeMenus();
         });
     }
 
@@ -470,40 +509,6 @@ class TectoLiteApp {
             });
         }
 
-        // Unified View Dropdown
-        const viewBtn = document.getElementById('btn-view-panels');
-        const viewMenu = document.getElementById('view-dropdown-menu');
-
-        // Planet Dropdown
-        const planetBtn = document.getElementById('btn-planet');
-        const planetMenu = document.getElementById('planet-dropdown-menu');
-
-
-
-        viewBtn?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            viewMenu?.classList.toggle('show');
-            planetMenu?.classList.remove('show');
-        });
-
-        planetBtn?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            planetMenu?.classList.toggle('show');
-            viewMenu?.classList.remove('show');
-        });
-
-
-        // Close on outside click
-        document.addEventListener('click', (e) => {
-            if (viewMenu?.classList.contains('show') && !viewMenu.contains(e.target as Node) && e.target !== viewBtn) {
-                viewMenu.classList.remove('show');
-            }
-            if (planetMenu?.classList.contains('show') && !planetMenu.contains(e.target as Node) && e.target !== planetBtn) {
-                planetMenu.classList.remove('show');
-            }
-
-        });
-
         // Reset Camera
         document.getElementById('btn-reset-camera')?.addEventListener('click', () => {
             this.state.viewport.scale = 250;
@@ -540,9 +545,34 @@ class TectoLiteApp {
             });
         });
 
+        bindProjectSettings({
+            getState: () => this.state,
+            changed: effects => this.handleProjectSettingChange(effects)
+        });
+
         // Global Tooltip Logic
         const tooltip = document.getElementById('global-tooltip');
         const tooltipTargetSelector = '[data-tooltip], [title], .info-icon, .tool-btn, .feature-btn, button, input, select, label, h3, .view-dropdown-item';
+
+        document.querySelectorAll<HTMLElement>('.info-icon[data-tooltip]').forEach((icon, index) => {
+            const text = icon.dataset.tooltip;
+            if (!text) return;
+            const describedControl = icon.closest('button') || icon.closest('label')?.querySelector<HTMLElement>('input, select, button');
+            if (describedControl) {
+                const description = document.createElement('span');
+                description.id = `tooltip-description-${index}`;
+                description.className = 'sr-only';
+                description.textContent = text;
+                document.body.appendChild(description);
+                describedControl.setAttribute('aria-describedby', description.id);
+                describedControl.setAttribute('data-tooltip', text);
+                icon.setAttribute('aria-hidden', 'true');
+            } else {
+                icon.tabIndex = 0;
+                icon.setAttribute('role', 'note');
+                icon.setAttribute('aria-label', `More information: ${text}`);
+            }
+        });
 
         const updateTooltipPos = (e: MouseEvent) => {
             if (tooltip) {
@@ -569,6 +599,18 @@ class TectoLiteApp {
                 tooltip.style.left = `${finalX}px`;
                 tooltip.style.top = `${finalY}px`;
             }
+        };
+
+        const updateTooltipElementPos = (element: Element) => {
+            if (!tooltip) return;
+            const anchor = element.getBoundingClientRect();
+            const rect = tooltip.getBoundingClientRect();
+            const left = Math.min(anchor.left, window.innerWidth - rect.width - 8);
+            const top = anchor.bottom + rect.height + 8 <= window.innerHeight
+                ? anchor.bottom + 6
+                : Math.max(8, anchor.top - rect.height - 6);
+            tooltip.style.left = `${Math.max(8, left)}px`;
+            tooltip.style.top = `${top}px`;
         };
 
         // Delegated Tooltip Logic
@@ -663,13 +705,34 @@ class TectoLiteApp {
                 updateTooltipPos(e);
             }
         });
+        document.body.addEventListener('focusin', event => {
+            const element = (event.target as HTMLElement).closest<HTMLElement>('[data-tooltip]');
+            const text = element?.dataset.tooltip;
+            if (!element || !text || !tooltip) return;
+            activeTooltipElement = element;
+            tooltip.textContent = text;
+            tooltip.style.display = 'block';
+            tooltip.style.opacity = '1';
+            updateTooltipElementPos(element);
+        });
+        document.body.addEventListener('focusout', event => {
+            const next = event.relatedTarget as Node | null;
+            if (activeTooltipElement && next && activeTooltipElement.contains(next)) return;
+            if (tooltip) {
+                tooltip.style.display = 'none';
+                tooltip.style.opacity = '0';
+            }
+            activeTooltipElement = null;
+        });
+        document.body.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && tooltip?.style.display === 'block') {
+                tooltip.style.display = 'none';
+                tooltip.style.opacity = '0';
+                activeTooltipElement = null;
+            }
+        });
 
         // (duplicate fullscreen listener removed — registered once above)
-
-        document.getElementById('check-show-hints')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.showHints = (e.target as HTMLInputElement).checked;
-            this.updateHint(this.activeToolText);
-        });
 
         // Tools
         document.querySelectorAll('.tool-btn').forEach(btn => {
@@ -740,84 +803,15 @@ class TectoLiteApp {
             this.canvasManager?.setEditSnappingEnabled(enabled);
         });
 
-        // Projection
-        document.getElementById('projection-select')?.addEventListener('change', (e) => {
-            const val = (e.target as HTMLSelectElement).value as ProjectionType;
-            this.state.world.projection = val;
-            this.canvasManager?.render();
-        });
-
         // Motion Mode
         document.getElementById('motion-mode-select')?.addEventListener('change', (e) => {
             const mode = (e.target as HTMLSelectElement).value as InteractionMode;
             this.canvasManager?.setMotionMode(mode);
         });
 
-        // View Options
-        document.getElementById('check-grid')?.addEventListener('change', (e) => {
-            this.state.world.showGrid = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
-        document.getElementById('grid-thickness-select')?.addEventListener('change', (e) => {
-            const val = parseFloat((e.target as HTMLSelectElement).value);
-            this.state.world.globalOptions.gridThickness = val;
-            this.canvasManager?.render();
-        });
-
-
-
-        document.getElementById('check-features')?.addEventListener('change', (e) => {
-            this.state.world.showFeatures = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
-        document.getElementById('check-euler-poles')?.addEventListener('change', (e) => {
-            this.state.world.showEulerPoles = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
-        document.getElementById('check-future-features')?.addEventListener('change', (e) => {
-            this.state.world.showFutureFeatures = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
-
-
-        document.getElementById('check-show-links')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.showLinks = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
-        document.getElementById('check-prediction-flowlines')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.showPredictionFlowlines = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
-        document.getElementById('check-velocity-arrows')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.showVelocityArrows = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
-        document.getElementById('check-hover-tooltips')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.showHoverTooltips = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
-
         // Camera view bookmarks (View dropdown): dynamic list, no slot limit
         document.getElementById('btn-view-save-new')?.addEventListener('click', () => this.saveCameraBookmarkNew());
         this.renderCameraViews();
-
-        document.getElementById('check-show-hidden-plates')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.showHiddenPlates = (e.target as HTMLInputElement).checked;
-            this.updateExplorer(); // Refreshes the eye icons in explorer if needed
-            this.canvasManager?.render();
-        });
-
-        document.getElementById('check-grid-on-top')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.gridOnTop = (e.target as HTMLInputElement).checked;
-            this.canvasManager?.render();
-        });
 
         // Plate Opacity Slider
         const plateOpacitySlider = document.getElementById('plate-opacity-slider');
@@ -825,41 +819,8 @@ class TectoLiteApp {
         plateOpacitySlider?.addEventListener('input', (e) => {
             const value = parseInt((e.target as HTMLInputElement).value);
             this.state.world.globalOptions.plateOpacity = value / 100;
+            this.setUnsaved(true);
             if (plateOpacityValue) plateOpacityValue.textContent = `${value}%`;
-            this.canvasManager?.render();
-        });
-
-        // Automated Oceanic Crust
-        document.getElementById('check-auto-oceanic')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.enableAutoOceanicCrust = (e.target as HTMLInputElement).checked;
-            this.simulation?.setTime(this.state.world.currentTime);
-            this.canvasManager?.markDirty();
-        });
-
-        document.getElementById('check-expanding-rifts')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.enableExpandingRifts = (e.target as HTMLInputElement).checked;
-            this.simulation?.setTime(this.state.world.currentTime);
-            this.canvasManager?.markDirty();
-        });
-
-        // Automation & Events toggles (Settings dropdown; all opt-in)
-        document.getElementById('check-boundary-viz')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.enableBoundaryVisualization = (e.target as HTMLInputElement).checked;
-            this.simulation?.setTime(this.state.world.currentTime);
-            this.canvasManager?.render();
-        });
-        document.getElementById('check-guided-creation')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.enableGuidedCreation = (e.target as HTMLInputElement).checked;
-            this.simulation?.setTime(this.state.world.currentTime);
-            this.canvasManager?.markDirty();
-        });
-        document.getElementById('check-pause-fusion')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.pauseOnFusionSuggestion = (e.target as HTMLInputElement).checked;
-            this.simulation?.setTime(this.state.world.currentTime);
-            this.canvasManager?.markDirty();
-        });
-        document.getElementById('check-show-event-icons')?.addEventListener('change', (e) => {
-            this.state.world.globalOptions.showEventIcons = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
         });
 
@@ -867,6 +828,7 @@ class TectoLiteApp {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
                 this.state.world.globalOptions.oceanicGenerationInterval = val;
+                this.setUnsaved(true);
                 this.simulation?.setTime(this.state.world.currentTime);
                 this.canvasManager?.markDirty();
             }
@@ -874,6 +836,7 @@ class TectoLiteApp {
 
         document.getElementById('input-oceanic-color')?.addEventListener('input', (e) => {
             this.state.world.globalOptions.oceanicCrustColor = (e.target as HTMLInputElement).value;
+            this.setUnsaved(true);
             this.canvasManager?.markDirty();
         });
 
@@ -881,6 +844,7 @@ class TectoLiteApp {
             const val = parseInt((e.target as HTMLInputElement).value);
             const opacity = val / 100;
             this.state.world.globalOptions.oceanicCrustOpacity = opacity;
+            this.setUnsaved(true);
 
             const lbl = document.getElementById('lbl-oceanic-opacity');
             if (lbl) lbl.textContent = `${val}%`;
@@ -909,6 +873,7 @@ class TectoLiteApp {
                     plate.color = color;
                 }
             }
+            this.setUnsaved(true);
             this.canvasManager?.render();
         };
 
@@ -919,6 +884,7 @@ class TectoLiteApp {
             // per-plate update is needed — the canvas reads the default next
             // render. lineDashCustomized plates keep their override (handled
             // in CanvasManager).
+            this.setUnsaved(true);
             this.canvasManager?.render();
         };
 
@@ -1148,6 +1114,7 @@ class TectoLiteApp {
                     const current = [...(this.state.world.globalOptions.ratePresets || [0.5, 1.0, 2.0, 5.0])];
                     current[idx] = val;
                     this.state.world.globalOptions.ratePresets = current;
+                    this.setUnsaved(true);
                     // We don't need to full updateUI here, just state update so it exports
                 }
             }
@@ -1160,6 +1127,7 @@ class TectoLiteApp {
             const checkbox = e.target as HTMLInputElement;
             if (this.state.world.imageOverlay) {
                 this.state.world.imageOverlay.visible = checkbox.checked;
+                this.setUnsaved(true);
                 this.canvasManager?.render();
             } else if (checkbox.checked) {
                 // Was a silent no-op — explain why nothing appeared
@@ -1221,6 +1189,7 @@ class TectoLiteApp {
                             rotation: 0,
                             mode: 'fixed'
                         };
+                        this.setUnsaved(true);
                         const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
                         if (checkbox) checkbox.checked = true;
                         this.canvasManager?.render();
@@ -1238,12 +1207,14 @@ class TectoLiteApp {
             if (valueLabel) valueLabel.textContent = `${value}%`;
             if (this.state.world.imageOverlay) {
                 this.state.world.imageOverlay.opacity = value / 100;
+                this.setUnsaved(true);
                 this.canvasManager?.render();
             }
         });
 
         document.getElementById('btn-clear-overlay')?.addEventListener('click', () => {
             this.state.world.imageOverlay = undefined;
+            this.setUnsaved(true);
             const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
             if (checkbox) checkbox.checked = false;
             this.canvasManager?.render();
@@ -1254,6 +1225,7 @@ class TectoLiteApp {
             const val = parseInt((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
                 this.state.world.globalOptions.timelineMaxTime = val;
+                this.setUnsaved(true);
                 const slider = document.getElementById('time-slider') as HTMLInputElement;
                 if (slider) {
                     slider.max = val.toString();
@@ -1277,6 +1249,7 @@ class TectoLiteApp {
                     // Disable custom radius, show Earth default
                     this.state.world.globalOptions.customRadiusEnabled = false;
                     this.state.world.globalOptions.planetRadius = 6371;
+                    this.setUnsaved(true);
                     radiusInput.value = "6371";
                     this.updateUI();
                     this.canvasManager?.markDirty();
@@ -1286,6 +1259,7 @@ class TectoLiteApp {
                     const customVal = this.state.world.globalOptions.customPlanetRadius || 6371;
                     radiusInput.value = customVal.toString();
                     this.state.world.globalOptions.planetRadius = customVal;
+                    this.setUnsaved(true);
                     this.updateUI();
                     this.canvasManager?.markDirty();
                 }
@@ -1296,6 +1270,7 @@ class TectoLiteApp {
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
                 this.state.world.globalOptions.customPlanetRadius = val;
+                this.setUnsaved(true);
                 if (this.state.world.globalOptions.customRadiusEnabled) {
                     this.state.world.globalOptions.planetRadius = val;
                 }
@@ -1559,7 +1534,6 @@ class TectoLiteApp {
                         // parseImportFile already ran migrateSaveFile on the
                         // imported world (line-type rename + motion-model
                         // migration), so no per-field migration is needed here.
-                        eventSystem.reset();
                         this.state = {
                             ...this.state,
                             world: importedWorld,
@@ -1950,53 +1924,15 @@ class TectoLiteApp {
 
     private syncUIToState(): void {
         const w = this.state.world;
-        const globalOptions = this.state.world.globalOptions;
-
-        const checkShowHints = document.getElementById('check-show-hints') as HTMLInputElement;
-        if (checkShowHints) checkShowHints.checked = globalOptions.showHints !== false;
         const g = w.globalOptions;
-
-        // View Option Checkboxes
-        (document.getElementById('check-grid') as HTMLInputElement).checked = w.showGrid;
-
-        // Grid Thickness Select
-        // Convert number to string for select value
-        const thickSelect = document.getElementById('grid-thickness-select') as HTMLSelectElement;
-        if (thickSelect) thickSelect.value = w.globalOptions.gridThickness.toString();
-
-        (document.getElementById('check-euler-poles') as HTMLInputElement).checked = w.showEulerPoles;
-        (document.getElementById('check-features') as HTMLInputElement).checked = w.showFeatures;
-        (document.getElementById('check-future-features') as HTMLInputElement).checked = w.showFutureFeatures;
-        const checkShowEventIcons = document.getElementById('check-show-event-icons') as HTMLInputElement | null;
-        if (checkShowEventIcons) checkShowEventIcons.checked = w.globalOptions.showEventIcons === true;
-
+        syncProjectSettings(this.state);
         // Global Options
         const maxTimeInput = document.getElementById('timeline-max-time') as HTMLInputElement;
         if (maxTimeInput && g.timelineMaxTime) {
             maxTimeInput.value = g.timelineMaxTime.toString();
-            maxTimeInput.dispatchEvent(new Event('change'));
+            const timeSlider = document.getElementById('time-slider') as HTMLInputElement | null;
+            if (timeSlider) timeSlider.max = g.timelineMaxTime.toString();
         }
-
-        // Oceanic crust automation toggles (opt-in; must reflect loaded state)
-        const checkExpandingRifts = document.getElementById('check-expanding-rifts') as HTMLInputElement | null;
-        if (checkExpandingRifts) checkExpandingRifts.checked = g.enableExpandingRifts === true;
-        const checkAutoOceanic = document.getElementById('check-auto-oceanic') as HTMLInputElement | null;
-        if (checkAutoOceanic) checkAutoOceanic.checked = g.enableAutoOceanicCrust === true;
-
-        const checkPredictionFlowlines = document.getElementById('check-prediction-flowlines') as HTMLInputElement | null;
-        if (checkPredictionFlowlines) checkPredictionFlowlines.checked = g.showPredictionFlowlines === true;
-        const checkVelocityArrows = document.getElementById('check-velocity-arrows') as HTMLInputElement | null;
-        if (checkVelocityArrows) checkVelocityArrows.checked = g.showVelocityArrows === true;
-        const checkHoverTooltips = document.getElementById('check-hover-tooltips') as HTMLInputElement | null;
-        if (checkHoverTooltips) checkHoverTooltips.checked = g.showHoverTooltips === true;
-
-        // Automation & Events toggles
-        const checkBoundaryViz = document.getElementById('check-boundary-viz') as HTMLInputElement | null;
-        if (checkBoundaryViz) checkBoundaryViz.checked = g.enableBoundaryVisualization === true;
-        const checkGuidedCreation = document.getElementById('check-guided-creation') as HTMLInputElement | null;
-        if (checkGuidedCreation) checkGuidedCreation.checked = g.enableGuidedCreation === true;
-        const checkPauseFusion = document.getElementById('check-pause-fusion') as HTMLInputElement | null;
-        if (checkPauseFusion) checkPauseFusion.checked = g.pauseOnFusionSuggestion === true;
 
         // Playback speed select (was never synced from loaded state)
         const speedSelect = document.getElementById('speed-select') as HTMLSelectElement | null;
@@ -2043,11 +1979,6 @@ class TectoLiteApp {
             });
         }
 
-
-        // Projection Select
-
-        const projSelect = document.getElementById('projection-select') as HTMLSelectElement;
-        if (projSelect) projSelect.value = w.projection;
 
         // Sync Paint Ageing Options
 
@@ -4667,6 +4598,18 @@ class TectoLiteApp {
         window.__TECTOLITE_HAS_UNSAVED__ = value;
     }
 
+    private handleProjectSettingChange(effects: readonly ProjectSettingEffect[]): void {
+        this.setUnsaved(true);
+        if (effects.includes('hint')) this.updateHint(this.activeToolText);
+        if (effects.includes('explorer')) this.updateExplorer();
+        if (effects.includes('recalculate')) {
+            this.simulation?.setTime(this.state.world.currentTime);
+            this.canvasManager?.markDirty();
+        } else if (effects.includes('render')) {
+            this.canvasManager?.render();
+        }
+    }
+
     private pushState(): void {
         this.historyManager.push(this.state);
         this.setUnsaved(true);
@@ -4696,6 +4639,7 @@ class TectoLiteApp {
             this.saveCameraBookmarkNew();
             return;
         }
+        this.setUnsaved(true);
         this.renderCameraViews();
     }
 
@@ -4703,6 +4647,7 @@ class TectoLiteApp {
     private saveCameraBookmarkNew(): void {
         const name = `View ${this.cameraBookmarks.length + 1}`;
         this.cameraBookmarks.push({ name, ...this.currentCameraSnapshot() });
+        this.setUnsaved(true);
         const idx = this.cameraBookmarks.length;
         const hint = idx <= 9 ? ` (press ${idx} to recall)` : '';
         this.showToast(`"${name}" saved${hint} — click the name to rename`);
@@ -4727,6 +4672,7 @@ class TectoLiteApp {
 
     private deleteCameraBookmark(index: number): void {
         this.cameraBookmarks.splice(index, 1);
+        this.setUnsaved(true);
         this.renderCameraViews();
     }
 
@@ -4763,6 +4709,7 @@ class TectoLiteApp {
             nameInput.addEventListener('change', () => {
                 bm.name = nameInput.value.trim() || `View ${index + 1}`;
                 nameInput.value = bm.name;
+                this.setUnsaved(true);
             });
             nameInput.addEventListener('keydown', (ev) => {
                 if (ev.key === 'Enter') nameInput.blur();
@@ -4854,7 +4801,6 @@ class TectoLiteApp {
         const prevState = this.historyManager.undo(this.state);
         if (prevState) {
             this.state = prevState;
-            eventSystem.reset();
             this.updateUI();
             this.canvasManager?.render();
             // Update timeline if visible
@@ -4871,7 +4817,6 @@ class TectoLiteApp {
         const nextState = this.historyManager.redo(this.state);
         if (nextState) {
             this.state = nextState;
-            eventSystem.reset();
             this.updateUI();
             this.canvasManager?.render();
             // Update timeline if visible
@@ -4930,7 +4875,6 @@ class TectoLiteApp {
 
     private replaceProject(nextState: AppState, cameraBookmarks: CameraView[], message: string, unsaved: boolean): void {
         this.simulation?.stop();
-        eventSystem.reset();
         this.historyManager.clear();
         this.clearAutosave();
 

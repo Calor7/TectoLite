@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">TectoLite application icon</title>
+  <desc id="desc">A blue tectonic globe divided by bright plate boundaries on a dark rounded square.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16233d"/>
+      <stop offset="1" stop-color="#080d19"/>
+    </linearGradient>
+    <radialGradient id="ocean" cx="35%" cy="28%" r="76%">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.58" stop-color="#1676bd"/>
+      <stop offset="1" stop-color="#0b3c78"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000814" flood-opacity="0.6"/>
+    </filter>
+    <clipPath id="globe-clip">
+      <circle cx="256" cy="252" r="166"/>
+    </clipPath>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="url(#background)"/>
+  <circle cx="256" cy="252" r="174" fill="#081329" opacity="0.9" filter="url(#shadow)"/>
+  <circle cx="256" cy="252" r="166" fill="url(#ocean)" stroke="#72d8ff" stroke-width="5"/>
+  <g clip-path="url(#globe-clip)">
+    <path d="M79 214C136 184 175 190 214 206C255 223 290 218 338 189C378 165 417 168 449 184" fill="none" stroke="#9ee9ff" stroke-width="7" opacity="0.72"/>
+    <path d="M112 343C157 310 200 307 236 328C282 355 326 348 385 303C412 282 435 276 456 279" fill="none" stroke="#9ee9ff" stroke-width="7" opacity="0.72"/>
+    <path d="M232 79C211 131 217 170 243 204C270 240 275 278 253 325C235 364 239 405 270 436" fill="none" stroke="#f8c15c" stroke-width="11"/>
+    <path d="M232 79C211 131 217 170 243 204C270 240 275 278 253 325C235 364 239 405 270 436" fill="none" stroke="#fff1bd" stroke-width="3"/>
+    <path d="M87 251C137 239 173 252 202 282C225 306 246 316 263 316" fill="none" stroke="#f38a65" stroke-width="9"/>
+    <path d="M263 316C302 294 330 266 350 227C369 190 399 166 438 155" fill="none" stroke="#f38a65" stroke-width="9"/>
+    <path d="M119 129C158 151 187 178 202 209L164 225L129 200Z" fill="#3ddc97" opacity="0.9"/>
+    <path d="M300 119L350 137L369 181L335 207L293 186L278 147Z" fill="#61e6a8" opacity="0.9"/>
+    <path d="M313 342L363 318L405 340L398 383L349 411L310 387Z" fill="#3ddc97" opacity="0.9"/>
+  </g>
+  <circle cx="256" cy="252" r="166" fill="none" stroke="#d6f5ff" stroke-width="3" opacity="0.62"/>
+</svg>

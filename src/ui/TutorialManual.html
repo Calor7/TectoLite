@@ -138,10 +138,8 @@
       severely warp existing plate geometries.</div>
     <div data-selector="#global-planet-radius">The actual radius of the planet in Kilometers. Default is Earth (6371
       km).</div>
-    <div data-selector="#check-expanding-rifts">When plates divide and pull apart, expanding oceanic rift polygons are
-      generated automatically.</div>
-    <div data-selector="#check-auto-oceanic">Automatically generates new oceanic crust across the globe over time
-      (currently experimental).</div>
+    <div data-selector="#ocean-crust-strategy">Choose one ocean-generation strategy: continuous surfaces from
+      split-created rift axes, time-banded crust for sibling/older rifts, or Off.</div>
     <div data-selector="#input-oceanic-interval">How often (in Ma) new oceanic crust bands are generated. Lower means
       more polygons and lower performance.</div>
     <div data-selector="#input-oceanic-color">The base color assigned to newly generated oceanic crust.</div>
@@ -167,6 +165,8 @@
     <div data-selector="#grid-thickness-select">Change the line weight of the grid.</div>
     <div data-selector="#check-features">Toggle standard terrain features like mountains, rifts, and collision zones.
     </div>
+    <div data-selector="#check-boundary-viz">Detect and highlight derived convergent, divergent, and transform
+      boundaries at the current time.</div>
     <div data-selector="#check-euler-poles">Toggle the display of the rotational axis anchors (Euler Poles) for all
       moving plates.</div>
     <div data-selector="#check-future-features">If enabled, shows features that will appear in the future as faint

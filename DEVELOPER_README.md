@@ -9,7 +9,7 @@ npm install        # Install dependencies
 npm run dev        # Start dev server (Vite)
 npm run typecheck  # Fast TypeScript verification
 npm run build      # Production build (tsc && vite build)
-npm run verify     # Type-check + production build
+npm run verify     # Lint + type-check + Electron syntax + tests + production build
 ```
 
 ---
@@ -26,6 +26,7 @@ src/
 │   ├── AppTemplate.ts               #   Full HTML template (getAppHTML)
 │   ├── ModalSystem.ts               #   showModal, showLegendDialog, toggleTheme
 │   ├── SpeedPresets.ts              #   Speed preset data, conversions (cm/yr ↔ deg/Ma)
+│   ├── SettingsBindings.ts          #   Typed persistent-setting bindings and UI sync
 │   ├── TimeControls.ts              #   Play button, toast, time display & input
 │   ├── TutorialOverlay.ts           #   First-run tutorial overlay
 │   └── TutorialManual.html          #   In-app reference manual content
@@ -43,9 +44,7 @@ src/
 │   └── featureIcons.ts              #   SVG icon definitions for geological features
 │
 ├── systems/                         # Simulation and export support systems
-│   ├── TimelineSystem.ts            #   Timeline UI + keyframe management
-│   ├── EventSystem.ts               #   Geological event model and event creation hooks (active)
-│   ├── EventEffectsProcessor.ts     #   Applies committed event effects to state (active)
+│   ├── TimelineSystem.ts            #   Plate-history UI + keyframe management
 │   └── HeightmapGenerator.ts        #   Heightmap rasterization for export
 │
 ├── motion/                          # Plate motion model
@@ -58,7 +57,7 @@ src/
 │   ├── sphericalMath.ts             #   Spherical geometry primitives
 │   └── sphericalMath.test.ts        #   Unit tests for spherical math
 │
-├── SimulationEngine.ts              # Time-stepping simulation (plate motion, interpolation, events)
+├── SimulationEngine.ts              # Time-stepping simulation and plate derivation
 ├── HistoryManager.ts                # Undo/Redo state stack
 ├── HistoryManager.test.ts           # HistoryManager unit tests
 ├── BoundarySystem.ts                # Plate boundary detection & classification
@@ -74,9 +73,9 @@ src/
 ## Current state notes
 
 - The current app is a canvas-heavy Electron/Vite desktop application with a single central `AppState`.
-- `GeologicalAutomation.ts` has been deleted; the simulation loop keeps a labeled bypass seam ("Geological Automation — DISABLED") where it used to run.
+- `GeologicalAutomation.ts` and the guided-event automation prototype have been deleted. Neither has an active runtime or UI path.
 - `ElevationSystem.ts` and `TimeTransformationUtils.ts` are absent from `src/`. Historical docs in `docs/archive/` still reference them — treat those as snapshots, not current architecture.
-- `EventSystem` and `EventEffectsProcessor` are active and run every simulation tick inside `SimulationEngine.ts`.
+- Oceanic crust generation is the only remaining opt-in geometry automation. It is mutually exclusive, disabled by default, and presented under **Settings → Experimental**.
 - `TimeControls.ts` handles display/input time; the legacy "Ago" checkbox and `TimeMode` toggle have been removed from the UI (a deprecated `TimeMode` union remains in `types.ts` for save-file migration only).
 - Heightmap and GeoPackage exports are active code paths.
 
@@ -135,7 +134,7 @@ The app uses **vanilla TypeScript + Vite**. No React, no Angular, no framework. 
 
 1. Add the field to `GlobalOptions` in `types.ts`
 2. Add the UI control in `ui/AppTemplate.ts` (usually in the Settings dropdown)
-3. Add the event listener in `setupEventListeners()` in `main.ts`
+3. Add the typed binding in `ui/SettingsBindings.ts` (or a focused listener in `main.ts` when the control has custom behavior)
 4. Read it where needed (usually `CanvasManager.ts` or `SimulationEngine.ts`)
 
 ---
@@ -146,13 +145,16 @@ The simulation layer contains a mix of active systems and legacy compatibility p
 
 ### Oceanic crust behavior
 
-- `SimulationEngine.ts` still contains seafloor spreading and flowline-related logic.
-- Legacy comments and compatibility branches exist, so confirm behavior in code before relying on historical docs.
+- `SimulationEngine.ts` contains two mutually exclusive strategies: continuous split-rift fill and time-banded rift crust.
+- The strategy defaults to `off` and is intentionally labeled Experimental in the Settings menu.
+- Save migration v7 maps the retired independent toggles to the new strategy.
 
 ### Automation status
 
-- `EventSystem` (guided geological event creation) and `EventEffectsProcessor` (applies committed event effects) are **active** and run every tick inside `SimulationEngine.ts`.
-- `GeologicalAutomation.ts` (hotspot volcanism) has been **removed**; the simulation loop keeps a labeled bypass seam where it used to run.
+- The guided geological event system and its effects processor have been removed.
+- The former hotspot-volcanism automation has been removed.
+- Derived boundary visualization remains an optional View overlay; it does not mutate project geometry.
+- Experimental oceanic crust generation is the only active opt-in geometry automation.
 
 ### Elevation status
 
@@ -257,7 +259,7 @@ a few large files (`src/main.ts`, `src/SimulationEngine.ts`, `src/canvas/CanvasM
 After **every** change, before claiming anything is done:
 
 ```
-npm run verify     # = typecheck (tsc --noEmit) && test (vitest run) && build (vite)
+npm run verify     # = lint + typecheck + Electron syntax + test + build
 npm run lint       # = eslint src   (run --quiet to see errors only)
 ```
 

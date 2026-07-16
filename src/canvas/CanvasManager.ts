@@ -1,4 +1,4 @@
-import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, TectonicEvent, ToolType, TectonicPlate, LineType, resolveLineTypeDefaults } from '../types';
+import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, ToolType, TectonicPlate, LineType, resolveLineTypeDefaults } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
@@ -789,7 +789,6 @@ export class CanvasManager {
             this.drawPlates(state, path);
             this.drawDerivedRiftLines(state, path);
             this.drawSelectedEdge();
-            this.drawEventIcons(state);
             this.drawPlumes(state);
 
             if (state.world.globalOptions.showLinks !== false || state.activeTool === 'link') {
@@ -1215,50 +1214,6 @@ export class CanvasManager {
             }
         }
         this.ctx.restore();
-    }
-
-    private drawEventIcons(state: AppState): void {
-        if (!state.world.globalOptions.showEventIcons) return;
-        const events = state.world.tectonicEvents || [];
-        if (events.length === 0) return;
-        const currentTime = state.world.currentTime;
-        const showFuture = state.world.showFutureFeatures;
-
-        for (const event of events) {
-            const isInTimeline = event.time <= currentTime;
-            if (!isInTimeline && !showFuture) continue;
-            const anchor = this.getEventAnchor(event);
-            if (!anchor) continue;
-            const proj = this.projectionManager.project(anchor);
-            if (!proj) continue;
-
-            const isPending = state.world.pendingEventId === event.id;
-            const isCommitted = event.committed;
-            const color = event.eventType === 'collision' ? '#ef4444' : '#3b82f6';
-            const fill = isCommitted ? color : '#f59e0b';
-
-            this.ctx.save();
-            this.ctx.translate(proj[0], proj[1]);
-            const radius = isPending ? 9 : 7;
-            this.ctx.beginPath();
-            this.ctx.arc(0, 0, radius, 0, Math.PI * 2);
-            this.ctx.fillStyle = fill;
-            this.ctx.fill();
-            this.ctx.strokeStyle = isPending ? '#ffffff' : 'rgba(0,0,0,0.6)';
-            this.ctx.lineWidth = isPending ? 2 : 1;
-            this.ctx.stroke();
-            this.ctx.restore();
-        }
-    }
-
-    private getEventAnchor(event: TectonicEvent): Coordinate | null {
-        const points = event.boundarySegment.flat();
-        if (points.length === 0) return null;
-        const sum = { x: 0, y: 0, z: 0 };
-        for (const p of points) { const v = latLonToVector(p); sum.x += v.x; sum.y += v.y; sum.z += v.z; }
-        const len = Math.sqrt(sum.x * sum.x + sum.y * sum.y + sum.z * sum.z);
-        if (len === 0) return points[0];
-        return vectorToLatLon({ x: sum.x / len, y: sum.y / len, z: sum.z / len });
     }
 
     private drawPlumes(state: AppState) {

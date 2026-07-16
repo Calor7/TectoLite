@@ -3,6 +3,7 @@
  * Extracted from main.ts TectoLiteApp.getHTML() method.
  */
 import {
+  GlobalOptions,
   LineType,
   LINE_TYPE_LABELS,
   DASH_PRESETS,
@@ -10,7 +11,7 @@ import {
 } from '../types';
 
 export interface AppTemplateOptions {
-  globalOptions: any;
+  globalOptions: GlobalOptions;
   realWorldPresetListHtml: string;
   customPresetListHtml: string;
 }
@@ -28,7 +29,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             TECTOLITE
                         </a>
                         <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a></span>
-                        <span style="margin-left: 20px; font-size: 0.7em; display: inline-flex; gap: 15px; align-items: center;">
+                        <span class="app-links" style="margin-left: 20px; font-size: 0.7em; display: inline-flex; gap: 15px; align-items: center;">
                                 <a href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" style="color: var(--text-secondary); text-decoration: none;"><span class="coffee-icon">☕</span> Feed my coffee addiction</a>
                                 <a href="https://refracturedgames.eo.page/zcyvj" target="_blank" rel="noopener noreferrer" id="link-subscribe" style="color: var(--accent-primary); text-decoration: none; font-weight: 600;">Subscribe to Updates</a>
                         </span>
@@ -41,10 +42,10 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             
             <!-- Settings Dropdown (formerly Planet) -->
             <div class="view-dropdown-container">
-                <button id="btn-planet" class="btn btn-secondary" title="Application Settings">
+                <button id="btn-planet" class="btn btn-secondary" title="Application Settings" aria-controls="planet-dropdown-menu" aria-expanded="false" aria-haspopup="true">
                     <span class="icon">⚙️</span> Settings
                 </button>
-                <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px;">
+                <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px; max-height: calc(100vh - 64px); overflow-y: auto;">
                     <div class="dropdown-section">
                         <div class="dropdown-header">Timeline</div>
                         <div style="padding: 8px; display: flex; flex-direction: column; gap: 8px;">
@@ -66,19 +67,26 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         </div>
                     </div>
                     
-                    <!-- Oceanic Crust Settings -->
-                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
-                        <div class="dropdown-header">Oceanic Crust</div>
+                    <!-- Experimental features -->
+                    <div class="dropdown-section experimental-section">
+                        <div class="dropdown-header experimental-header">
+                            <span>Experimental</span>
+                            <span class="experimental-badge">May change</span>
+                        </div>
+                        <div class="experimental-notice" role="note">
+                            These features can produce large or unexpected geometry. Save your project before enabling them.
+                        </div>
+                        <div class="experimental-feature-title">Oceanic Crust Generation <span class="info-icon" data-tooltip="Experimental generation options for rifts created by splitting plates">(i)</span></div>
                         
-                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>Expanding Rifts</span>
-                            <input type="checkbox" id="check-expanding-rifts" ${g.enableExpandingRifts === true ? 'checked' : ''}>
-                        </label>
-                        
-                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center; opacity: 0.8;">
-                            <span>Auto Generate</span>
-                            <input type="checkbox" id="check-auto-oceanic" ${g.enableAutoOceanicCrust === true ? 'checked' : ''}>
-                        </label>
+                        <div style="padding: 4px 8px;">
+                            <label for="ocean-crust-strategy" style="display:block; font-size:10px; color:var(--text-secondary); margin-bottom:3px;">Strategy</label>
+                            <select id="ocean-crust-strategy" class="tool-select" style="width:100%; font-size:11px;">
+                                <option value="off" ${g.oceanCrustStrategy === 'off' || !g.oceanCrustStrategy ? 'selected' : ''}>Off</option>
+                                <option value="continuous" ${g.oceanCrustStrategy === 'continuous' ? 'selected' : ''}>Continuous Split-Rift Fill</option>
+                                <option value="banded" ${g.oceanCrustStrategy === 'banded' ? 'selected' : ''}>Time-Banded Rift Crust</option>
+                            </select>
+                            <div style="font-size:9px; color:var(--text-secondary); margin-top:3px; line-height:1.3;">Continuous uses split-created rift axes. Banded supports sibling and older rift projects and may add many polygons.</div>
+                        </div>
                         
                         <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; justify-content: space-between;">
                             <label style="font-size: 10px; color: var(--text-secondary);">Generation Interval (Ma)</label>
@@ -125,36 +133,16 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         })()}
                     </div>
 
-                    <!-- Automation & Events (opt-in; these systems existed but had no UI) -->
-                    <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
-                        <div class="dropdown-header">Automation &amp; Events</div>
-                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>Boundary Visualization <span class="info-icon" data-tooltip="Detect and highlight convergent/divergent/transform boundaries each frame">(i)</span></span>
-                            <input type="checkbox" id="check-boundary-viz" ${g.enableBoundaryVisualization === true ? 'checked' : ''}>
-                        </label>
-                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>Guided Creation Events <span class="info-icon" data-tooltip="Detect tectonic events (collisions, rifts) and suggest features">(i)</span></span>
-                            <input type="checkbox" id="check-guided-creation" ${g.enableGuidedCreation === true ? 'checked' : ''}>
-                        </label>
-                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>Pause on Fusion Suggestion <span class="info-icon" data-tooltip="Pause playback when overlapping plates suggest a fusion">(i)</span></span>
-                            <input type="checkbox" id="check-pause-fusion" ${g.pauseOnFusionSuggestion === true ? 'checked' : ''}>
-                        </label>
-                        <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>Show Event Icons <span class="info-icon" data-tooltip="Draw markers on the map where tectonic events occurred">(i)</span></span>
-                            <input type="checkbox" id="check-show-event-icons" ${g.showEventIcons === true ? 'checked' : ''}>
-                        </label>
-                    </div>
                 </div>
             </div>
 
             <!-- View Dropdown -->
             <div class="view-dropdown-container">
 
-                <button id="btn-view-panels" class="btn btn-secondary" title="View Options">
+                <button id="btn-view-panels" class="btn btn-secondary" title="View Options" aria-controls="view-dropdown-menu" aria-expanded="false" aria-haspopup="true">
                     <span class="icon">👁️</span> View
                 </button>
-                <div id="view-dropdown-menu" class="view-dropdown-menu" style="min-width: 250px;">
+                <div id="view-dropdown-menu" class="view-dropdown-menu" style="min-width: 250px; max-height: calc(100vh - 64px); overflow-y: auto;">
                     <!-- 1. BAR SETTING (Panels) -->
                     <div class="dropdown-section">
                         <div class="dropdown-header">Bars</div>
@@ -233,7 +221,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-features" checked> Show Features <span class="info-icon" data-tooltip="Show mountains, volcanoes, etc.">(i)</span>
                         </label>
-                        <!-- Boundary Visualization moved to Automation menu -->
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-boundary-viz" ${g.enableBoundaryVisualization === true ? 'checked' : ''}> Derived Boundaries <span class="info-icon" data-tooltip="Detect and highlight convergent, divergent, and transform boundaries at the current time">(i)</span>
+                        </label>
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-euler-poles"> Show Euler Poles <span class="info-icon" data-tooltip="Show all rotation axes (Euler poles)">(i)</span>
                         </label>
@@ -534,7 +524,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                 </div>
             </aside>
             <div id="timeline-panel" class="timeline-panel">
-                <div class="timeline-title">Event Timeline</div>
+                <div class="timeline-title">Plate History</div>
                 <!-- Timeline items injected here -->
             </div>
           </div>

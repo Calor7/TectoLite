@@ -43,7 +43,11 @@ function loadGPlatesData(filename: string): Promise<GPlatesData> {
     if (!promise) {
         // Static imports for each file — avoids Vite dynamic-import warning
         const loaders: Record<string, () => Promise<string>> = {
-            'gplates-modern-overview-covers.json': () => import('./assets/gplates-modern-overview-covers.json?raw').then(m => m.default),
+            'gplates-modern-overview-covers-1.json': () => import('./assets/gplates-modern-overview-covers-1.json?raw').then(m => m.default),
+            'gplates-modern-overview-covers-2.json': () => import('./assets/gplates-modern-overview-covers-2.json?raw').then(m => m.default),
+            'gplates-modern-overview-covers-3.json': () => import('./assets/gplates-modern-overview-covers-3.json?raw').then(m => m.default),
+            'gplates-modern-overview-covers-4.json': () => import('./assets/gplates-modern-overview-covers-4.json?raw').then(m => m.default),
+            'gplates-modern-overview-covers-5.json': () => import('./assets/gplates-modern-overview-covers-5.json?raw').then(m => m.default),
             'gplates-modern-overview-plates.json': () => import('./assets/gplates-modern-overview-plates.json?raw').then(m => m.default),
             'gplates-modern-overview-cratons.json': () => import('./assets/gplates-modern-overview-cratons.json?raw').then(m => m.default),
             'gplates-pangaea-overview-covers.json': () => import('./assets/gplates-pangaea-overview-covers.json?raw').then(m => m.default),
@@ -56,6 +60,19 @@ function loadGPlatesData(filename: string): Promise<GPlatesData> {
         dataCache.set(filename, promise);
     }
     return promise;
+}
+
+async function loadCoverData(key: 'modern' | 'pangaea'): Promise<GPlatesData> {
+    if (key === 'pangaea') return loadGPlatesData('gplates-pangaea-overview-covers.json');
+    const chunks = await Promise.all([
+        loadGPlatesData('gplates-modern-overview-covers-1.json'),
+        loadGPlatesData('gplates-modern-overview-covers-2.json'),
+        loadGPlatesData('gplates-modern-overview-covers-3.json'),
+        loadGPlatesData('gplates-modern-overview-covers-4.json'),
+        loadGPlatesData('gplates-modern-overview-covers-5.json')
+    ]);
+    const plates = chunks.flatMap(chunk => chunk.plates);
+    return { time: 0, plateCount: plates.length, plates };
 }
 
 // ── Plate construction ────────────────────────────────────────────────
@@ -191,7 +208,7 @@ function organizeTemplateEntities(
 
 async function createCoverWorld(key: 'modern' | 'pangaea', timelineMax: number): Promise<WorldState> {
     const world = createDefaultWorldState();
-    const covers = await loadGPlatesData(`gplates-${key}-overview-covers.json`);
+    const covers = await loadCoverData(key);
     const organized = organizeTemplateEntities(
         covers.plates.map((plate, index) => makeCurationCover(plate, index)),
         key,
@@ -212,7 +229,7 @@ async function createCoverWorld(key: 'modern' | 'pangaea', timelineMax: number):
 async function createOverviewWorld(key: 'modern' | 'pangaea', timelineMax: number): Promise<WorldState> {
     const world = createDefaultWorldState();
     const [covers, detailedPlates, detailedCratons] = await Promise.all([
-        loadGPlatesData(`gplates-${key}-overview-covers.json`),
+        loadCoverData(key),
         loadGPlatesData(`gplates-${key}-overview-plates.json`),
         loadGPlatesData(`gplates-${key}-overview-cratons.json`)
     ]);

@@ -93,9 +93,47 @@ describe('migrateSaveFile', () => {
         const save = makeSave([plate], 4);
         delete (save.world as Partial<WorldState>).entityGroups;
         migrateSaveFile(save);
-        expect(save.version).toBe(5);
+        expect(save.version).toBe(CURRENT_SAVE_VERSION);
         expect(save.world.entityGroups).toEqual([]);
         expect(save.world.plates[0].groupId).toBeUndefined();
+    });
+
+    it('removes retired guided-event automation data from v5 saves', () => {
+        const save = makeSave([makePlate('a')], 5);
+        const world = save.world as unknown as Record<string, any>;
+        world.globalOptions = {
+            enableGuidedCreation: true,
+            pauseOnFusionSuggestion: true,
+            showEventIcons: true,
+            enableBoundaryVisualization: true
+        };
+        world.tectonicEvents = [{ id: 'old-event' }];
+        world.pendingEventId = 'old-event';
+
+        migrateSaveFile(save);
+
+        expect(save.version).toBe(CURRENT_SAVE_VERSION);
+        expect(world.globalOptions).toEqual({
+            enableBoundaryVisualization: true,
+            oceanCrustStrategy: 'off'
+        });
+        expect(world.tectonicEvents).toBeUndefined();
+        expect(world.pendingEventId).toBeUndefined();
+    });
+
+    it('migrates legacy ocean toggles to one strategy', () => {
+        const save = makeSave([makePlate('a')], 6);
+        const options = {
+            enableExpandingRifts: true,
+            enableAutoOceanicCrust: true
+        } as unknown as WorldState['globalOptions'];
+        save.world.globalOptions = options;
+
+        migrateSaveFile(save);
+
+        expect(save.world.globalOptions.oceanCrustStrategy).toBe('continuous');
+        expect((save.world.globalOptions as any).enableExpandingRifts).toBeUndefined();
+        expect((save.world.globalOptions as any).enableAutoOceanicCrust).toBeUndefined();
     });
 
     it('handles v0 / undefined version gracefully', () => {

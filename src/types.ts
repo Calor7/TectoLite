@@ -152,207 +152,6 @@ export interface PlateEvent {
   data: unknown;
 }
 
-// ============================================================================
-// EVENT-DRIVEN GUIDED CREATION SYSTEM
-// ============================================================================
-
-export type TectonicEventType = 'collision' | 'rift';
-
-export type ConsequenceCategory = 'plausible' | 'uncommon' | 'rare';
-
-export type ConsequenceEffectKind = 'feature';
-
-export interface ConsequenceEffect {
-  kind: ConsequenceEffectKind;
-  featureType?: FeatureType;
-
-}
-
-export interface EventConsequence {
-  id: string;
-  type: string;                      // e.g., 'orogeny', 'volcanic_arc', 'trench', 'rift_valley'
-  label: string;                     // Display name
-  description: string;               // Tooltip/info text
-  category: ConsequenceCategory;     // Visual grouping
-  selected: boolean;                 // User's choice
-  parameters: Record<string, number>; // Editable params (e.g., { upliftRate: 1000, width: 200 })
-  defaultParameters: Record<string, number>; // Original defaults for reset
-  effects?: ConsequenceEffect[];     // Optional effect metadata for feature/mesh handling
-}
-
-export interface PlateSnapshot {
-  id: string;
-  name: string;
-  polygonType?: PolygonType;
-  color: string;
-  velocity: number;                  // Relative velocity (cm/yr)
-  age: number;                       // Plate age at event time (Ma since birth)
-  area: number;                      // Approximate area (deg²)
-  description?: string;
-}
-
-export interface TectonicEvent {
-  id: string;
-  time: number;                      // When the event occurred
-  eventType: TectonicEventType;      // 'collision' | 'rift'
-  plateIds: [string, string];        // The two plates involved
-  plateSnapshots: [PlateSnapshot, PlateSnapshot]; // Frozen plate data at event time
-  boundarySegment: Coordinate[][];   // The boundary geometry
-  interactionInfo: {
-    collisionType?: 'continent-continent' | 'continent-ocean' | 'ocean-ocean';
-    relativeVelocity: number;        // cm/yr
-    overlapArea?: number;            // deg²
-  };
-  consequences: EventConsequence[];  // Available + selected consequences
-  committed: boolean;                // Has user confirmed this event?
-  commitTime?: number;               // When was it committed
-  effectStartTime?: number;          // When effects begin applying
-  effectEndTime?: number;            // When effects stop applying
-}
-
-// Default consequence definitions for event types
-export const COLLISION_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
-  // Plausible (most likely outcomes)
-  {
-    type: 'orogeny',
-    label: 'Mountain Range (Orogeny)',
-    description: 'Continental collision creates fold mountains through crustal thickening',
-    category: 'plausible',
-    selected: false,
-    parameters: { upliftRate: 1000, width: 200, peakElevation: 5000 },
-    defaultParameters: { upliftRate: 1000, width: 200, peakElevation: 5000 },
-    effects: [
-
-      { kind: 'feature', featureType: 'mountain' }
-    ]
-  },
-  {
-    type: 'volcanic_arc',
-    label: 'Volcanic Arc',
-    description: 'Subduction melts oceanic crust, creating a chain of volcanoes',
-    category: 'plausible',
-    selected: false,
-    parameters: { spacing: 50, volcanoCount: 5 },
-    defaultParameters: { spacing: 50, volcanoCount: 5 },
-    effects: [
-
-      { kind: 'feature', featureType: 'volcano' }
-    ]
-  },
-  {
-    type: 'trench',
-    label: 'Ocean Trench',
-    description: 'Deep trench forms where oceanic plate subducts',
-    category: 'plausible',
-    selected: false,
-    parameters: { depth: -8000, width: 100 },
-    defaultParameters: { depth: -8000, width: 100 },
-    effects: [
-
-      { kind: 'feature', featureType: 'trench' }
-    ]
-  },
-  // Uncommon
-  {
-    type: 'accretionary_wedge',
-    label: 'Accretionary Wedge',
-    description: 'Sediments scraped off subducting plate pile up',
-    category: 'uncommon',
-    selected: false,
-    parameters: { width: 150, thickness: 10 },
-    defaultParameters: { width: 150, thickness: 10 },
-    effects: [
-
-      { kind: 'feature', featureType: 'mountain' }
-    ]
-  },
-  {
-    type: 'back_arc_basin',
-    label: 'Back-Arc Basin',
-    description: 'Extension behind volcanic arc creates a small ocean basin',
-    category: 'uncommon',
-    selected: false,
-    parameters: { width: 300, spreadingRate: 2 },
-    defaultParameters: { width: 300, spreadingRate: 2 },
-    effects: [
-
-      { kind: 'feature', featureType: 'rift' }
-    ]
-  },
-  // Rare
-  {
-    type: 'ophiolite_obduction',
-    label: 'Ophiolite Obduction',
-    description: 'Oceanic crust thrust onto continent (rare preservation)',
-    category: 'rare',
-    selected: false,
-    parameters: { extent: 100 },
-    defaultParameters: { extent: 100 },
-    effects: [
-
-      { kind: 'feature', featureType: 'mountain' }
-    ]
-  }
-];
-
-export const RIFT_CONSEQUENCES: Omit<EventConsequence, 'id'>[] = [
-  // Plausible
-  {
-    type: 'rift_valley',
-    label: 'Rift Valley',
-    description: 'Extensional faulting creates a graben (down-dropped valley)',
-    category: 'plausible',
-    selected: false,
-    parameters: { width: 50, depth: 2000 },
-    defaultParameters: { width: 50, depth: 2000 },
-    effects: [
-
-      { kind: 'feature', featureType: 'rift' }
-    ]
-  },
-  {
-    type: 'volcanic_chain',
-    label: 'Volcanic Chain',
-    description: 'Decompression melting produces basaltic volcanism along rift',
-    category: 'plausible',
-    selected: false,
-    parameters: { spacing: 30, volcanoCount: 8 },
-    defaultParameters: { spacing: 30, volcanoCount: 8 },
-    effects: [
-
-      { kind: 'feature', featureType: 'volcano' }
-    ]
-  },
-  // Uncommon
-  {
-    type: 'new_ocean_basin',
-    label: 'New Ocean Basin',
-    description: 'Rift evolves into a spreading center, creating new oceanic crust',
-    category: 'uncommon',
-    selected: false,
-    parameters: { spreadingRate: 2, initialWidth: 100 },
-    defaultParameters: { spreadingRate: 2, initialWidth: 100 },
-    effects: [
-
-      { kind: 'feature', featureType: 'seafloor' }
-    ]
-  },
-  // Rare
-  {
-    type: 'flood_basalt',
-    label: 'Flood Basalt Province',
-    description: 'Massive volcanic eruption covers large area in basalt',
-    category: 'rare',
-    selected: false,
-    parameters: { area: 500000, thickness: 1000 },
-    defaultParameters: { area: 500000, thickness: 1000 },
-    effects: [
-
-      { kind: 'feature', featureType: 'volcano' }
-    ]
-  }
-];
-
 export type LineType = 'divergent' | 'convergent' | 'transform' | 'generic';
 export type EdgeKind = 'rift' | 'cut' | 'passive';
 export type PolygonType = 'generic' | 'continental_crust' | 'island' | 'continental_plate' | 'oceanic_plate' | 'craton';
@@ -558,6 +357,32 @@ export interface EntityGroup {
   collapsed?: boolean;
 }
 
+export type OceanCrustStrategy = 'off' | 'continuous' | 'banded';
+
+export interface GlobalOptions {
+  planetRadius: number;
+  customPlanetRadius?: number;
+  customRadiusEnabled?: boolean;
+  timelineMaxTime?: number;
+  gridThickness: number;
+  ratePresets?: number[];
+  enableBoundaryVisualization?: boolean;
+  hotspotSpawnRate?: number;
+  showHints?: boolean;
+  showLinks?: boolean;
+  showPredictionFlowlines?: boolean;
+  showVelocityArrows?: boolean;
+  showHoverTooltips?: boolean;
+  showHiddenPlates?: boolean;
+  gridOnTop?: boolean;
+  plateOpacity?: number;
+  oceanCrustStrategy?: OceanCrustStrategy;
+  oceanicGenerationInterval?: number;
+  oceanicCrustColor?: string;
+  oceanicCrustOpacity?: number;
+  lineTypeDefaults?: Record<LineType, { color: string; dash: number[] }>;
+}
+
 // ============================================================================
 // CAUSALITY LAYER — user-authorable + auto-derived causal graph
 // ============================================================================
@@ -580,55 +405,7 @@ export interface WorldState {
   showEulerPoles: boolean;
   showFeatures: boolean;
   showFutureFeatures: boolean;  // Show features outside current timeline (future/past)
-  globalOptions: {
-    // Simulation
-
-    // Planet Parameters
-    planetRadius: number; // km, default 6371 (Earth)
-    customPlanetRadius?: number; // User-defined radius
-    customRadiusEnabled?: boolean; // Whether custom radius is active
-
-    // Timeline
-    timelineMaxTime?: number; // Max timeline duration (Ma)
-
-    // Advanced
-    gridThickness: number;       // Pixel width of grid lines
-    ratePresets?: number[]; // User-defined rate presets (e.g. [0.5, 1.0, 2.0, 5.0])
-    enableBoundaryVisualization?: boolean;
-    enableDynamicFeatures?: boolean;
-    pauseOnFusionSuggestion?: boolean;
-    // Granular Automation Options
-    enableHotspots?: boolean;
-    hotspotSpawnRate?: number; // Ma per feature (default 1.0)
-
-    showHints?: boolean;
-    // Event-Driven Guided Creation System
-    enableGuidedCreation?: boolean;         // Show event popup when interactions detected
-    repopupCommittedEvents?: boolean;       // Allow re-opening already committed events
-    eventDetectionThreshold?: number;       // Area change % to trigger new event (default 20)
-    showEventIcons?: boolean;               // Toggle event markers on map
-
-    // Visual Options
-    showLinks?: boolean;                    // Show plate-to-plate and landmass-to-plate links
-    showPredictionFlowlines?: boolean;      // Preview movement arcs while dragging a plate (Drag Landmass mode, default off)
-    showVelocityArrows?: boolean;           // Draw current velocity arc at each plate center (default off)
-    showHoverTooltips?: boolean;            // Plate info tooltip when hovering the canvas (default off)
-    showHiddenPlates?: boolean;             // Reveal plates even if plate.visible is false
-    gridOnTop?: boolean;                    // Render grid above plates instead of below
-    plateOpacity?: number;                  // Plate transparency (0-1, default 1.0)
-
-    // Oceanic Crust Generation — all automation is opt-in (default: false)
-    enableAutoOceanicCrust?: boolean;        // Toggle for sibling/legacy "Ribbed" generation
-    oceanicGenerationInterval?: number;      // Interval in Ma (default 25)
-    enableExpandingRifts?: boolean;          // Toggle for isochron Expanding Rift system
-    oceanicCrustColor?: string;              // Default color for new oceanic crust
-    oceanicCrustOpacity?: number;            // Opacity for oceanic crust rendering (0-1)
-
-    // Line Entity Defaults — per-line-type default color + dash pattern.
-    // User-editable in settings. When changed, all non-customized line
-    // entities are updated to match (see migrateLineTypeDefaults).
-    lineTypeDefaults?: Record<LineType, { color: string; dash: number[] }>;
-  };
+  globalOptions: GlobalOptions;
 
   // Rift Axis system (mid-ocean ridge entities)
   riftAxes?: RiftAxis[];        // All rift axes (active, frozen, dead)
@@ -639,9 +416,6 @@ export interface WorldState {
   mantlePlumes?: MantlePlume[]; // Active mantle plumes
   // Image Overlay for tracing existing maps
   imageOverlay?: ImageOverlay;
-  // Event-Driven Guided Creation
-  tectonicEvents?: TectonicEvent[];        // All detected/committed tectonic events
-  pendingEventId?: string | null;          // Event awaiting user decision (popup open)
 }
 
 /**
@@ -775,18 +549,9 @@ export function createDefaultWorldState(): WorldState {
       gridThickness: 1.0,
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,
-      enableDynamicFeatures: false,
-      pauseOnFusionSuggestion: false,
-      enableHotspots: false,
       hotspotSpawnRate: 1.0,
 
       showHints: true,
-
-      // Event-Driven Guided Creation System
-      enableGuidedCreation: false,
-      repopupCommittedEvents: false,
-      eventDetectionThreshold: 20,  // 20% area change triggers new event
-      showEventIcons: false,
 
       // Visual defaults
       showLinks: true,          // Show links by default
@@ -799,10 +564,9 @@ export function createDefaultWorldState(): WorldState {
       gridOnTop: false,         // Grid below plates by default
       plateOpacity: 1.0,        // Full opacity
 
-      // Oceanic Crust Defaults — automation is opt-in (off by default)
-      enableAutoOceanicCrust: false,
+      // Oceanic crust generation is opt-in and mutually exclusive.
+      oceanCrustStrategy: 'off',
       oceanicGenerationInterval: 25,
-      enableExpandingRifts: false,
       oceanicCrustColor: '#3b82f6', // Default blue
       oceanicCrustOpacity: 0.5,      // Default 50% opacity
       // Line entity defaults — seeded from LINE_TYPE_COLORS / LINE_TYPE_DASH
@@ -810,10 +574,7 @@ export function createDefaultWorldState(): WorldState {
     },
     // Rift axis defaults
     riftAxes: [],
-    tripleJunctions: [],
-    // Event system defaults
-    tectonicEvents: [],
-    pendingEventId: null
+    tripleJunctions: []
   };
 }
 

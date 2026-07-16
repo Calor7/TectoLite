@@ -11,8 +11,6 @@ import {
 } from './utils/sphericalMath';
 import { getMotionModel, activeStage, plateRotation, pointPositionAt } from './motion/RotationModel';
 import { BoundarySystem } from './BoundarySystem';
-import { EventEffectsProcessor } from './systems/EventEffectsProcessor';
-import { eventSystem } from './systems/EventSystem';
 import { perfMonitor } from './utils/PerfMonitor';
 
 type DerivedPlatePayload = Pick<TectonicPlate, 'polygons' | 'features' | 'center'>;
@@ -21,7 +19,6 @@ export class SimulationEngine {
     private isRunning = false;
     private lastUpdate = 0;
     private animationId: number | null = null;
-    private eventEffectsProcessor: EventEffectsProcessor;
     private derivationCache: Map<string, DerivedPlatePayload> = new Map();
     private derivationCacheHits = 0;
     private derivationCacheMisses = 0;
@@ -31,7 +28,6 @@ export class SimulationEngine {
         private getState: () => AppState,
         private setState: (updater: (state: AppState) => AppState) => void
     ) {
-        this.eventEffectsProcessor = new EventEffectsProcessor();
     }
 
     public start(): void {
@@ -83,7 +79,7 @@ export class SimulationEngine {
             // but without recording: isochron/junction history is already stored in state)
             const updatedRiftAxes = [...(state.world.riftAxes || [])];
             let updatedJunctions: TripleJunction[] = [...(state.world.tripleJunctions || [])];
-            if (globalOptions.enableExpandingRifts === true) { // Opt-in automation
+            if (globalOptions.oceanCrustStrategy === 'continuous') {
                 const res = this.deriveAxisGeometry(newPlates, updatedRiftAxes, updatedJunctions, time);
                 updatedJunctions = res.junctions;
                 newPlates = [...res.basePlates, ...res.derived];
@@ -93,17 +89,12 @@ export class SimulationEngine {
             }
             perfMonitor.endPhase(deriveSample);
 
-            // Calculate Boundaries if enabled
-            // ALWAYS update boundaries if Visualization OR Guided Creation is enabled.
-            // If none are on, clear boundaries to prevent stale artifacts.
-            const boundaries = (globalOptions.enableBoundaryVisualization ||
-                globalOptions.enableGuidedCreation ||
-                globalOptions.pauseOnFusionSuggestion)
+            // Boundaries are derived only when their visualization is enabled.
+            const boundaries = globalOptions.enableBoundaryVisualization
                 ? BoundarySystem.detectBoundaries(newPlates, time)
                 : [];
 
-            // Phase 4: Geological Automation â€” DISABLED (features removed)
-            const tempState = {
+            return {
                 ...state,
                 world: {
                     ...state.world,
@@ -114,17 +105,6 @@ export class SimulationEngine {
                     currentTime: time
                 }
             };
-            const postAutomationState = tempState; // Bypass automation
-
-            // Phase 5: Event System (detect tectonic events for guided creation)
-            const postEventState = eventSystem.update(postAutomationState);
-            const postEffectState = this.eventEffectsProcessor.update(postEventState);
-
-            // Phase 6: Elevation System - REMOVED
-            // const deltaT = time - state.world.currentTime;
-            // const finalState = this.elevationSystem.update(postEffectState, deltaT);
-
-            return postEffectState;
         });
         this.updateFlowlines();
         perfMonitor.endPhase(simSample);
@@ -195,7 +175,7 @@ export class SimulationEngine {
                 // ISOCHRON PATH (RiftAxis-based) â€” opt-in automation.
                 // The ephemeral-plate filter runs even when disabled so geometry
                 // derived before the option was switched off doesn't linger.
-                if (globalOptions.enableExpandingRifts === true) {
+                if (globalOptions.oceanCrustStrategy === 'continuous') {
                     const res = this.deriveAxisGeometry(newPlates, updatedRiftAxes, updatedJunctions, newTime, interval);
                     updatedJunctions = res.junctions;
                     newPlates = res.basePlates;
@@ -204,10 +184,9 @@ export class SimulationEngine {
                     newPlates = newPlates.filter(p => !p.riftAxisId && !p.junctionId);
                 }
 
-                // SIBLING + LEGACY PATHS ("Auto Generate") â€” opt-in automation.
-                // Previously this checkbox was never read and these paths ran whenever
-                // expanding rifts were on; they are now gated independently.
-                if (globalOptions.enableAutoOceanicCrust === true) {
+                // Sibling + legacy time-banded generation is an alternative
+                // to continuous axis fill, never an additional simultaneous pass.
+                if (globalOptions.oceanCrustStrategy === 'banded') {
                     // Remove old sibling growing strips so they can be regenerated fresh
                     newPlates = newPlates.filter(p => !p.slabId?.endsWith('_growing'));
                     newSlabs.push(...this.generateSiblingCrust(newPlates, newTime, interval, updatedRiftAxes));
@@ -223,17 +202,12 @@ export class SimulationEngine {
             }
             perfMonitor.endPhase(deriveSample);
 
-            // Calculate Boundaries if enabled
-            // ALWAYS update boundaries if Visualization OR Guided Creation is enabled.
-            // If none are on, clear boundaries to prevent stale artifacts.
-            const boundaries = (globalOptions.enableBoundaryVisualization ||
-                globalOptions.enableGuidedCreation ||
-                globalOptions.pauseOnFusionSuggestion)
+            // Boundaries are derived only when their visualization is enabled.
+            const boundaries = globalOptions.enableBoundaryVisualization
                 ? BoundarySystem.detectBoundaries(newPlates, newTime)
                 : [];
 
-            // Phase 3: Geological Automation â€” DISABLED (features removed)
-            const tempState = {
+            return {
                 ...state,
                 world: {
                     ...state.world,
@@ -244,13 +218,6 @@ export class SimulationEngine {
                     currentTime: newTime
                 }
             };
-            const postAutomationState = tempState; // Bypass automation
-
-            // Phase 4: Event System (detect tectonic events for guided creation)
-            const postEventState = eventSystem.update(postAutomationState);
-            const finalState = this.eventEffectsProcessor.update(postEventState);
-
-            return finalState;
         });
         this.updateFlowlines();
         perfMonitor.endPhase(simSample);

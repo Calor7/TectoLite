@@ -10,7 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-release
+release/*
+!release/TectoLite-1.0.0.exe
 *.local
 
 # Editor directories and files

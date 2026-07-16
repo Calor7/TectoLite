@@ -1,10 +1,45 @@
 const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const isDev = require('electron-is-dev');
 
 let mainWindow;
 const smokeExportEnabled = process.argv.includes('--smoke-export');
+let ipcHandlersRegistered = false;
+
+function registerIpcHandlers() {
+  if (ipcHandlersRegistered) return;
+  ipcHandlersRegistered = true;
+
+  ipcMain.handle('open-external', (_event, url) => {
+    if (typeof url === 'string' && (url.startsWith('mailto:') || url.startsWith('http:') || url.startsWith('https:'))) {
+      return shell.openExternal(url);
+    }
+    throw new Error('Unsupported external URL');
+  });
+
+  ipcMain.handle('save-bug-report', async (_event, reportId, reportText, screenshotDataUrl) => {
+    const safeReportId = typeof reportId === 'string' ? reportId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) : '';
+    if (!safeReportId) throw new Error('Invalid bug report ID');
+    if (typeof reportText !== 'string' || reportText.length > 2_000_000) throw new Error('Invalid bug report text');
+    if (typeof screenshotDataUrl === 'string' && screenshotDataUrl.length > 15_000_000) throw new Error('Bug report screenshot is too large');
+
+    const bugsDir = path.join(app.getPath('userData'), 'bugs');
+    fs.mkdirSync(bugsDir, { recursive: true });
+
+    const textPath = path.join(bugsDir, `${safeReportId}.txt`);
+    fs.writeFileSync(textPath, reportText, 'utf-8');
+
+    if (typeof screenshotDataUrl === 'string' && screenshotDataUrl.startsWith('data:image/')) {
+      const base64 = screenshotDataUrl.split(',')[1];
+      if (base64) {
+        const shotPath = path.join(bugsDir, `${safeReportId}-screenshot.png`);
+        fs.writeFileSync(shotPath, Buffer.from(base64, 'base64'));
+      }
+    }
+
+    return bugsDir;
+  });
+}
 
 function finishSmokeExport(code, message) {
   console.log(message);
@@ -100,6 +135,7 @@ function setupSmokeExport(window) {
 }
 
 function createWindow() {
+  registerIpcHandlers();
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -107,13 +143,16 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
-      enableRemoteModule: false
+      enableRemoteModule: false,
+      sandbox: true
     },
     icon: path.join(__dirname, 'assets/icon.png') // Optional: add an icon
   });
 
   // Load the app
-  const startUrl = isDev
+  // Smoke runs exercise the production bundle even when launched through the
+  // local Electron binary, where app.isPackaged normally selects Vite.
+  const startUrl = !app.isPackaged && !smokeExportEnabled
     ? 'http://localhost:5173' // Vite dev server
     : `file://${path.join(__dirname, 'dist/index.html')}`; // Production build
 
@@ -134,36 +173,8 @@ function createWindow() {
     }
   });
 
-  // IPC handler for opening external URLs from the renderer
-  ipcMain.handle('open-external', (_event, url) => {
-    if (typeof url === 'string' && (url.startsWith('mailto:') || url.startsWith('http:') || url.startsWith('https:'))) {
-      shell.openExternal(url);
-    }
-  });
-
-  // IPC handler for saving bug reports to a bugs/ folder next to the app
-  ipcMain.handle('save-bug-report', async (_event, reportId, reportText, screenshotDataUrl) => {
-    const bugsDir = path.join(__dirname, 'bugs');
-    fs.mkdirSync(bugsDir, { recursive: true });
-
-    // Write the text report
-    const textPath = path.join(bugsDir, `${reportId}.txt`);
-    fs.writeFileSync(textPath, reportText, 'utf-8');
-
-    // Write the screenshot if provided
-    if (typeof screenshotDataUrl === 'string' && screenshotDataUrl.startsWith('data:image/')) {
-      const base64 = screenshotDataUrl.split(',')[1];
-      if (base64) {
-        const shotPath = path.join(bugsDir, `${reportId}-screenshot.png`);
-        fs.writeFileSync(shotPath, Buffer.from(base64, 'base64'));
-      }
-    }
-
-    return bugsDir;
-  });
-
   // Open DevTools in development
-  if (isDev && !smokeExportEnabled) {
+  if (!app.isPackaged && !smokeExportEnabled) {
     mainWindow.webContents.openDevTools();
   }
 

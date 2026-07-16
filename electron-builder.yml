@@ -5,14 +5,17 @@ directories:
   output: release
 
 win:
+  icon: assets/icon.png
   target:
     - portable
 
 mac:
+  icon: assets/icon.png
   target:
     - dmg
 
 linux:
+  icon: assets/icon.png
   target:
     - AppImage
 
@@ -24,6 +27,8 @@ files:
   - preload.cjs
   - dist/**/*
   - package.json
+  - LICENSE
+  - NOTICE.txt
   - node_modules/**/*
 
 

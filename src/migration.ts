@@ -26,7 +26,7 @@ export interface SaveFile {
 }
 
 /** Current save file version. Bump this whenever the on-disk format changes. */
-export const CURRENT_SAVE_VERSION = 5;
+export const CURRENT_SAVE_VERSION = 7;
 
 /**
  * Migrate a parsed save file to {@link CURRENT_SAVE_VERSION}.
@@ -84,6 +84,44 @@ export function migrateSaveFile(data: SaveFile): SaveFile {
             if (plate.groupId && !validIds.has(plate.groupId)) delete plate.groupId;
         }
         data.version = 5;
+    }
+
+    // v5 → v6: remove the retired guided-event automation prototype.
+    // Use loose records here so old JSON remains accepted even though these
+    // properties no longer exist in the current WorldState types.
+    if (data.version < 6) {
+        const world = data.world as unknown as Record<string, any>;
+        const options = world.globalOptions as Record<string, any> | undefined;
+        if (options) {
+            for (const key of [
+                'enableDynamicFeatures',
+                'pauseOnFusionSuggestion',
+                'enableHotspots',
+                'enableGuidedCreation',
+                'repopupCommittedEvents',
+                'eventDetectionThreshold',
+                'showEventIcons'
+            ]) {
+                delete options[key];
+            }
+        }
+        delete world.tectonicEvents;
+        delete world.pendingEventId;
+        data.version = 6;
+    }
+
+    // v6 → v7: replace two independent ocean-generation flags with one
+    // mutually exclusive strategy. Prefer the newer continuous mode if an old
+    // project had both flags enabled.
+    if (data.version < 7) {
+        const world = data.world as unknown as Record<string, any>;
+        const options = (world.globalOptions ??= {}) as Record<string, any>;
+        if (options.enableExpandingRifts === true) options.oceanCrustStrategy = 'continuous';
+        else if (options.enableAutoOceanicCrust === true) options.oceanCrustStrategy = 'banded';
+        else options.oceanCrustStrategy = 'off';
+        delete options.enableExpandingRifts;
+        delete options.enableAutoOceanicCrust;
+        data.version = 7;
     }
 
     return data;

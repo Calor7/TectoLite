@@ -140,7 +140,7 @@ export function makeBenchmarkWorld(scale: number): WorldState {
         globalOptions: {
             ...world.globalOptions,
             timelineMaxTime: 250,
-            enableExpandingRifts: true,
+            oceanCrustStrategy: 'continuous',
             enableBoundaryVisualization: true,
             oceanicGenerationInterval: 25,
             showLinks: false,

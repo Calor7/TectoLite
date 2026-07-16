@@ -1,33 +1,67 @@
-# TectoLite - Development Overview & Workflow Norms
+# TectoLite
 
-## Core Principles
+TectoLite is a visual tectonic-plate simulation editor for designing plates, assigning Euler-pole motion, editing geological features, and exploring a world's plate history. It runs as a Vite web application and as an Electron desktop application.
 
-- **Rich Aesthetics**: The user should be wowed at first glance. Use modern web design practices: vibrant colors, dark modes, glassmorphism, and dynamic animations.
-- **Visual Excellence**: Prioritize premium designs over generic MVPs. Use curated color palettes and modern typography (Inter, Roboto, etc.).
-- **Dynamic & Responsive**: The interface must feel alive with hover effects and micro-animations to enhance engagement.
-- **No Placeholders**: Use AI-generated or realistic assets for a professional look.
+## Current status
 
-## Workflow Norms
+TectoLite 1.0 provides the core editing, simulation, undo/redo, project save/load, project templates, image overlays, and export workflows. Saved projects are migrated forward when the file format changes.
 
-- **Consolidation**: Group related settings into logical menus (e.g., Timeline settings inside the "Settings" menu).
-- **Cleanup**: Proactively remove unfinished, redundant, or low-priority features to keep the codebase focused (e.g., removal of "Automation" and "Mesh" legacy systems).
-- **Performance**: Optimize rendering and logic. Use efficient data structures for tectonic simulation.
-- **SEO & Semantics**: Use proper heading structures, meta tags, and semantic HTML5 elements. Use unique IDs for testing.
-- **TypeScript**: Use TypeScript for all logic to ensure type safety and better maintainability.
+Oceanic crust generation is experimental. It is disabled by default and appears under **Settings → Experimental**. The feature can create large or unexpected geometry, so save the project before enabling it.
 
-## UI Standards
+The retired guided-event automation prototype, mesh runtime, and unused elevation-editing runtime are not part of the active application. `HeightmapGenerator` remains active for raster export.
 
-- **Themes**: Support for both Dark and Light modes with seamless transitions.
-- **Dropdowns**: Consistent dropdown behavior across the header.
-- **Tooltips**: Global hint system with hotkey support.
-- **Simplicity**: Maintain a clean, professional sidebar for tools and properties.
+## Development
 
-## Project Evolution
+Requirements: Node.js 20 or newer and npm.
 
-- **Event System (active)**: `EventSystem` (guided geological event creation) and `EventEffectsProcessor` (applies committed event effects to state) run every simulation tick inside `SimulationEngine.ts`. These are the only automation paths still wired in.
-- **Geological Automation Removed**: The former `GeologicalAutomation.ts` hotspot-volcanism module has been deleted. The simulation loop retains a labeled "Geological Automation — DISABLED" bypass seam where it used to run.
-- **Elevation System Removed**: The experimental `ElevationSystem.ts` mesh-based elevation runtime was never wired in and the file is absent. `HeightmapGenerator.ts` remains for raster export only.
-- **Mesh System Removed**: The experimental mesh-based tectonic model has been retired to focus on the core polygon-based simulator. No mesh runtime remains in `src/`.
-- **Timeline Centralization**: The timeline has been moved to the bottom bar, with its configuration residing in the main "Settings" menu.
-- **Recursive Motion Inheritance**: Plates can now be linked in hierarchical chains (e.g., A -> B -> C). A child plate correctly inherits the cumulative motion of all its ancestors.
-- **Motion Clustering (Lock Motion)**: When a plate is locked to a parent, its local Euler Pole is dynamically transformed by the parent's motion, ensuring true "locked" behavior where the internal rotation axis moves with the parent landmass.
+```bash
+npm ci
+npm run dev
+```
+
+Useful commands:
+
+```bash
+npm run verify                 # lint, type-check, Electron syntax, tests, production build
+npm run electron-dev           # Vite + Electron development session
+npm run electron-build         # package the current platform
+npm run smoke:electron-export  # production Electron GeoPackage export smoke test
+```
+
+## Core workflows
+
+- Draw, edit, split, link, and fuse tectonic plates.
+- Configure plate motion with Euler poles and motion segments.
+- Place and edit geological features.
+- Scrub and play plate history.
+- Save and load TectoLite JSON projects with format migration.
+- Start from blank, modern Earth, or Pangaea templates.
+- Export PNG maps, heightmaps, JSON projects, and GeoPackage data.
+
+## Project layout
+
+- `src/main.ts` — application orchestration and UI control wiring.
+- `src/types.ts` — shared state and domain types.
+- `src/SimulationEngine.ts` — time-dependent plate derivation and ocean-generation strategies.
+- `src/canvas/` — rendering and interaction tools.
+- `src/ui/` — application template and focused UI modules.
+- `src/systems/TimelineSystem.ts` — plate-history controls.
+- `src/migration.ts` — versioned save-file migrations.
+- `electron-main.cjs` / `preload.cjs` — secure Electron host integration.
+
+See [DEVELOPER_README.md](DEVELOPER_README.md) for architecture and contribution details.
+
+## Release process
+
+Pull requests and pushes run the verification workflow on Windows, macOS, and Linux. Version tags (`v*`) additionally package the Electron application and publish the generated artifacts through GitHub Releases.
+
+Before tagging a release:
+
+1. Run `npm run verify`.
+2. Run `npm run smoke:electron-export` on the target desktop platform.
+3. Open the packaged application and manually exercise draw/edit/split, save/load, undo/redo, templates, and export.
+4. Confirm that experimental features remain disabled in a new project.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE). See [NOTICE.txt](NOTICE.txt) for attribution.

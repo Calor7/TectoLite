@@ -185,10 +185,6 @@ export class HistoryManager {
                     ...plume,
                     position: cloneCoord(plume.position)
                 })),
-                tectonicEvents: world.tectonicEvents?.map((event: any) => ({
-                    ...event,
-                    boundarySegment: event.boundarySegment ? [...event.boundarySegment] : event.boundarySegment
-                })),
                 imageOverlay: world.imageOverlay ? { ...world.imageOverlay } : world.imageOverlay
             }
         };

@@ -643,6 +643,33 @@ function writeLayer(filename, time, plates) {
     console.log(`${filename}: ${plates.length} regions`);
 }
 
+function writeLayerChunks(filenamePrefix, time, plates, maxBytes) {
+    for (const filename of fs.readdirSync(assets)) {
+        if (new RegExp(`^${filenamePrefix}-\\d+\\.json$`).test(filename)) {
+            fs.unlinkSync(path.join(assets, filename));
+        }
+    }
+    const chunks = [];
+    let chunk = [];
+    let chunkBytes = 0;
+    for (const plate of plates) {
+        const plateBytes = Buffer.byteLength(JSON.stringify(plate), 'utf8');
+        if (chunk.length > 0 && chunkBytes + plateBytes > maxBytes) {
+            chunks.push(chunk);
+            chunk = [];
+            chunkBytes = 0;
+        }
+        chunk.push(plate);
+        chunkBytes += plateBytes;
+    }
+    if (chunk.length > 0) chunks.push(chunk);
+    return chunks.map((platesInChunk, index) => {
+        const actualFilename = `${filenamePrefix}-${index + 1}.json`;
+        writeLayer(actualFilename, time, platesInChunk);
+        return actualFilename;
+    });
+}
+
 for (const { key, time, suffix } of [
     { key: 'modern', time: 0, suffix: '0.00Ma' },
     { key: 'pangaea', time: 200, suffix: '200.00Ma' }
@@ -650,7 +677,11 @@ for (const { key, time, suffix } of [
     const plates = readJson(path.join(references, 'shapes_continents', `reconstructed_${suffix}.geojson`)).features;
     const cratons = readJson(path.join(references, 'shapes_cratons', `reconstructed_${suffix}.geojson`)).features;
     const covers = key === 'modern' ? createModernCovers(time, plates) : createPangaeaCovers(plates, time);
-    writeLayer(`gplates-${key}-overview-covers.json`, time, covers);
+    if (key === 'modern') {
+        writeLayerChunks('gplates-modern-overview-covers', time, covers, 400000);
+    } else {
+        writeLayer('gplates-pangaea-overview-covers.json', time, covers);
+    }
     writeLayer(`gplates-${key}-overview-plates.json`, time, createPlateLayer(plates, time));
     writeLayer(`gplates-${key}-overview-cratons.json`, time, createCratonLayer(cratons, time));
 }
