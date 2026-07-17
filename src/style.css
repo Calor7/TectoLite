@@ -344,6 +344,7 @@ body {
 
 .plate-item.selected {
   border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-elevated));
 }
 
 .plate-color {
@@ -397,6 +398,7 @@ body {
 }
 
 .entity-group {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -956,6 +958,38 @@ body {
   opacity: 1.0;
 }
 
+.entity-group-opacity-popover {
+  display: none;
+  position: absolute;
+  top: 30px;
+  right: 4px;
+  width: 174px;
+  padding: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  z-index: 20;
+}
+
+.entity-group-opacity-popover.show {
+  display: block;
+}
+
+.entity-group-opacity-popover label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.entity-group-opacity-popover input {
+  display: block;
+  width: 100%;
+}
+
 .info-icon:focus-visible {
   opacity: 1;
   outline: 2px solid var(--accent-primary);
@@ -1050,9 +1084,10 @@ body {
 
 .view-dropdown-menu {
   display: none;
-  position: absolute;
-  top: 100%;
-  left: 0;
+  /* Keep menus out of the scrollable header's clipping context. Their
+     viewport position is set when opened in setupHeaderMenus(). */
+  position: fixed;
+  max-width: calc(100vw - 16px);
   background-color: var(--bg-elevated);
   min-width: 160px;
   box-shadow: var(--shadow-lg);
@@ -1060,7 +1095,6 @@ body {
   border-radius: var(--radius-md);
   padding: var(--space-sm);
   z-index: 1000;
-  margin-top: 4px;
 }
 
 .view-dropdown-menu.show {

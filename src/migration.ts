@@ -26,7 +26,7 @@ export interface SaveFile {
 }
 
 /** Current save file version. Bump this whenever the on-disk format changes. */
-export const CURRENT_SAVE_VERSION = 7;
+export const CURRENT_SAVE_VERSION = 8;
 
 /**
  * Migrate a parsed save file to {@link CURRENT_SAVE_VERSION}.
@@ -122,6 +122,23 @@ export function migrateSaveFile(data: SaveFile): SaveFile {
         delete options.enableExpandingRifts;
         delete options.enableAutoOceanicCrust;
         data.version = 7;
+    }
+
+    // v7 → v8: groups can carry a visual opacity multiplier, and Explorer
+    // plate multi-selection is represented explicitly in project state.
+    if (data.version < 8) {
+        const groups = Array.isArray(data.world.entityGroups) ? data.world.entityGroups : [];
+        for (const group of groups) {
+            if (typeof group.opacity === 'number' && Number.isFinite(group.opacity)) {
+                group.opacity = Math.min(1, Math.max(0, group.opacity));
+            } else {
+                delete group.opacity;
+            }
+        }
+        data.world.selectedPlateIds = data.world.selectedPlateId
+            ? [data.world.selectedPlateId]
+            : [];
+        data.version = 8;
     }
 
     return data;

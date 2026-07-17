@@ -165,9 +165,10 @@ function drawFeature(
 
 // JSON Export functionality
 // Save version history:
+//   v8: Explorer range selection and persistent group opacity.
 //   v7: ocean-crust automation uses one mutually exclusive strategy.
 //   v6: retired guided-event automation fields removed from project state.
-//   v5: persistent Explorer entity groups (organizational metadata only)
+//   v5: persistent Explorer entity groups
 //   v4: motion model migration — plates carry motionSegments/geometryStages
 //       only (legacy motion/motionKeyframes removed from the type; old saves
 //       are migrated at load time via migrateSaveFile → ensureMotionModel).

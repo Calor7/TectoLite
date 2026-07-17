@@ -2,6 +2,17 @@
 
 All notable changes to TectoLite are documented here.
 
+## 1.0.1 - 2026-07-17
+
+### Added
+
+- Added Shift-click range selection across visible Explorer entities, including bulk group assignment, dragging, and deletion.
+- Added persistent per-group transparency controls with live canvas updates and undo support.
+
+### Fixed
+
+- Fixed Settings and View dropdowns being clipped inside the horizontally scrollable header.
+
 ## 1.0.0 - 2026-07-16
 
 ### Changed

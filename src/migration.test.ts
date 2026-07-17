@@ -136,6 +136,23 @@ describe('migrateSaveFile', () => {
         expect((save.world.globalOptions as any).enableAutoOceanicCrust).toBeUndefined();
     });
 
+    it('migrates Explorer group opacity and plate selection state', () => {
+        const plate = makePlate('a');
+        const save = makeSave([plate], 7);
+        save.world.entityGroups = [
+            { id: 'visible', name: 'Visible', opacity: 2 },
+            { id: 'invalid', name: 'Invalid', opacity: Number.NaN }
+        ];
+        save.world.selectedPlateId = plate.id;
+
+        migrateSaveFile(save);
+
+        expect(save.world.entityGroups[0].opacity).toBe(1);
+        expect(save.world.entityGroups[1].opacity).toBeUndefined();
+        expect(save.world.selectedPlateIds).toEqual([plate.id]);
+        expect(save.version).toBe(CURRENT_SAVE_VERSION);
+    });
+
     it('handles v0 / undefined version gracefully', () => {
         const plate = makePlate('a', { lineType: 'rift' as any });
         const save = makeSave([plate], 0 as any);

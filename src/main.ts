@@ -65,6 +65,7 @@ import { makeBenchmarkWorld } from './utils/benchmarkWorld';
 import { perfMonitor } from './utils/PerfMonitor';
 import { PROJECT_TEMPLATES, type ProjectTemplate } from './projectTemplates';
 import { bindProjectSettings, syncProjectSettings, type ProjectSettingEffect } from './ui/SettingsBindings';
+import { selectExplorerRange } from './ui/ExplorerSelection';
 
 type UnifiedExportOptions = NonNullable<Awaited<ReturnType<typeof showUnifiedExportDialog>>>;
 
@@ -95,6 +96,7 @@ class TectoLiteApp {
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
     private hasUnsavedChanges: boolean = false; // Tracks edits since last save/load for the close guard
     private explorerFilter: string = ''; // Plate-name filter for the Explorer sidebar
+    private explorerSelectionAnchorId: string | null = null;
     private cameraBookmarks: CameraView[] = [];
     // timeMode removed
 
@@ -361,6 +363,24 @@ class TectoLiteApp {
         const viewMenu = document.getElementById('view-dropdown-menu');
         const settingsBtn = document.getElementById('btn-planet');
         const settingsMenu = document.getElementById('planet-dropdown-menu');
+        const headerActions = document.querySelector<HTMLElement>('.header-actions');
+
+        const positionMenu = (button: HTMLElement | null, menu: HTMLElement | null) => {
+            if (!button || !menu || !menu.classList.contains('show')) return;
+
+            const viewportPadding = 8;
+            const buttonRect = button.getBoundingClientRect();
+            const menuWidth = menu.getBoundingClientRect().width;
+            const maxLeft = Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding);
+
+            menu.style.left = `${Math.min(Math.max(buttonRect.left, viewportPadding), maxLeft)}px`;
+            menu.style.top = `${buttonRect.bottom + 4}px`;
+        };
+
+        const positionOpenMenus = () => {
+            positionMenu(viewBtn, viewMenu);
+            positionMenu(settingsBtn, settingsMenu);
+        };
 
         const closeMenus = () => {
             viewMenu?.classList.remove('show');
@@ -373,7 +393,10 @@ class TectoLiteApp {
             event.stopPropagation();
             const willOpen = !viewMenu?.classList.contains('show');
             closeMenus();
-            if (willOpen) viewMenu?.classList.add('show');
+            if (willOpen) {
+                viewMenu?.classList.add('show');
+                positionMenu(viewBtn, viewMenu);
+            }
             viewBtn.setAttribute('aria-expanded', String(willOpen));
         });
 
@@ -381,9 +404,15 @@ class TectoLiteApp {
             event.stopPropagation();
             const willOpen = !settingsMenu?.classList.contains('show');
             closeMenus();
-            if (willOpen) settingsMenu?.classList.add('show');
+            if (willOpen) {
+                settingsMenu?.classList.add('show');
+                positionMenu(settingsBtn, settingsMenu);
+            }
             settingsBtn.setAttribute('aria-expanded', String(willOpen));
         });
+
+        window.addEventListener('resize', positionOpenMenus);
+        headerActions?.addEventListener('scroll', positionOpenMenus);
 
         document.addEventListener('click', event => {
             const target = event.target;
@@ -2346,10 +2375,13 @@ class TectoLiteApp {
 
         if (plumeId) {
             this.state.world.selectedPlateId = null;
+            this.state.world.selectedPlateIds = [];
             this.state.world.selectedFeatureId = plumeId;
             this.state.world.selectedFeatureIds = [plumeId];
         } else {
             this.state.world.selectedPlateId = plateId;
+            this.state.world.selectedPlateIds = plateId ? [plateId] : [];
+            this.explorerSelectionAnchorId = plateId;
             this.state.world.selectedFeatureId = featureId ?? null;
             this.state.world.selectedFeatureIds = featureIds.length > 0 ? featureIds : (featureId ? [featureId] : []);
         }
@@ -2842,7 +2874,7 @@ class TectoLiteApp {
         } else if (selectedPlateId) {
             // Only delete plate if we didn't just delete strokes using the same key press 
             // (though UI usually separates them, hotkey collision is possible)
-            this.deletePlates([selectedPlateId]);
+            this.deletePlates(this.getSelectedPlateIds());
         }
         this.updateUI();
         this.simulation?.setTime(this.state.world.currentTime);
@@ -2872,13 +2904,14 @@ class TectoLiteApp {
     }
 
     private createEntityGroup(): void {
+        const selectedPlateIds = this.getSelectedPlateIds();
         this.showModal({
             title: 'Create Entity Group',
             content: '<label class="property-label" for="entity-group-name-input">Group name</label><input id="entity-group-name-input" class="property-input" maxlength="80" placeholder="e.g. Northern Islands" style="width:100%; margin-top:6px;">',
             buttons: [
                 {
                     text: 'Create Group',
-                    subtext: this.state.world.selectedPlateId ? 'The selected entity will be added automatically.' : 'You can drag entities into it afterwards.',
+                    subtext: selectedPlateIds.length ? `${selectedPlateIds.length} selected ${selectedPlateIds.length === 1 ? 'entity' : 'entities'} will be added automatically.` : 'You can drag entities into it afterwards.',
                     onClick: () => {
                         const name = (document.getElementById('entity-group-name-input') as HTMLInputElement | null)?.value.trim();
                         if (!name) { this.showToast('Enter a group name'); return false; }
@@ -2889,9 +2922,10 @@ class TectoLiteApp {
                         this.pushState();
                         const id = generateId();
                         this.state.world.entityGroups = [...this.state.world.entityGroups, { id, name, collapsed: false }];
-                        if (this.state.world.selectedPlateId) {
+                        if (selectedPlateIds.length) {
+                            const selectedIds = new Set(selectedPlateIds);
                             this.state.world.plates = this.state.world.plates.map(plate =>
-                                plate.id === this.state.world.selectedPlateId ? { ...plate, groupId: id } : plate
+                                selectedIds.has(plate.id) ? { ...plate, groupId: id } : plate
                             );
                         }
                         this.updateExplorer();
@@ -2903,12 +2937,12 @@ class TectoLiteApp {
         window.setTimeout(() => (document.getElementById('entity-group-name-input') as HTMLInputElement | null)?.focus(), 0);
     }
 
-    private assignPlateToEntityGroup(plateId: string, groupId: string | null): void {
-        const plate = this.state.world.plates.find(candidate => candidate.id === plateId);
-        if (!plate || (plate.groupId ?? null) === groupId) return;
+    private assignPlatesToEntityGroup(plateIds: string[], groupId: string | null): void {
+        const ids = new Set(plateIds);
+        if (!this.state.world.plates.some(plate => ids.has(plate.id) && (plate.groupId ?? null) !== groupId)) return;
         this.pushState();
         this.state.world.plates = this.state.world.plates.map(candidate =>
-            candidate.id === plateId ? { ...candidate, groupId: groupId ?? undefined } : candidate
+            ids.has(candidate.id) ? { ...candidate, groupId: groupId ?? undefined } : candidate
         );
         this.updateExplorer();
     }
@@ -3029,10 +3063,43 @@ class TectoLiteApp {
         });
     }
 
+    private getSelectedPlateIds(): string[] {
+        const primaryId = this.state.world.selectedPlateId;
+        if (!primaryId) return [];
+        const selectedIds = this.state.world.selectedPlateIds ?? [];
+        return selectedIds.includes(primaryId) ? selectedIds : [primaryId];
+    }
+
+    private selectExplorerPlateRange(targetId: string): void {
+        const orderedIds = Array.from(document.querySelectorAll<HTMLElement>('#plate-list .plate-item'))
+            .map(item => item.dataset.plateId)
+            .filter((id): id is string => !!id);
+        const anchorId = this.explorerSelectionAnchorId ?? this.state.world.selectedPlateId;
+        const selectedIds = selectExplorerRange(orderedIds, anchorId, targetId);
+        this.state.world.selectedPlateId = targetId;
+        this.state.world.selectedPlateIds = selectedIds;
+        this.state.world.selectedFeatureId = null;
+        this.state.world.selectedFeatureIds = [];
+        this.updateHint(`Selected ${selectedIds.length} entities.`);
+        this.updateUI();
+        this.canvasManager?.render();
+        const plate = this.state.world.plates.find(candidate => candidate.id === targetId) ?? null;
+        this.timelineSystem?.render(plate);
+    }
+
+    private setEntityGroupOpacity(groupId: string, opacity: number): void {
+        const boundedOpacity = Math.min(1, Math.max(0, opacity));
+        this.state.world.entityGroups = this.state.world.entityGroups.map(group =>
+            group.id === groupId ? { ...group, opacity: boundedOpacity } : group
+        );
+        this.canvasManager?.render();
+    }
+
     private renderExplorerPlateRows(container: HTMLElement, plates: TectonicPlate[]): void {
+        const selectedIds = new Set(this.getSelectedPlateIds());
         container.innerHTML = plates.map(plate => `
-            <div class="plate-item ${plate.id === this.state.world.selectedPlateId ? 'selected' : ''}"
-                 draggable="true" data-plate-id="${plate.id}" title="Drag to another group">
+            <div class="plate-item ${selectedIds.has(plate.id) ? 'selected' : ''}"
+                 draggable="true" data-plate-id="${plate.id}" title="Shift-click to select a range; drag to another group">
               <span class="plate-color" style="background: ${plate.color}"></span>
               <span class="plate-name">${escapeHtml(plate.name)}</span>
               <button class="plate-visibility" data-visible="${plate.visible}" title="Toggle visibility">
@@ -3043,11 +3110,18 @@ class TectoLiteApp {
         container.querySelectorAll<HTMLElement>('.plate-item').forEach(item => {
             item.addEventListener('click', event => {
                 if ((event.target as HTMLElement).classList.contains('plate-visibility')) return;
-                this.handleSelect(item.dataset.plateId ?? null, null);
+                const plateId = item.dataset.plateId;
+                if (!plateId) return;
+                if (event.shiftKey) this.selectExplorerPlateRange(plateId);
+                else this.handleSelect(plateId, null);
             });
             item.addEventListener('dragstart', event => {
                 if (!item.dataset.plateId) return;
                 event.dataTransfer?.setData('application/x-tectolite-plate', item.dataset.plateId);
+                const draggedIds = selectedIds.has(item.dataset.plateId)
+                    ? this.getSelectedPlateIds()
+                    : [item.dataset.plateId];
+                event.dataTransfer?.setData('application/x-tectolite-plates', JSON.stringify(draggedIds));
                 if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
             });
         });
@@ -3062,19 +3136,24 @@ class TectoLiteApp {
 
     private renderGroupedExplorer(content: HTMLElement, visiblePlates: TectonicPlate[], filterText: string): void {
         const groups = this.state.world.entityGroups ?? [];
-        const selectedPlate = this.state.world.plates.find(plate => plate.id === this.state.world.selectedPlateId);
+        const selectedPlateIds = this.getSelectedPlateIds();
+        const selectedIdSet = new Set(selectedPlateIds);
+        const selectedPlates = this.state.world.plates.filter(plate => selectedIdSet.has(plate.id));
+        const selectedGroupId = selectedPlates.length > 0 && selectedPlates.every(plate => (plate.groupId ?? null) === (selectedPlates[0].groupId ?? null))
+            ? (selectedPlates[0].groupId ?? '')
+            : null;
         const toolbar = document.createElement('div');
         toolbar.className = 'entity-group-toolbar';
         toolbar.innerHTML = `
-            <button class="entity-group-create" title="Create a group; the selected entity is added automatically">+ Group</button>
-            <select class="entity-group-assign" title="Move the selected entity to a group" ${selectedPlate ? '' : 'disabled'}>
-                <option value="">Ungrouped</option>
-                ${groups.map(group => `<option value="${group.id}" ${selectedPlate?.groupId === group.id ? 'selected' : ''}>${escapeHtml(group.name)}</option>`).join('')}
+            <button class="entity-group-create" title="Create a group; selected entities are added automatically">+ Group</button>
+            <select class="entity-group-assign" title="Move ${selectedPlateIds.length || 'the selected'} ${selectedPlateIds.length === 1 ? 'entity' : 'entities'} to a group" ${selectedPlateIds.length ? '' : 'disabled'}>
+                <option value="" ${selectedGroupId === '' ? 'selected' : ''}>Ungrouped</option>
+                ${groups.map(group => `<option value="${group.id}" ${selectedGroupId === group.id ? 'selected' : ''}>${escapeHtml(group.name)}</option>`).join('')}
             </select>
         `;
         toolbar.querySelector('.entity-group-create')?.addEventListener('click', () => this.createEntityGroup());
         toolbar.querySelector<HTMLSelectElement>('.entity-group-assign')?.addEventListener('change', event => {
-            if (selectedPlate) this.assignPlateToEntityGroup(selectedPlate.id, (event.target as HTMLSelectElement).value || null);
+            if (selectedPlateIds.length) this.assignPlatesToEntityGroup(selectedPlateIds, (event.target as HTMLSelectElement).value || null);
         });
         content.appendChild(toolbar);
 
@@ -3091,6 +3170,8 @@ class TectoLiteApp {
             header.dataset.groupId = groupId ?? '';
             const allVisible = allMembers.length > 0 && allMembers.every(plate => plate.visible);
             const allLocked = allMembers.length > 0 && allMembers.every(plate => plate.locked);
+            const opacity = groupId ? (groups.find(group => group.id === groupId)?.opacity ?? 1) : 1;
+            let opacityPopover: HTMLElement | null = null;
             header.innerHTML = `
                 <span class="entity-group-chevron">${collapsed && !filterText ? '▶' : '▼'}</span>
                 <span class="entity-group-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
@@ -3098,6 +3179,7 @@ class TectoLiteApp {
                 ${editable ? `<span class="entity-group-actions">
                     <button data-action="visibility" title="Show/hide every entity in this group">${allVisible ? '👁️' : '🚫'}</button>
                     <button data-action="lock" title="Lock/unlock every entity in this group">${allLocked ? '🔒' : '🔓'}</button>
+                    <button data-action="opacity" title="Group transparency (${Math.round((1 - opacity) * 100)}%)">◐</button>
                     <button data-action="color" title="Set one color for every entity in this group">🎨</button>
                     <button data-action="rename" title="Rename group">✎</button>
                     <button data-action="ungroup" title="Delete group but keep its entities">×</button>
@@ -3110,6 +3192,11 @@ class TectoLiteApp {
                     event.stopPropagation();
                     if (action === 'visibility') this.toggleEntityGroupVisibility(groupId);
                     if (action === 'lock') this.toggleEntityGroupLocked(groupId);
+                    if (action === 'opacity') {
+                        const wasOpen = opacityPopover?.classList.contains('show') ?? false;
+                        content.querySelectorAll('.entity-group-opacity-popover.show').forEach(popover => popover.classList.remove('show'));
+                        if (!wasOpen) opacityPopover?.classList.add('show');
+                    }
                     if (action === 'color') this.recolorEntityGroup(groupId);
                     if (action === 'rename') this.renameEntityGroup(groupId);
                     if (action === 'ungroup') this.removeEntityGroup(groupId);
@@ -3126,10 +3213,51 @@ class TectoLiteApp {
             header.addEventListener('drop', event => {
                 event.preventDefault();
                 header.classList.remove('drag-over');
+                const plateIdsJson = event.dataTransfer?.getData('application/x-tectolite-plates');
                 const plateId = event.dataTransfer?.getData('application/x-tectolite-plate');
-                if (plateId) this.assignPlateToEntityGroup(plateId, groupId);
+                let plateIds: string[] = [];
+                if (plateIdsJson) {
+                    try {
+                        const parsed = JSON.parse(plateIdsJson);
+                        if (Array.isArray(parsed)) plateIds = parsed.filter((id): id is string => typeof id === 'string');
+                    } catch { /* Fall back to the single dragged entity. */ }
+                }
+                if (!plateIds.length && plateId) plateIds = [plateId];
+                if (plateIds.length) this.assignPlatesToEntityGroup(plateIds, groupId);
             });
             wrapper.appendChild(header);
+
+            if (editable && groupId) {
+                opacityPopover = document.createElement('div');
+                opacityPopover.className = 'entity-group-opacity-popover';
+                opacityPopover.innerHTML = `
+                    <label>Transparency <span>${Math.round((1 - opacity) * 100)}%</span></label>
+                    <input type="range" min="0" max="100" value="${Math.round((1 - opacity) * 100)}" aria-label="${escapeHtml(name)} transparency">
+                `;
+                const slider = opacityPopover.querySelector<HTMLInputElement>('input')!;
+                const value = opacityPopover.querySelector<HTMLSpanElement>('span')!;
+                let changeStarted = false;
+                const beginChange = () => {
+                    if (changeStarted) return;
+                    this.pushState();
+                    changeStarted = true;
+                };
+                slider.addEventListener('pointerdown', beginChange);
+                slider.addEventListener('keydown', event => {
+                    if (event.key === 'Escape') {
+                        opacityPopover?.classList.remove('show');
+                        return;
+                    }
+                    beginChange();
+                });
+                slider.addEventListener('input', () => {
+                    beginChange();
+                    value.textContent = `${slider.value}%`;
+                    this.setEntityGroupOpacity(groupId, 1 - Number(slider.value) / 100);
+                });
+                slider.addEventListener('change', () => { changeStarted = false; });
+                wrapper.appendChild(opacityPopover);
+            }
 
             if (!collapsed || filterText) {
                 const rows = document.createElement('div');
@@ -3435,11 +3563,13 @@ class TectoLiteApp {
         }
 
         const plate = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
+        const selectedPlateCount = this.getSelectedPlateIds().length;
 
         // Update Panel Title
         const titleEl = document.getElementById('properties-panel-title');
         if (titleEl) {
             if (!plate) titleEl.textContent = 'Properties';
+            else if (selectedPlateCount > 1) titleEl.textContent = `Plate Properties (${selectedPlateCount} selected)`;
             else if (plate.type === 'rift') titleEl.textContent = 'Rift Axis';
             else titleEl.textContent = 'Plate Properties';
         }
@@ -4941,12 +5071,17 @@ class TectoLiteApp {
             });
         }
 
+        const remainingSelectedIds = this.getSelectedPlateIds().filter(id => !idSet.has(id));
+        const selectedPlateId = idSet.has(this.state.world.selectedPlateId || '')
+            ? (remainingSelectedIds[0] ?? null)
+            : this.state.world.selectedPlateId;
         this.state = {
             ...this.state,
             world: {
                 ...this.state.world,
                 plates: newPlates,
-                selectedPlateId: idSet.has(this.state.world.selectedPlateId || '') ? null : this.state.world.selectedPlateId
+                selectedPlateId,
+                selectedPlateIds: remainingSelectedIds
             }
         };
         this.updateUI();

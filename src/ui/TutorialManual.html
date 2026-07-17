@@ -50,9 +50,10 @@
   <h2>Explorer Groups</h2>
   <p>
     Explorer groups organize entities by continent, island region, plate layer, or craton layer. Drag an entity onto a
-    group header or use the selected-entity Group dropdown at the top of Explorer. Groups can be collapsed and support bulk visibility, locking,
-    recoloring, and deletion. <strong>Grouping alone has no mechanical effect:</strong> it does not fuse geometry, link
-    motion, or alter the simulation. Only an explicit bulk action changes group members.
+    group header or use the selected-entity Group dropdown at the top of Explorer. Shift-click selects a contiguous
+    range, so group assignment, dragging, and deletion can operate on several entities at once. Groups can be collapsed
+    and support bulk visibility, locking, transparency, recoloring, and deletion. Group transparency is visual only; it
+    does not fuse geometry, link motion, or alter the simulation.
   </p>
 
   <h2>Motion and Geological Time</h2>
@@ -331,10 +332,10 @@
     <div data-selector="#timeline-panel"><strong style="color:var(--accent-primary);">Timeline Box:</strong> View recent
       significant geological events like continent splits and collisions.</div>
     <div data-selector="#plate-sidebar">The <strong style="color:var(--accent-primary);">Explorer</strong> organizes
-      every editable entity and its actions. Select entities, search by name, and collapse regional groups here.</div>
-    <div data-selector=".entity-group-create">Create an organizational group. If an entity is selected, it is added automatically.</div>
-    <div data-selector=".entity-group-assign">Move the selected entity into a group or back to Ungrouped.</div>
+      every editable entity and its actions. Shift-click two entities to select the visible range between them.</div>
+    <div data-selector=".entity-group-create">Create an organizational group. Selected entities are added automatically.</div>
+    <div data-selector=".entity-group-assign">Move all selected entities into a group or back to Ungrouped.</div>
     <div data-selector=".entity-group-header">Collapse a group or drop a dragged entity onto it. Header buttons provide
-      bulk visibility, locking, recoloring, rename, ungroup, and delete actions.</div>
+      bulk visibility, locking, transparency, recoloring, rename, ungroup, and delete actions.</div>
   </div>
 </div>

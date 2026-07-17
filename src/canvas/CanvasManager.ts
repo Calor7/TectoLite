@@ -848,6 +848,7 @@ export class CanvasManager {
 
             this.ctx.save();
             const fade = plate.flowlinesFade !== false;
+            const entityGroupOpacity = plate.groupId ? (groupOpacity.get(plate.groupId) ?? 1) : 1;
 
             for (const trail of plate.flowlinesTrailCache) {
                 if (trail.length < 2) continue;
@@ -859,7 +860,7 @@ export class CanvasManager {
                     path(geojson);
                     this.ctx.strokeStyle = plate.color;
                     this.ctx.lineWidth = 1;
-                    this.ctx.globalAlpha = 0.6;
+                    this.ctx.globalAlpha = 0.6 * entityGroupOpacity;
                     this.ctx.stroke();
                 } else {
                     // Segmented rendering for fade
@@ -887,7 +888,7 @@ export class CanvasManager {
                         path(geojson);
                         this.ctx.strokeStyle = plate.color;
                         this.ctx.lineWidth = 1;
-                        this.ctx.globalAlpha = avgAlpha;
+                        this.ctx.globalAlpha = avgAlpha * entityGroupOpacity;
                         this.ctx.stroke();
                     }
                 }
@@ -902,13 +903,19 @@ export class CanvasManager {
             if (b.polygonType === 'continental_plate' || b.polygonType === 'continental_crust' || b.polygonType === 'craton') zB += 1;
             return zA - zB;
         });
+        const groupOpacity = new Map(
+            state.world.entityGroups.map(group => [group.id, group.opacity ?? 1])
+        );
+        const selectedPlateIds = (state.world.selectedPlateIds ?? []).includes(state.world.selectedPlateId ?? '')
+            ? new Set(state.world.selectedPlateIds ?? [])
+            : new Set(state.world.selectedPlateId ? [state.world.selectedPlateId] : []);
 
         for (const plate of sortedPlates) {
             if (!plate.visible && !state.world.globalOptions.showHiddenPlates) continue;
             if (state.world.currentTime < plate.birthTime) continue;
             if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
 
-            const isSelected = plate.id === state.world.selectedPlateId;
+            const isSelected = selectedPlateIds.has(plate.id);
 
             let polygonsToDraw = plate.polygons;
             if (state.activeTool === 'edit' && this.editTool.getTempPolygons()?.plateId === plate.id) {
@@ -943,6 +950,7 @@ export class CanvasManager {
                 path(geojson);
 
                 const globalOpacity = state.world.globalOptions.plateOpacity ?? 1.0;
+                const entityGroupOpacity = plate.groupId ? (groupOpacity.get(plate.groupId) ?? 1) : 1;
                 let oceanicOpacity = plate.type === 'oceanic' ? (state.world.globalOptions.oceanicCrustOpacity ?? 0.5) : 1.0;
 
                 // Dim hidden plates slightly if they are being revealed by the global toggle
@@ -950,10 +958,10 @@ export class CanvasManager {
                     oceanicOpacity *= 0.4;
                 }
 
-                this.ctx.globalAlpha = globalOpacity * oceanicOpacity;
+                this.ctx.globalAlpha = globalOpacity * entityGroupOpacity * oceanicOpacity;
                 this.ctx.fillStyle = plate.color;
                 if (poly.closed !== false) this.ctx.fill();
-                this.ctx.globalAlpha = 1.0;
+                this.ctx.globalAlpha = isSelected ? 1 : entityGroupOpacity;
 
                 this.ctx.strokeStyle = isSelected ? '#ffffff' : 'rgba(0,0,0,0.3)';
                 this.ctx.lineWidth = isSelected ? 2 : 1;
@@ -976,6 +984,7 @@ export class CanvasManager {
                     this.ctx.setLineDash(dash);
                 }
                 this.ctx.stroke();
+                this.ctx.globalAlpha = 1.0;
                 this.ctx.setLineDash([]); // Reset dash after each polygon stroke
             }
 

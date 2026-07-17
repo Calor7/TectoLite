@@ -346,15 +346,13 @@ export interface TectonicPlate {
   locked: boolean;
 }
 
-/**
- * Explorer-only organization metadata. Groups deliberately contain no
- * mechanical settings; visibility/lock bulk actions are applied to member
- * plates explicitly by the UI.
- */
+/** Explorer organization and presentation metadata. */
 export interface EntityGroup {
   id: string;
   name: string;
   collapsed?: boolean;
+  /** Visual opacity multiplier applied to every member (0-1). */
+  opacity?: number;
 }
 
 export type OceanCrustStrategy = 'off' | 'continuous' | 'banded';
@@ -396,6 +394,7 @@ export interface WorldState {
   timeScale: number;
   isPlaying: boolean;
   selectedPlateId: string | null;
+  selectedPlateIds: string[];       // Explorer multi-selection; includes the primary selection
   selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
   selectedFeatureIds: string[];     // Support multiple selection
   selectedEdge: EdgeRef | null;     // Currently selected edge element
@@ -538,6 +537,7 @@ export function createDefaultWorldState(): WorldState {
     timeScale: 1,
     isPlaying: false,
     selectedPlateId: null,
+    selectedPlateIds: [],
     selectedFeatureId: null,
     selectedFeatureIds: [],
     selectedEdge: null,
