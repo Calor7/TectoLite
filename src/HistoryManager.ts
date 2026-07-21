@@ -161,6 +161,16 @@ export class HistoryManager {
             world: {
                 ...world,
                 plates: (world.plates ?? []).map(clonePlate),
+                elevationZones: (world.elevationZones ?? []).map((zone: any) => ({
+                    ...zone,
+                    geometry: {
+                        ...zone.geometry,
+                        path: zone.geometry?.path?.map((point: any) => ({ ...point, position: cloneCoord(point.position) })),
+                        rings: zone.geometry?.rings?.map((ring: any) => ring.map((point: any) => cloneCoord(point))),
+                        clipMask: zone.geometry?.clipMask?.map((polygon: any) => polygon.map((ring: any) => ring.map((point: any) => cloneCoord(point))))
+                        ,clipMasks: zone.geometry?.clipMasks?.map((mask: any) => mask.map((polygon: any) => polygon.map((ring: any) => ring.map((point: any) => cloneCoord(point)))))
+                    }
+                })),
                 labels: (world.labels ?? []).map((label: any) => ({
                     ...label,
                     anchor: cloneCoord(label.anchor),

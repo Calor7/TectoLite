@@ -3,7 +3,7 @@ import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
 import { MotionGizmo } from './MotionGizmo';
-import { activeEulerPole, pointPositionAt } from '../motion/RotationModel';
+import { activeEulerPole, derivePlateGeometry, pointPositionAt } from '../motion/RotationModel';
 import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid } from '../utils/sphericalMath';
 import { perfMonitor } from '../utils/PerfMonitor';
 
@@ -12,6 +12,7 @@ import { PathInputTool } from './tools/PathInputTool';
 import { SelectionTool } from './tools/SelectionTool';
 import { PlacementTool } from './tools/PlacementTool';
 import { EditTool } from './tools/EditTool';
+import { PaintInputTool, PaintSettings } from './tools/PaintInputTool';
 
 export interface CanvasManagerCallbacks {
     onDrawComplete: (points: Coordinate[]) => void;
@@ -30,6 +31,9 @@ export interface CanvasManagerCallbacks {
     onDrawUpdate?: (count: number) => void;
     onGizmoUpdate?: (rate: number) => void;
     onEditPending?: (active: boolean) => void;
+    getPaintSettings?: () => PaintSettings;
+    onPaintComplete?: (ownerPlateId: string, path: Coordinate[], settings: PaintSettings) => void;
+    onPaintRejected?: (reason: string) => void;
 }
 
 export class CanvasManager {
@@ -185,6 +189,24 @@ export class CanvasManager {
         // Set up snap candidate provider for edit tool (same as draw tool)
         this.editTool.setSnapCandidateProvider(() => this.getAllPlateVertices());
         this.tools.set('edit', this.editTool);
+
+        this.tools.set('paint', new PaintInputTool(
+            this.projectionManager,
+            () => {
+                const state = this.getState();
+                const plate = state.world.plates.find(candidate => candidate.id === state.world.selectedPlateId);
+                if (!plate) return { id: '', valid: false, reason: 'Select a plate before painting.' };
+                const time = state.world.currentTime;
+                if (plate.birthTime > time || (plate.deathTime !== null && time >= plate.deathTime)) return { id: plate.id, valid: false, reason: 'The selected plate is not alive at this time.' };
+                if (plate.locked) return { id: plate.id, valid: false, reason: 'The selected plate is locked.' };
+                return { id: plate.id, valid: true };
+            },
+            () => this.callbacks.getPaintSettings?.() ?? { radiusKm: 250, strengthMeters: 500, falloff: 'smoothstep', mode: 'raise' },
+            () => this.getState().world.globalOptions.planetRadius || 6371,
+            (ownerId, path, settings) => this.callbacks.onPaintComplete?.(ownerId, path, settings),
+            reason => this.callbacks.onPaintRejected?.(reason),
+            () => {const state=this.getState(),plate=state.world.plates.find(candidate=>candidate.id===state.world.selectedPlateId);return plate?[derivePlateGeometry(plate,state.world.plates,state.world.currentTime).polygons.map(poly=>[poly.points])]:[];}
+        ));
 
         this.tools.set('pan', {
             onMouseDown: () => { }, onMouseMove: () => { }, onMouseUp: () => { },
@@ -860,6 +882,7 @@ export class CanvasManager {
             }
 
             this.drawPlates(state, path);
+            this.drawElevationZonePreview(state);
             this.drawDerivedRiftLines(state, path);
             this.drawSelectedEdge();
             this.drawPlumes(state);
@@ -913,6 +936,41 @@ export class CanvasManager {
         this.ctx.beginPath();
         path(geoGraticule()());
         this.ctx.stroke();
+    }
+
+    private drawElevationZonePreview(state: AppState): void {
+        const time = state.world.currentTime;
+        const radius = state.world.globalOptions.planetRadius || 6371;
+        const scale = this.projectionManager.getProjection().scale();
+        const pathRenderer = this.projectionManager.getPathGenerator();
+        const zones = (state.world.elevationZones || []).filter(zone => zone.visible && zone.geometry.kind === 'brush' && zone.activeFrom <= time && (zone.activeTo === undefined || time < zone.activeTo));
+        for (const zone of zones) {
+            if (zone.geometry.kind !== 'brush') continue;
+            const owner = state.world.plates.find(plate => plate.id === zone.ownerPlateId);
+            if (!owner || owner.birthTime > time || (owner.deathTime !== null && time >= owner.deathTime)) continue;
+            const points = zone.geometry.path.map(sample => pointPositionAt(owner, state.world.plates, sample.position, zone.anchorTime, time));
+            if (points.length === 0) continue;
+            const lineWidth = Math.max(1, 2 * zone.geometry.radiusKm / radius * scale);
+            this.ctx.save();
+            this.ctx.strokeStyle = zone.previewColor || (zone.geometry.deltaMeters < 0 ? '#89b4fa' : '#a6e3a1');
+            this.ctx.fillStyle = this.ctx.strokeStyle;
+            this.ctx.globalAlpha = zone.geometry.falloff === 'smoothstep' ? 0.22 : 0.32;
+            this.ctx.lineWidth = lineWidth;
+            this.ctx.lineCap = 'round';
+            this.ctx.lineJoin = 'round';
+            const moveMask=(mask:Coordinate[][][])=>mask.map(poly=>poly.map(ring=>ring.map(point=>pointPositionAt(owner,state.world.plates,point,zone.anchorTime,time))));
+            const masks=[derivePlateGeometry(owner,state.world.plates,time).polygons.map(poly=>[poly.points]),...(zone.geometry.clipMasks||[]).map(moveMask),...(zone.geometry.clipMask?[moveMask(zone.geometry.clipMask)]:[])];
+            for(const mask of masks){this.ctx.beginPath();pathRenderer({type:'MultiPolygon',coordinates:mask} as any);this.ctx.clip();}
+            if (points.length === 1) {
+                const projected = this.projectionManager.project(points[0]);
+                if (projected) { this.ctx.beginPath(); this.ctx.arc(projected[0], projected[1], lineWidth / 2, 0, Math.PI * 2); this.ctx.fill(); }
+            } else {
+                this.ctx.beginPath();
+                pathRenderer({ type: 'LineString', coordinates: points } as any);
+                this.ctx.stroke();
+            }
+            this.ctx.restore();
+        }
     }
 
     private resolveLabelPosition(label: MapLabel, state: AppState): Coordinate | null {

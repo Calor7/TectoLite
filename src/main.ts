@@ -23,9 +23,10 @@ import {
     defaultLineTypeDefaults,
     MapLabel
 } from './types';
+import type { PaintSettings } from './canvas/tools/PaintInputTool';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
-import { exportToPNG, exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog } from './export';
+import { exportToPNG, exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog, validateCanonicalHeightmapOptions } from './export';
 import { splitPlate } from './SplitTool';
 import { fusePlates } from './FusionTool';
 import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
@@ -36,6 +37,8 @@ import { migrateSaveFile, CURRENT_SAVE_VERSION, type SaveFile } from './migratio
 import { pointPositionAt, ensureMotionModel, getMotionModel, activeEulerPole } from './motion/RotationModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
+import { applyElevationZoneAction, ElevationZoneAction } from './systems/ElevationZoneActions';
+import { clampElevationAuthoring, MAX_ELEVATION_DELTA_METERS, MAX_ELEVATION_RADIUS_KM, MIN_ELEVATION_DELTA_METERS, MIN_ELEVATION_RADIUS_KM } from './systems/ElevationBrushLimits';
 import { geoArea, geoCentroid } from 'd3-geo';
 import {
     getSpeedPresetData as _getSpeedPresetData,
@@ -175,7 +178,10 @@ class TectoLiteApp {
                 onEditPending: (active) => {
                     const el = document.getElementById('edit-controls');
                     if (el) el.style.display = active ? 'block' : 'none';
-                }
+                },
+                getPaintSettings: () => this.getPaintSettings(),
+                onPaintComplete: (ownerId, path, settings) => this.commitElevationStroke(ownerId, path, settings),
+                onPaintRejected: reason => this.showToast(reason)
             }
         );
 
@@ -481,16 +487,26 @@ class TectoLiteApp {
             }
 
             if (options.format === 'heightmap') {
-                const dataUrl = await HeightmapGenerator.generate(this.state, {
-                    width: options.width || 4096,
-                    height: options.height || 2048,
-                    projection: options.projection || 'equirectangular',
-                    smooth: true
-                });
+                // Heightmap export is always the canonical 2:1 equirectangular,
+                // 16-bit grayscale terrain grid (visual projections stay PNG map exports).
+                const requestedWidth = Math.floor(options.width || 4096);
+                const scale={minMeters:options.minMeters??-11000,maxMeters:options.maxMeters??9000},validationError=validateCanonicalHeightmapOptions(requestedWidth,scale.minMeters,scale.maxMeters);if(validationError)throw new Error(validationError);const width=requestedWidth;
+                const controller=new AbortController(),progress=document.createElement('div');progress.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:12000;display:flex;align-items:center;justify-content:center;';progress.innerHTML='<div style="background:#1e1e2e;color:#cdd6f4;padding:18px;border-radius:8px;min-width:280px;"><div id="heightmap-progress-label">Preparing heightmapâ€¦</div><button id="heightmap-progress-cancel" class="btn btn-secondary" style="margin-top:12px;">Cancel</button></div>';document.body.appendChild(progress);progress.querySelector('#heightmap-progress-cancel')?.addEventListener('click',()=>controller.abort());
+                let canonical;
+                try{canonical=await HeightmapGenerator.deriveCanonical16Async(this.state,width,scale,{signal:controller.signal,onProgress:phase=>{const label=progress.querySelector('#heightmap-progress-label');if(label)label.textContent=phase==='deriving'?'Deriving meter fieldâ€¦':phase==='encoding'?'Encoding 16-bit PNGâ€¦':'Heightmap ready';}});}catch(error){if(error instanceof DOMException&&error.name==='AbortError'){this.showToast('Heightmap export cancelled');return;}throw error;}finally{progress.remove();}
+                const stem = `tectolite-heightmap-${Date.now()}`;
+                const dataUrl = URL.createObjectURL(new Blob([canonical.png.buffer as ArrayBuffer], { type: 'image/png' }));
                 const link = document.createElement('a');
-                link.download = `tectolite-heightmap-${Date.now()}.png`;
+                link.download = `${stem}.png`;
                 link.href = dataUrl;
                 link.click();
+                const metadata = new Blob([JSON.stringify({ width: canonical.width, height: canonical.height, projection: 'equirectangular', minMeters: canonical.scale.minMeters, maxMeters: canonical.scale.maxMeters, seaLevelMeters: 0 }, null, 2)], { type: 'application/json' });
+                const metadataLink = document.createElement('a');
+                metadataLink.download = `${stem}.json`;
+                metadataLink.href = URL.createObjectURL(metadata);
+                metadataLink.click();
+                const metadataUrl = metadataLink.href;
+                window.setTimeout(() => { URL.revokeObjectURL(dataUrl); URL.revokeObjectURL(metadataUrl); }, 1000);
                 return;
             }
 
@@ -1378,6 +1394,7 @@ class TectoLiteApp {
                 case 'g': this.setActiveTool('fuse'); break;
                 case 'l': this.setActiveTool('link'); break;
                 case 'a': this.setActiveTool('label'); break;
+                case 't': this.setActiveTool('paint'); break;
 
                 case 'enter':
                     if (this.state.activeTool === 'draw') {
@@ -1610,6 +1627,7 @@ class TectoLiteApp {
                             ...this.state.world,
                             plates: [...this.state.world.plates, ...processedPlates],
                             labels: [...this.state.world.labels, ...remapped.labels],
+                            elevationZones: [...this.state.world.elevationZones, ...remapped.elevationZones],
                             entityGroups: [...this.state.world.entityGroups, ...remapped.entityGroups],
                             riftAxes: [...(this.state.world.riftAxes || []), ...remapped.riftAxes],
                             tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions]
@@ -2029,6 +2047,7 @@ class TectoLiteApp {
         this.updateSpeedInputsFromSelected();
         this.updatePlayButton();
         this.updateTimeDisplay();
+        this.renderElevationZoneControls();
     }
 
     private setActiveTool(tool: ToolType): void {
@@ -2104,7 +2123,7 @@ class TectoLiteApp {
                 hintText = "Select a plate or landmass to link it with another.";
                 break;
             case 'paint':
-                hintText = "Select a plate, then draw on it with the brush. Adjust size and color in Tool Options.";
+                hintText = "Select a live plate, then drag to raise or lower it in meters. Release commits; Escape cancels.";
                 break;
         }
 
@@ -2354,6 +2373,53 @@ class TectoLiteApp {
         this.simulation?.setTime(this.state.world.currentTime);
         this.canvasManager?.render();
     }
+
+    private getPaintSettings(): PaintSettings {
+        const radius = Number((document.getElementById('paint-radius-km') as HTMLInputElement | null)?.value ?? 250);
+        const strength = Number((document.getElementById('paint-strength-m') as HTMLInputElement | null)?.value ?? 500);
+        const falloff = (document.getElementById('paint-falloff') as HTMLSelectElement | null)?.value === 'hard' ? 'hard' : 'smoothstep';
+        const mode = (document.getElementById('paint-action') as HTMLSelectElement | null)?.value === 'lower' ? 'lower' : 'raise';
+        return { ...clampElevationAuthoring(radius,strength,falloff), mode };
+    }
+
+    private commitElevationStroke(ownerPlateId: string, path: Coordinate[], settings: PaintSettings): void {
+        const plate = this.state.world.plates.find(candidate => candidate.id === ownerPlateId);
+        const time = this.state.world.currentTime;
+        if (!plate || plate.locked || plate.birthTime > time || (plate.deathTime !== null && time >= plate.deathTime) || path.length === 0) {
+            this.showToast('Elevation stroke was not committed because its owner is no longer editable.');
+            return;
+        }
+        this.pushState();
+        const deltaMeters = settings.mode === 'lower' ? -settings.strengthMeters : settings.strengthMeters;
+        const nextOrder = this.state.world.elevationZones.reduce((maximum, zone) => Math.max(maximum, zone.order), -1) + 1;
+        this.state.world.elevationZones = [...this.state.world.elevationZones, {
+            id: generateId(),
+            name: `${settings.mode === 'lower' ? 'Lower' : 'Raise'} ${Math.round(settings.strengthMeters)} m`,
+            ownerPlateId,
+            anchorTime: time,
+            activeFrom: time,
+            order: nextOrder,
+            operation: 'add',
+            geometry: {
+                kind: 'brush',
+                path: path.map(position => ({ position: [...position] as Coordinate })),
+                radiusKm: settings.radiusKm,
+                deltaMeters,
+                falloff: settings.falloff,
+                spacingKm: Math.max(0.5, settings.radiusKm / 4),
+                kernelVersion: 1
+            },
+            visible: true,
+            locked: false,
+            previewColor: deltaMeters < 0 ? '#89b4fa' : '#a6e3a1'
+        }];
+        this.canvasManager?.markDirty();
+        this.showToast(`Elevation ${deltaMeters < 0 ? 'lowered' : 'raised'} by ${Math.round(Math.abs(deltaMeters))} m`);
+    }
+
+    private applyZoneAction(id:string,action:ElevationZoneAction):void{const result=applyElevationZoneAction(this.state.world.elevationZones,id,action);if(!result.changed){if(result.error)this.showToast(result.error);else if(this.state.world.elevationZones.find(zone=>zone.id===id)?.locked&&action.type!=='locked'&&action.type!=='visible')this.showToast('Unlock the zone before editing it.');return;}this.pushState();this.state.world.elevationZones=result.zones;this.updateUI();this.canvasManager?.markDirty();}
+
+    private renderElevationZoneControls():void{const container=document.getElementById('elevation-zone-list');if(!container)return;const zones=[...this.state.world.elevationZones].sort((a,b)=>b.order-a.order||(a.id<b.id?-1:1));container.innerHTML=zones.length?'':'<div style="font-size:10px;color:var(--text-muted);">No elevation zones yet.</div>';for(const zone of zones){const brush=zone.geometry.kind==='brush'?zone.geometry:null;const row=document.createElement('div');row.style.cssText='border:1px solid var(--border-default);border-radius:4px;padding:5px;display:flex;flex-direction:column;gap:4px;';row.innerHTML=`<div style="display:flex;gap:3px;align-items:center;"><input class="zone-visible" type="checkbox" ${zone.visible?'checked':''} title="Visible"><span style="flex:1;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(zone.name)}</span><button class="zone-lock btn btn-secondary" style="padding:2px 4px;font-size:9px;">${zone.locked?'Unlock':'Lock'}</button><button class="zone-up btn btn-secondary" style="padding:2px 4px;" title="Move up">â†‘</button><button class="zone-down btn btn-secondary" style="padding:2px 4px;" title="Move down">â†“</button><button class="zone-delete btn btn-secondary" style="padding:2px 4px;" title="Delete">Ã—</button></div>${brush?`<div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:3px;"><input class="zone-radius property-input" type="number" min="${MIN_ELEVATION_RADIUS_KM}" max="${MAX_ELEVATION_RADIUS_KM}" value="${brush.radiusKm}" title="Radius km"><input class="zone-delta property-input" type="number" min="-${MAX_ELEVATION_DELTA_METERS}" max="${MAX_ELEVATION_DELTA_METERS}" value="${brush.deltaMeters}" title="Delta meters (non-zero, |delta| >= ${MIN_ELEVATION_DELTA_METERS})"><select class="zone-falloff tool-select"><option value="smoothstep" ${brush.falloff==='smoothstep'?'selected':''}>Smooth</option><option value="hard" ${brush.falloff==='hard'?'selected':''}>Hard</option></select><button class="zone-apply btn btn-secondary" style="padding:2px 4px;">Apply</button></div>`:''}`;const bind=(selector:string,handler:()=>void)=>row.querySelector(selector)?.addEventListener('click',handler);(row.querySelector('.zone-visible') as HTMLInputElement).addEventListener('change',event=>this.applyZoneAction(zone.id,{type:'visible',visible:(event.target as HTMLInputElement).checked}));bind('.zone-lock',()=>this.applyZoneAction(zone.id,{type:'locked',locked:!zone.locked}));bind('.zone-up',()=>this.applyZoneAction(zone.id,{type:'move',direction:1}));bind('.zone-down',()=>this.applyZoneAction(zone.id,{type:'move',direction:-1}));bind('.zone-delete',()=>this.applyZoneAction(zone.id,{type:'delete'}));bind('.zone-apply',()=>{const radius=Number((row.querySelector('.zone-radius') as HTMLInputElement).value),delta=Number((row.querySelector('.zone-delta') as HTMLInputElement).value),falloff=(row.querySelector('.zone-falloff') as HTMLSelectElement).value;this.applyZoneAction(zone.id,{type:'edit',radiusKm:radius,deltaMeters:delta,falloff:falloff as any});});container.appendChild(row);}}
 
     private handleLabelPlace(position: Coordinate, suggestedPlateId?: string): void {
         const activePlates = this.state.world.plates.filter(plate =>
@@ -5360,6 +5426,7 @@ class TectoLiteApp {
             world: {
                 ...this.state.world,
                 plates: newPlates,
+                elevationZones: this.state.world.elevationZones.filter(zone => !idSet.has(zone.ownerPlateId)),
                 selectedPlateId,
                 selectedPlateIds: remainingSelectedIds
             }

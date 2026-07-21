@@ -167,3 +167,11 @@ task scope. Append new entries below.
 
 2026-07-10 - TASK_12 follow-up
 - No explicit New Project / Clear World workflow exists in `src/main.ts` or the current UI. TASK_12 therefore resets EventSystem state on autosave restore, replace-current import, undo, and redo only. If a New Project action is added, it must call `eventSystem.reset()` before installing the fresh state.
+
+2026-07-21 - BRIEF_16 future interoperability follow-up
+- Upgrade the GeoPackage layer into an OGC Tiled Gridded Coverage or a Float32 GeoTIFF export.
+
+2026-07-21 - BRIEF_16 Electron performance evidence follow-up
+- The production Electron DOM validation smoke is reliable, but an experimental actual-worker performance harness did not complete within its 90 s bound and emitted overlapping WebContents-listener warnings from memory polling. The unreliable prototype was not retained as a callable smoke script to avoid turning Slice 1 into a GUI-harness refactor.
+- Make the Electron benchmark install a deterministic representative elevation snapshot directly (rather than synthesizing strokes through projected mouse events), expose worker phase completion independently from browser downloads, and collect renderer/worker memory without repeated `executeJavaScript` listener churn. Then record module-worker wall time, peak working set/heap, and committed-paint preview p50/p95 on the documented baseline.
+- Until that harness is reliable, `TECTOLITE_HEIGHTMAP_BENCHMARK=1` remains the enforced CI gate for minimal structured-clone plus full 4096x2048 derivation/quantization/PNG encoding. Worker phase progress and immediate termination cancellation remain covered separately.

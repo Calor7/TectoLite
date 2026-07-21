@@ -26,7 +26,7 @@ export interface SaveFile {
 }
 
 /** Current save file version. Bump this whenever the on-disk format changes. */
-export const CURRENT_SAVE_VERSION = 9;
+export const CURRENT_SAVE_VERSION = 10;
 
 /**
  * Migrate a parsed save file to {@link CURRENT_SAVE_VERSION}.
@@ -149,6 +149,13 @@ export function migrateSaveFile(data: SaveFile): SaveFile {
         const options = (world.globalOptions ??= {}) as Record<string, any>;
         if (typeof options.expandLabelsOnHover !== 'boolean') options.expandLabelsOnHover = true;
         data.version = 9;
+    }
+
+    // v9 -> v10: ordered plate-relative elevation causes.
+    if (data.version < 10) {
+        const world = data.world as unknown as Record<string, any>;
+        world.elevationZones = Array.isArray(world.elevationZones) ? world.elevationZones : [];
+        data.version = 10;
     }
 
     return data;

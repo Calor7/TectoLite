@@ -22,6 +22,7 @@
     "electron-dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
     "electron-build": "npm run build && electron-builder",
     "smoke:electron-export": "npm run build && electron . --smoke-export",
+    "smoke:electron-heightmap-validation": "npm run build && electron . --smoke-heightmap-validation",
     "dist": "npm run build && electron-builder --win --mac --linux"
   },
   "devDependencies": {

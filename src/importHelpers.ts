@@ -10,6 +10,7 @@ import {
     RiftAxis,
     TripleJunction,
     MapLabel,
+    ElevationZone,
     generateId,
     migrateLineType,
 } from './types';
@@ -21,6 +22,7 @@ export interface RemappedImport {
     entityGroups: EntityGroup[];
     riftAxes: RiftAxis[];
     tripleJunctions: TripleJunction[];
+    elevationZones: ElevationZone[];
 }
 
 /**
@@ -38,12 +40,13 @@ export interface RemappedImport {
  */
 export function remapImportedWorld(
     importedWorld: Pick<WorldState, 'plates'>
-        & Partial<Pick<WorldState, 'entityGroups' | 'riftAxes' | 'tripleJunctions' | 'labels'>>,
+        & Partial<Pick<WorldState, 'entityGroups' | 'riftAxes' | 'tripleJunctions' | 'labels' | 'elevationZones'>>,
     timeOffset: number
 ): RemappedImport {
     const idMap = new Map<string, string>(); // old plate id -> new plate id
     const groupIdMap = new Map<string, string>(); // old Explorer group id -> new group id
     const featureIdMap = new Map<string, string>(); // old feature id -> new feature id
+    const zoneIdMap = new Map<string, string>();
 
     const platesToImport = importedWorld.plates.filter(p => !p.riftAxisId && !p.junctionId);
 
@@ -135,6 +138,21 @@ export function remapImportedWorld(
             groupId: label.groupId ? groupIdMap.get(label.groupId) : undefined
         }));
 
+    (importedWorld.elevationZones || []).forEach(zone => zoneIdMap.set(zone.id, generateId()));
+    const elevationZones: ElevationZone[] = (importedWorld.elevationZones || [])
+        .filter(zone => idMap.has(zone.ownerPlateId))
+        .map(zone => ({
+            ...zone,
+            id: zoneIdMap.get(zone.id)!, ownerPlateId: idMap.get(zone.ownerPlateId)!, groupId: zone.groupId ? groupIdMap.get(zone.groupId) : undefined,
+            lineageId: zone.lineageId ? zoneIdMap.get(zone.lineageId) : undefined,
+            anchorTime: zone.anchorTime + timeOffset,
+            activeFrom: zone.activeFrom + timeOffset,
+            activeTo: zone.activeTo === undefined ? undefined : zone.activeTo + timeOffset,
+            geometry: zone.geometry.kind === 'brush'
+                ? { ...zone.geometry, path: zone.geometry.path.map(point => ({ ...point, position: [...point.position] as [number, number] })), clipMask: zone.geometry.clipMask?.map(poly => poly.map(ring => ring.map(point => [...point] as [number, number]))), clipMasks: zone.geometry.clipMasks?.map(mask=>mask.map(poly=>poly.map(ring=>ring.map(point=>[...point] as [number,number])))) }
+                : { ...zone.geometry, rings: zone.geometry.rings.map(ring => ring.map(point => [...point] as [number, number])), clipMask: zone.geometry.clipMask?.map(poly => poly.map(ring => ring.map(point => [...point] as [number, number]))), clipMasks: zone.geometry.clipMasks?.map(mask=>mask.map(poly=>poly.map(ring=>ring.map(point=>[...point] as [number,number])))) }
+        }));
+
     // Safety net: ensure every plate has the new model materialized. Old v3
     // saves that slipped through parseImportFile without migration are caught
     // here. ensureMotionModel reads legacy motion/motionKeyframes if present
@@ -178,7 +196,7 @@ export function remapImportedWorld(
             };
         });
 
-    return { plates, labels, entityGroups, riftAxes, tripleJunctions };
+    return { plates, labels, entityGroups, riftAxes, tripleJunctions, elevationZones };
 }
 
 /**

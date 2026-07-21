@@ -351,6 +351,11 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     <span class="tool-label">Label</span>
                     <span class="info-icon" data-tooltip="Place a flag-style title and detail annotation (Hotkey: A)">(i)</span>
                   </button>
+                  <button class="tool-btn" data-tool="paint" style="flex:1;">
+                    <span class="tool-icon">â–²</span>
+                    <span class="tool-label">Elevation</span>
+                    <span class="info-icon" data-tooltip="Paint plate-owned elevation in meters (Hotkey: T)">(i)</span>
+                  </button>
 
               </div>
               <div style="display: flex; gap: 4px; flex-wrap: wrap;">
@@ -382,6 +387,21 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                  <!-- Dynamic Controls Stack -->
 
                  <!-- Draw Mode Controls (visible when Draw tool is active) -->
+                 <div id="paint-controls" style="display: none; flex-direction: column; gap: 8px; margin-bottom: 8px; padding: 8px; border: 1px solid var(--border-default); border-radius: 4px;">
+                     <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">Elevation Brush</div>
+                     <label style="font-size:11px;">Action
+                       <select id="paint-action" class="tool-select" style="width:100%;"><option value="raise">Raise</option><option value="lower">Lower</option></select>
+                     </label>
+                     <label style="font-size:11px;">Radius (km)<input id="paint-radius-km" class="property-input" type="number" min="1" max="10000" value="250" style="width:100%;"></label>
+                     <label style="font-size:11px;">Strength (meters)<input id="paint-strength-m" class="property-input" type="number" min="1" max="50000" value="500" style="width:100%;"></label>
+                     <label style="font-size:11px;">Falloff
+                       <select id="paint-falloff" class="tool-select" style="width:100%;"><option value="smoothstep">Smoothstep</option><option value="hard">Hard</option></select>
+                     </label>
+                     <div style="font-size:10px; color:var(--text-muted); line-height:1.35;">Select a live, unlocked plate. Drag to preview; release to commit one undoable zone. Escape cancels.</div>
+                     <div style="font-size:11px; font-weight:600; margin-top:4px;">Zone layers</div>
+                     <div id="elevation-zone-list" style="display:flex; flex-direction:column; gap:6px; max-height:260px; overflow:auto;"></div>
+                 </div>
+
                  <div id="draw-mode-controls" style="display: none; flex-direction: column; gap: 6px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px;">
                      <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">Draw Mode</div>
                      <div style="display: flex; gap: 8px; align-items: center;">

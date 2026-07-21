@@ -408,6 +408,8 @@ export interface GlobalOptions {
 // Pure document metadata. Never read by SimulationEngine / motion / geometry.
 export interface WorldState {
   plates: TectonicPlate[];
+  /** Ordered, plate-owned authoring causes; raster output is derived on demand. */
+  elevationZones: ElevationZone[];
   labels: MapLabel[];
   entityGroups: EntityGroup[];
   currentTime: number;
@@ -438,6 +440,46 @@ export interface WorldState {
   mantlePlumes?: MantlePlume[]; // Active mantle plumes
   // Image Overlay for tracing existing maps
   imageOverlay?: ImageOverlay;
+}
+
+export type ElevationFalloff = 'hard' | 'smoothstep';
+export interface ElevationBrushStroke {
+  kind: 'brush';
+  path: Array<{ position: Coordinate; pressure?: number }>;
+  radiusKm: number;
+  deltaMeters: number;
+  falloff: ElevationFalloff;
+  spacingKm: number;
+  kernelVersion: 1;
+  /** Explicit split fragment clipping mask, in anchor-time coordinates. */
+  clipMask?: Coordinate[][][];
+  /** Additional masks applied conjunctively. This preserves spherical source
+   * and child constraints without unsafe planar polygon intersection. */
+  clipMasks?: Coordinate[][][][];
+}
+export interface ElevationPolygonFill {
+  kind: 'polygon';
+  rings: Coordinate[][];
+  deltaMeters: number;
+  featherKm: number;
+  clipMask?: Coordinate[][][];
+  clipMasks?: Coordinate[][][][];
+}
+export interface ElevationZone {
+  id: string;
+  name: string;
+  ownerPlateId: string;
+  anchorTime: number;
+  activeFrom: number;
+  activeTo?: number;
+  order: number;
+  operation: 'add';
+  geometry: ElevationBrushStroke | ElevationPolygonFill;
+  visible: boolean;
+  locked: boolean;
+  groupId?: string;
+  previewColor: string;
+  lineageId?: string;
 }
 
 /**
@@ -549,6 +591,7 @@ export function createDefaultGeometryStage(currentTime: number, polygons: Polygo
 export function createDefaultWorldState(): WorldState {
   return {
     plates: [],
+    elevationZones: [],
     labels: [],
     entityGroups: [],
     currentTime: 0,

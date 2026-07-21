@@ -2,6 +2,7 @@
 import { AppState, TectonicPlate, MotionSegment, GeometryStage, Coordinate, PlateEvent } from '../types';
 import { ensureMotionModel } from '../motion/RotationModel';
 import type { ModalOptions } from '../ui/ModalSystem';
+import { recomputeFusionTransfer, recomputeSplitTransfer, removeFusionTransfer, removeSplitTransfer } from './ElevationZoneLifecycle';
 // import toDisplayTime, toInternalTime removed
 
 
@@ -432,11 +433,29 @@ export class TimelineSystem {
                     child.events.forEach(cevt => cevt.time += delta);
                 }
             });
+            state.world.elevationZones = recomputeSplitTransfer(state.world.elevationZones || [], targetPlate, children, plates, oldInternalTime, newTime);
         }
         else if (event.type === 'fuse') {
             const evt = event.originalRef as PlateEvent;
             oldInternalTime = evt.time;
-            evt.time = newTime;
+            const plates = state.world.plates;
+            const fused = plates.find(plate => plate.parentPlateIds?.includes(targetPlate.id) && Math.abs(plate.birthTime - oldInternalTime) < 0.1);
+            if (fused) {
+                const parents = plates.filter(plate => fused.parentPlateIds?.includes(plate.id));
+                for (const parent of parents) {
+                    if (parent.deathTime === oldInternalTime) parent.deathTime = newTime;
+                    parent.events.filter(candidate => candidate.type === 'fusion' && Math.abs(candidate.time - oldInternalTime) < 0.1).forEach(candidate => { candidate.time = newTime; });
+                }
+                const delta = newTime - oldInternalTime;
+                fused.birthTime = newTime;
+                if (cascade) {
+                    const model = ensureMotionModel(fused);
+                    model.segments.forEach(segment => { segment.time += delta; });
+                    model.stages.forEach(stage => { stage.time += delta; });
+                    fused.events.forEach(candidate => { candidate.time += delta; });
+                }
+                state.world.elevationZones = recomputeFusionTransfer(state.world.elevationZones || [], parents, fused, plates, oldInternalTime, newTime);
+            } else evt.time = newTime;
         }
 
         // Invalidate history from the earlier of the two times (old or new)
@@ -525,8 +544,24 @@ export class TimelineSystem {
             const plates = this.host.getState().world.plates;
             // Identify children: Parent matches AND birthTime matches split time
             const children = plates.filter((p: TectonicPlate) => p.parentPlateId === targetPlate.id && Math.abs(p.birthTime - evt.time) < 0.1);
-
+            this.host.getState().world.elevationZones = removeSplitTransfer(this.host.getState().world.elevationZones || [], children, evt.time);
             this.host.deletePlates(children.map((c: TectonicPlate) => c.id));
+        }
+        else if (event.type === 'fuse') {
+            const evt = event.originalRef as PlateEvent;
+            const state = this.host.getState();
+            const fused = state.world.plates.find(plate => plate.parentPlateIds?.includes(targetPlate.id) && Math.abs(plate.birthTime - evt.time) < 0.1);
+            if (fused) {
+                const parents = state.world.plates.filter(plate => fused.parentPlateIds?.includes(plate.id));
+                state.world.elevationZones = removeFusionTransfer(state.world.elevationZones || [], fused, evt.time);
+                state.world.elevationZones = state.world.elevationZones.filter(zone => zone.ownerPlateId !== fused.id);
+                for (const parent of parents) {
+                    if (parent.deathTime === evt.time) parent.deathTime = null;
+                    parent.events = parent.events.filter(candidate => !(candidate.type === 'fusion' && Math.abs(candidate.time - evt.time) < 0.1));
+                }
+                state.world.plates = state.world.plates.filter(plate => plate.id !== fused.id);
+                if (state.world.selectedPlateId === fused.id) state.world.selectedPlateId = targetPlate.id;
+            }
         }
 
         this.triggerUpdate(event.time, targetPlate);

@@ -4,6 +4,8 @@ const path = require('path');
 
 let mainWindow;
 const smokeExportEnabled = process.argv.includes('--smoke-export');
+const smokeHeightmapValidationEnabled = process.argv.includes('--smoke-heightmap-validation');
+const smokeEnabled = smokeExportEnabled || smokeHeightmapValidationEnabled;
 let ipcHandlersRegistered = false;
 
 function registerIpcHandlers() {
@@ -134,6 +136,11 @@ function setupSmokeExport(window) {
   });
 }
 
+function setupHeightmapValidationSmoke(window) {
+  const timeout=setTimeout(()=>finishSmokeExport(1,'[smoke-heightmap-validation] timed out'),15000);
+  window.webContents.once('did-finish-load',async()=>{try{const result=await window.webContents.executeJavaScript(`new Promise((resolve,reject)=>{const deadline=Date.now()+10000;const run=()=>{const button=document.getElementById('btn-export');if(!button){if(Date.now()>deadline){reject(new Error('btn-export not found'));return;}setTimeout(run,50);return;}button.click();setTimeout(()=>{const format=document.getElementById('fmt-heightmap'),width=document.getElementById('hm-width'),confirm=document.getElementById('export-confirm');if(!format||!width||!confirm){reject(new Error('unified heightmap controls not found'));return;}format.click();width.value='4096.5';confirm.click();setTimeout(()=>{const alert=document.getElementById('export-validation-error');resolve({visible:!!alert&&alert.style.display==='block',message:alert?.textContent||'',modalConnected:!!alert?.isConnected,widthValue:width.value});},50);},50);};run();})`,true);clearTimeout(timeout);if(result.visible&&result.modalConnected&&/even integer/.test(result.message)&&result.widthValue==='4096.5')finishSmokeExport(0,`[smoke-heightmap-validation] success: ${JSON.stringify(result)}`);else finishSmokeExport(1,`[smoke-heightmap-validation] failed: ${JSON.stringify(result)}`);}catch(error){clearTimeout(timeout);finishSmokeExport(1,`[smoke-heightmap-validation] error: ${error instanceof Error?error.message:String(error)}`);}});
+}
+
 function createWindow() {
   registerIpcHandlers();
   mainWindow = new BrowserWindow({
@@ -152,7 +159,7 @@ function createWindow() {
   // Load the app
   // Smoke runs exercise the production bundle even when launched through the
   // local Electron binary, where app.isPackaged normally selects Vite.
-  const startUrl = !app.isPackaged && !smokeExportEnabled
+  const startUrl = !app.isPackaged && !smokeEnabled
     ? 'http://localhost:5173' // Vite dev server
     : `file://${path.join(__dirname, 'dist/index.html')}`; // Production build
 
@@ -180,6 +187,8 @@ function createWindow() {
 
   if (smokeExportEnabled) {
     setupSmokeExport(mainWindow);
+  } else if (smokeHeightmapValidationEnabled) {
+    setupHeightmapValidationSmoke(mainWindow);
   }
 
   // Confirm before closing with unsaved changes. The renderer mirrors its
@@ -188,7 +197,7 @@ function createWindow() {
   // without showing any dialog.
   let forceClose = false;
   mainWindow.on('close', (e) => {
-    if (forceClose || smokeExportEnabled) return;
+    if (forceClose || smokeEnabled) return;
     e.preventDefault(); // must happen synchronously; re-close below if allowed
 
     const win = mainWindow;

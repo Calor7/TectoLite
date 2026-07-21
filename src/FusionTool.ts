@@ -3,6 +3,7 @@ import { calculateSphericalCentroid, latLonToVector, vectorToLatLon, rotateVecto
 import { activeEulerPole } from './motion/RotationModel';
 import polygonClipping from 'polygon-clipping';
 import { mixColors } from './utils/colorUtils';
+import { transferZonesForFusion } from './systems/ElevationZoneLifecycle';
 
 interface FuseResult {
     success: boolean;
@@ -199,6 +200,7 @@ export function fusePlates(
         world: {
             ...state.world,
             plates: newPlates,
+            elevationZones: transferZonesForFusion(state.world.elevationZones || [], [plate1, plate2], fusedPlate, newPlates, currentTime),
             selectedPlateId: fusedPlate.id
         }
     };

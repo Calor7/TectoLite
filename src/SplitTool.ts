@@ -19,6 +19,7 @@ import {
     isPointInPolygon,
 } from './utils/sphericalMath';
 import { derivePlateGeometry, pointPositionAt, activeEulerPole } from './motion/RotationModel';
+import { transferZonesForSplit } from './systems/ElevationZoneLifecycle';
 
 // Legacy interface for start/end splits
 interface SplitLine {
@@ -1324,6 +1325,7 @@ export function splitPlate(
                 // Add new plates
                 ...newPlates
             ],
+            elevationZones: transferZonesForSplit(currentState.world.elevationZones || [], currentState.world.plates.find(p => p.id === plateId)!, newPlates, [...currentState.world.plates, ...newPlates], currentTime),
             riftAxes: [
                 ...reroutedAxes,
                 ...additionalAxes,
