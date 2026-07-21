@@ -9,6 +9,7 @@ import {
     Feature,
     RiftAxis,
     TripleJunction,
+    MapLabel,
     generateId,
     migrateLineType,
 } from './types';
@@ -16,6 +17,7 @@ import { ensureMotionModel } from './motion/RotationModel';
 
 export interface RemappedImport {
     plates: TectonicPlate[];
+    labels: MapLabel[];
     entityGroups: EntityGroup[];
     riftAxes: RiftAxis[];
     tripleJunctions: TripleJunction[];
@@ -36,7 +38,7 @@ export interface RemappedImport {
  */
 export function remapImportedWorld(
     importedWorld: Pick<WorldState, 'plates'>
-        & Partial<Pick<WorldState, 'entityGroups' | 'riftAxes' | 'tripleJunctions'>>,
+        & Partial<Pick<WorldState, 'entityGroups' | 'riftAxes' | 'tripleJunctions' | 'labels'>>,
     timeOffset: number
 ): RemappedImport {
     const idMap = new Map<string, string>(); // old plate id -> new plate id
@@ -121,6 +123,18 @@ export function remapImportedWorld(
         }))
     }));
 
+    const labels: MapLabel[] = (importedWorld.labels || [])
+        .filter(label => !label.attachedPlateId || idMap.has(label.attachedPlateId))
+        .map(label => ({
+            ...label,
+            id: generateId(),
+            anchor: [...label.anchor] as [number, number],
+            offset: [...label.offset] as [number, number],
+            anchorTime: label.anchorTime + timeOffset,
+            attachedPlateId: label.attachedPlateId ? idMap.get(label.attachedPlateId) : undefined,
+            groupId: label.groupId ? groupIdMap.get(label.groupId) : undefined
+        }));
+
     // Safety net: ensure every plate has the new model materialized. Old v3
     // saves that slipped through parseImportFile without migration are caught
     // here. ensureMotionModel reads legacy motion/motionKeyframes if present
@@ -164,7 +178,7 @@ export function remapImportedWorld(
             };
         });
 
-    return { plates, entityGroups, riftAxes, tripleJunctions };
+    return { plates, labels, entityGroups, riftAxes, tripleJunctions };
 }
 
 /**

@@ -2,6 +2,15 @@
 
 All notable changes to TectoLite are documented here.
 
+## Unreleased
+
+### Added
+
+- Added first-class flag labels with always-visible titles, click/hover detail
+  expansion, globe occlusion, plate-relative or fixed anchoring, draggable
+  anchors and text cards, grouping, locking, visibility, color, persistence,
+  undo/redo, and merge-import support.
+
 ## 1.0.1 - 2026-07-17
 
 ### Added

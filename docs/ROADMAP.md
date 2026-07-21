@@ -2,7 +2,7 @@
 
 Status: **active — source of truth for product direction**
 Authored: 2026-07-10 (lead-dev takeover review)
-Companion briefs: [docs/briefs/](briefs/) (BRIEF_01 … BRIEF_10)
+Companion briefs: [docs/briefs/](briefs/) (BRIEF_01 … BRIEF_15)
 Companion tech-debt plan: [docs/restructure-tasks/MASTER_PLAN.md](restructure-tasks/MASTER_PLAN.md)
 
 ---
@@ -152,6 +152,24 @@ architecture, and true history editing.
 | [BRIEF_09](briefs/BRIEF_09_performance_program.md) | Benchmark harness, then TASK_07→08→09→10 in order |
 | [BRIEF_10](briefs/BRIEF_10_correctness_hardening.md) | Ongoing coverage growth alongside feature work |
 
+### v1.1.0 - Mobile application (post-1.0.1 feature freeze)
+
+The final planned product step is an offline Android/iPhone application built
+from the existing Vite/TypeScript editor with Capacitor. The Electron desktop
+application and browser build remain first-class targets. Mobile work adds no
+new simulation features; only mobile adaptation and bug fixes are in scope.
+
+| Brief | Title | Size |
+|---|---|---|
+| [BRIEF_13](briefs/BRIEF_13_mobile_feasibility_spike.md) | Physical-device Capacitor feasibility spike | S |
+| [BRIEF_14](briefs/BRIEF_14_mobile_platform_services.md) | Platform services: files, autosave, lifecycle, sharing | M |
+| [BRIEF_15](briefs/BRIEF_15_touch_input_foundation.md) | Pointer events, touch gestures, explicit editor actions | M |
+
+BRIEF_13 is a hard gate: BRIEF_14/15 begin only after its GO or GO WITH
+LIMITS verdict. The remaining sequence is adaptive phone/tablet layout,
+performance/accessibility hardening, then beta/store release; those briefs are
+written after the spike fixes the real device and export constraints.
+
 ### Later / parked (ideas with a reason to wait)
 
 Approved additions (2026-07-10):
@@ -164,6 +182,14 @@ Approved additions (2026-07-10):
   detected interactions and chosen consequences share one timeline surface.
 - **Project templates** — approved; fold into BRIEF_07's bundled example-world and
   welcome-flow work.
+
+Approved addition (2026-07-21):
+
+- **Plate-relative elevation zones and brush** — approved for later design.
+  Author hard-edged and soft-falloff altitude changes on plates, landmasses,
+  and polygons; the authored field moves with its owner and feeds heightmap
+  export without reintroducing a runtime terrain mesh. See
+  [BRIEF_16](briefs/BRIEF_16_plate_relative_elevation_zones.md).
 
 - **Animation export** (PNG sequence / WebM of timeline playback) — high
   worldbuilder value; wants deterministic stepping (TASK_22) first so

@@ -115,7 +115,8 @@ describe('migrateSaveFile', () => {
         expect(save.version).toBe(CURRENT_SAVE_VERSION);
         expect(world.globalOptions).toEqual({
             enableBoundaryVisualization: true,
-            oceanCrustStrategy: 'off'
+            oceanCrustStrategy: 'off',
+            expandLabelsOnHover: true
         });
         expect(world.tectonicEvents).toBeUndefined();
         expect(world.pendingEventId).toBeUndefined();
@@ -150,6 +151,19 @@ describe('migrateSaveFile', () => {
         expect(save.world.entityGroups[0].opacity).toBe(1);
         expect(save.world.entityGroups[1].opacity).toBeUndefined();
         expect(save.world.selectedPlateIds).toEqual([plate.id]);
+        expect(save.version).toBe(CURRENT_SAVE_VERSION);
+    });
+
+    it('adds the label collection and hover preference to v8 saves', () => {
+        const save = makeSave([makePlate('a')], 8);
+        const world = save.world as unknown as Record<string, any>;
+        world.globalOptions = {};
+
+        migrateSaveFile(save);
+
+        expect(world.labels).toEqual([]);
+        expect(world.selectedLabelId).toBeNull();
+        expect(world.globalOptions.expandLabelsOnHover).toBe(true);
         expect(save.version).toBe(CURRENT_SAVE_VERSION);
     });
 

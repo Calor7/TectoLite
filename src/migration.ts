@@ -26,7 +26,7 @@ export interface SaveFile {
 }
 
 /** Current save file version. Bump this whenever the on-disk format changes. */
-export const CURRENT_SAVE_VERSION = 8;
+export const CURRENT_SAVE_VERSION = 9;
 
 /**
  * Migrate a parsed save file to {@link CURRENT_SAVE_VERSION}.
@@ -139,6 +139,16 @@ export function migrateSaveFile(data: SaveFile): SaveFile {
             ? [data.world.selectedPlateId]
             : [];
         data.version = 8;
+    }
+
+    // v8 → v9: first-class map labels and their selection/hover settings.
+    if (data.version < 9) {
+        const world = data.world as unknown as Record<string, any>;
+        world.labels = Array.isArray(world.labels) ? world.labels : [];
+        world.selectedLabelId = null;
+        const options = (world.globalOptions ??= {}) as Record<string, any>;
+        if (typeof options.expandLabelsOnHover !== 'boolean') options.expandLabelsOnHover = true;
+        data.version = 9;
     }
 
     return data;

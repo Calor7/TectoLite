@@ -355,6 +355,25 @@ export interface EntityGroup {
   opacity?: number;
 }
 
+/** A flag-style annotation anchored to a geographic point. When attached to a
+ * plate, `anchor` is the point's absolute position at `anchorTime`; rendering
+ * derives its position from the plate motion model without mutating the label. */
+export interface MapLabel {
+  id: string;
+  title: string;
+  content: string;
+  anchor: Coordinate;
+  anchorTime: number;
+  /** Screen-space displacement from the marked point to the text card. */
+  offset: [number, number];
+  color: string;
+  visible: boolean;
+  locked: boolean;
+  expanded: boolean;
+  attachedPlateId?: string;
+  groupId?: string;
+}
+
 export type OceanCrustStrategy = 'off' | 'continuous' | 'banded';
 
 export interface GlobalOptions {
@@ -371,6 +390,8 @@ export interface GlobalOptions {
   showPredictionFlowlines?: boolean;
   showVelocityArrows?: boolean;
   showHoverTooltips?: boolean;
+  /** Temporarily reveal label content while its title card is hovered. */
+  expandLabelsOnHover?: boolean;
   showHiddenPlates?: boolean;
   gridOnTop?: boolean;
   plateOpacity?: number;
@@ -387,6 +408,7 @@ export interface GlobalOptions {
 // Pure document metadata. Never read by SimulationEngine / motion / geometry.
 export interface WorldState {
   plates: TectonicPlate[];
+  labels: MapLabel[];
   entityGroups: EntityGroup[];
   currentTime: number;
   // timeMode removed - simplify to internal positive time
@@ -398,6 +420,7 @@ export interface WorldState {
   selectedFeatureId: string | null; // Keep for backward compatibility/primary selection
   selectedFeatureIds: string[];     // Support multiple selection
   selectedEdge: EdgeRef | null;     // Currently selected edge element
+  selectedLabelId: string | null;
 
   projection: ProjectionType;
   showGrid: boolean;
@@ -440,7 +463,7 @@ export interface Boundary {
   crustTypes?: undefined; // Deprecated
 }
 
-export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'view_pan' | 'fuse' | 'link' | 'edit' | 'paint';
+export type ToolType = 'select' | 'draw' | 'feature' | 'poly_feature' | 'split' | 'pan' | 'view_pan' | 'fuse' | 'link' | 'edit' | 'paint' | 'label';
 
 export type PaintMode = 'brush' | 'poly_fill';
 
@@ -526,6 +549,7 @@ export function createDefaultGeometryStage(currentTime: number, polygons: Polygo
 export function createDefaultWorldState(): WorldState {
   return {
     plates: [],
+    labels: [],
     entityGroups: [],
     currentTime: 0,
 
@@ -541,6 +565,7 @@ export function createDefaultWorldState(): WorldState {
     selectedFeatureId: null,
     selectedFeatureIds: [],
     selectedEdge: null,
+    selectedLabelId: null,
     globalOptions: {
       planetRadius: 6371, // Earth radius in km
       customPlanetRadius: 6371,
@@ -559,6 +584,7 @@ export function createDefaultWorldState(): WorldState {
       showPredictionFlowlines: false,
       showVelocityArrows: false,
       showHoverTooltips: false,
+      expandLabelsOnHover: true,
 
       showHiddenPlates: false,  // Hide invisible plates by default
       gridOnTop: false,         // Grid below plates by default

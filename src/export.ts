@@ -1,9 +1,10 @@
 // PNG Export functionality
-import { AppState, Feature, WorldState, ProjectionType, CameraView } from './types';
+import { AppState, Feature, WorldState, ProjectionType, CameraView, MapLabel } from './types';
 import { migrateSaveFile, CURRENT_SAVE_VERSION as SAVE_VERSION, type SaveFile } from './migration';
 import { ProjectionManager } from './canvas/ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
+import { pointPositionAt } from './motion/RotationModel';
 import {
     drawMountainIcon,
     drawVolcanoIcon,
@@ -133,11 +134,77 @@ export function exportToPNG(
 
     }
 
+    // 4. Flag labels are annotation overlays and intentionally render last.
+    const groupOpacity = new Map(state.world.entityGroups.map(group => [group.id, group.opacity ?? 1]));
+    for (const label of state.world.labels ?? []) {
+        if (!label.visible) continue;
+        let position = label.anchor;
+        if (label.attachedPlateId) {
+            const plate = state.world.plates.find(candidate => candidate.id === label.attachedPlateId);
+            if (!plate || currentTime < plate.birthTime || (plate.deathTime !== null && currentTime >= plate.deathTime)) continue;
+            position = pointPositionAt(plate, state.world.plates, label.anchor, label.anchorTime, currentTime);
+        }
+        drawExportLabel(ctx, pm, label, position, ratio, label.groupId ? (groupOpacity.get(label.groupId) ?? 1) : 1);
+    }
+
     // Trigger download
     const link = document.createElement('a');
     link.download = `tectolite-export-${Date.now()}.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
+}
+
+function drawExportLabel(
+    ctx: CanvasRenderingContext2D,
+    pm: ProjectionManager,
+    label: MapLabel,
+    position: [number, number],
+    ratio: number,
+    opacity: number
+): void {
+    const projected = pm.project(position);
+    if (!projected) return;
+    const padding = 7 * ratio;
+    const titleHeight = 26 * ratio;
+    const maxTextWidth = 220 * ratio;
+    const x = projected[0] + label.offset[0] * ratio;
+    const y = projected[1] + label.offset[1] * ratio;
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.font = `600 ${12 * ratio}px system-ui, sans-serif`;
+    const titleWidth = Math.min(maxTextWidth, Math.max(44 * ratio, ctx.measureText(label.title).width));
+    ctx.font = `${11 * ratio}px system-ui, sans-serif`;
+    const lines: string[] = [];
+    if (label.expanded && label.content) {
+        for (const paragraph of label.content.split(/\r?\n/)) {
+            let line = '';
+            for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+                const candidate = line ? `${line} ${word}` : word;
+                if (!line || ctx.measureText(candidate).width <= maxTextWidth) line = candidate;
+                else { lines.push(line); line = word; }
+            }
+            if (line) lines.push(line);
+        }
+    }
+    const contentWidth = lines.reduce((width, line) => Math.max(width, ctx.measureText(line).width), 0);
+    const width = Math.max(titleWidth, contentWidth) + padding * 2;
+    const height = titleHeight + (lines.length ? lines.length * 15 * ratio + padding : 0);
+    ctx.strokeStyle = label.color;
+    ctx.fillStyle = label.color;
+    ctx.lineWidth = 2 * ratio;
+    ctx.beginPath(); ctx.arc(projected[0], projected[1], 3.5 * ratio, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(projected[0], projected[1]); ctx.lineTo(x, y + titleHeight / 2); ctx.stroke();
+    ctx.fillStyle = 'rgba(20, 24, 36, 0.94)';
+    ctx.beginPath(); ctx.roundRect(x, y, width, height, 5 * ratio); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#f3f4f6';
+    ctx.font = `600 ${12 * ratio}px system-ui, sans-serif`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(label.title, x + padding, y + titleHeight / 2, maxTextWidth);
+    if (lines.length) {
+        ctx.fillStyle = '#d1d5db'; ctx.font = `${11 * ratio}px system-ui, sans-serif`; ctx.textBaseline = 'top';
+        lines.slice(0, 10).forEach((line, index) => ctx.fillText(line, x + padding, y + titleHeight + 5 * ratio + index * 15 * ratio, maxTextWidth));
+    }
+    ctx.restore();
 }
 
 function drawFeature(
@@ -165,6 +232,7 @@ function drawFeature(
 
 // JSON Export functionality
 // Save version history:
+//   v9: first-class flag labels with fixed or plate-relative anchors.
 //   v8: Explorer range selection and persistent group opacity.
 //   v7: ocean-crust automation uses one mutually exclusive strategy.
 //   v6: retired guided-event automation fields removed from project state.
@@ -291,6 +359,16 @@ export async function exportToJSON(state: AppState, cameraViews?: CameraView[]):
         worldToSave = {
             ...state.world,
             currentTime: 0,
+            labels: state.world.labels.map(label => {
+                if (!label.attachedPlateId) return { ...label, anchorTime: 0 };
+                const plate = state.world.plates.find(candidate => candidate.id === label.attachedPlateId);
+                if (!plate) return { ...label, attachedPlateId: undefined, anchorTime: 0 };
+                return {
+                    ...label,
+                    anchor: pointPositionAt(plate, state.world.plates, label.anchor, label.anchorTime, state.world.currentTime),
+                    anchorTime: 0
+                };
+            }),
             plates: state.world.plates
                 .filter(plate => {
                     // Only include plates that are alive at current time

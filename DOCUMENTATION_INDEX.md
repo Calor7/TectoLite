@@ -1,7 +1,7 @@
 # TectoLite Documentation Index
 
 Status: active living index
-Last reviewed: 2026-07-10
+Last reviewed: 2026-07-19
 
 This index reflects the current repository state. Older delivery documents remain useful as project history, but they should not be treated as the source of truth when they conflict with current code.
 
@@ -9,8 +9,8 @@ This index reflects the current repository state. Older delivery documents remai
 
 ### Product direction (roadmap + briefs)
 
-- [docs/ROADMAP.md](docs/ROADMAP.md): vision, pillars, scope fences, and the v0.2 → v0.4 release plan. **Read this first for "what's next".**
-- [docs/briefs/](docs/briefs/): decision-complete briefs BRIEF_01–BRIEF_10, each sized for one session / one reviewable diff.
+- [docs/ROADMAP.md](docs/ROADMAP.md): vision, pillars, scope fences, the earlier v0.2-v0.4 plan, and the post-1.0.1 mobile track. **Read this first for "what's next".**
+- [docs/briefs/](docs/briefs/): planning briefs BRIEF_01-BRIEF_16, generally sized for one session / one reviewable diff. BRIEF_13-BRIEF_15 begin the post-1.0.1 mobile application track; BRIEF_16 records the future plate-relative elevation-zone concept.
 - [docs/restructure-tasks/MASTER_PLAN.md](docs/restructure-tasks/MASTER_PLAN.md): the 23 technical restructure task specs (phases 0–1 complete; sequencing now governed by the roadmap).
 
 ### Current technical reference

@@ -1,9 +1,9 @@
-import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, ToolType, TectonicPlate, LineType, resolveLineTypeDefaults } from '../types';
+import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, ToolType, TectonicPlate, LineType, resolveLineTypeDefaults, MapLabel } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
 import { MotionGizmo } from './MotionGizmo';
-import { activeEulerPole } from '../motion/RotationModel';
+import { activeEulerPole, pointPositionAt } from '../motion/RotationModel';
 import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid } from '../utils/sphericalMath';
 import { perfMonitor } from '../utils/PerfMonitor';
 
@@ -16,6 +16,10 @@ import { EditTool } from './tools/EditTool';
 export interface CanvasManagerCallbacks {
     onDrawComplete: (points: Coordinate[]) => void;
     onFeaturePlace: (position: Coordinate, type: FeatureType) => void;
+    onLabelPlace: (position: Coordinate, attachedPlateId?: string) => void;
+    onLabelSelect: (labelId: string, toggleContent: boolean) => void;
+    onLabelMove: (labelId: string, offset: [number, number]) => void;
+    onLabelAnchorMove: (labelId: string, anchor: Coordinate) => void;
     onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[], plumeId?: string | null) => void;
     onSplitApply: (points: Coordinate[]) => void;
     onSplitPreviewChange: (active: boolean) => void;
@@ -48,7 +52,8 @@ export class CanvasManager {
     private isDragging = false;
     private lastMousePos: Point = { x: 0, y: 0 };
     // private currentMouseGeo: Coordinate | null = null; // Unused
-    private interactionMode: 'rotate_view' | 'translate_view' | 'modify_velocity' | 'drag_target' | 'spin_ghost' | 'none' = 'none';
+    private interactionMode: 'rotate_view' | 'translate_view' | 'modify_velocity' | 'drag_target' | 'spin_ghost' | 'label_offset' | 'none' = 'none';
+    private labelDrag: { id: string; kind: 'offset' | 'anchor'; start: Point; originalOffset: [number, number]; currentOffset: [number, number]; currentAnchor?: Coordinate; moved: boolean } | null = null;
 
     // Motion state
     private dragStartGeo: Coordinate | null = null;
@@ -65,6 +70,10 @@ export class CanvasManager {
     // private showLinks: boolean = true; // Unused
     private cachedOverlayImages: Map<string, HTMLImageElement> = new Map();
     private shiftKeyDown = false;
+    private hoveredLabelId: string | null = null;
+    private labelHitRegions = new Map<string, { x: number; y: number; width: number; height: number }>();
+    private labelAnchorHitRegions = new Map<string, Point>();
+    private labelToggleHitRegions = new Map<string, { x: number; y: number; radius: number }>();
 
     constructor(
         canvas: HTMLCanvasElement,
@@ -155,6 +164,16 @@ export class CanvasManager {
         this.tools.set('feature', placementTool);
         this.tools.set('flowline', placementTool);
 
+        this.tools.set('label', {
+            onMouseDown: (event, geo, screen) => {
+                if (event.button !== 0 || !geo) return;
+                const hit = this.hitTest(screen);
+                this.callbacks.onLabelPlace(geo, hit?.plateId);
+            },
+            onMouseMove: () => { }, onMouseUp: () => { },
+            onKeyDown: () => { }, onKeyUp: () => { }, render: () => { }, cancel: () => { }
+        });
+
         this.editTool = new EditTool(
             this.projectionManager,
             () => this.getState(),
@@ -180,6 +199,11 @@ export class CanvasManager {
     private handleSelectionClick(geo: Coordinate | null, screen: Point, mod: { shift: boolean, ctrl: boolean, alt: boolean }) {
         const hit = this.hitTest(screen);
         const state = this.getState();
+
+        if (state.activeTool === 'select' && hit?.labelId) {
+            this.callbacks.onLabelSelect(hit.labelId, hit.labelAction === 'toggle');
+            return;
+        }
 
         if (this.motionMode === 'drag_target' && hit?.plateId && geo) {
             this.startDragTarget(hit.plateId, geo);
@@ -463,6 +487,32 @@ export class CanvasManager {
             return;
         }
 
+        if (e.button === 0 && state.activeTool === 'select') {
+            const labelHit = this.hitTestLabel(screen);
+            const label = labelHit ? state.world.labels.find(candidate => candidate.id === labelHit.labelId) : undefined;
+            if (label && labelHit?.labelAction === 'toggle') {
+                this.callbacks.onLabelSelect(label.id, true);
+                return;
+            }
+            if (label && !label.locked) {
+                const anchorRegion = this.labelAnchorHitRegions.get(label.id);
+                const draggingAnchor = !!anchorRegion && Math.hypot(screen.x - anchorRegion.x, screen.y - anchorRegion.y) <= 9;
+                this.labelDrag = {
+                    id: label.id,
+                    kind: draggingAnchor ? 'anchor' : 'offset',
+                    start: screen,
+                    originalOffset: [...label.offset],
+                    currentOffset: [...label.offset],
+                    currentAnchor: draggingAnchor ? geo ?? label.anchor : undefined,
+                    moved: false
+                };
+                this.isDragging = true;
+                this.interactionMode = 'label_offset';
+                this.canvas.style.cursor = 'move';
+                return;
+            }
+        }
+
         // Drag-target fine-tuning: grab the yellow rotation ring to spin the ghost.
         // Must run before the selection tool, which would otherwise restart the drag.
         if (e.button === 0 && this.isFineTuning && this.ghostRotation) {
@@ -569,6 +619,14 @@ export class CanvasManager {
         this.updateCursorCoords(onCanvas ? geo : null);
 
         this.hideHoverTooltip();
+        const labelHit = onCanvas ? this.hitTestLabel(screen) : null;
+        const nextHoveredLabelId = this.getState().world.globalOptions.expandLabelsOnHover !== false
+            ? labelHit?.labelId ?? null
+            : null;
+        if (nextHoveredLabelId !== this.hoveredLabelId) {
+            this.hoveredLabelId = nextHoveredLabelId;
+            this.markDirty();
+        }
         if (onCanvas && !this.isDragging &&
             this.getState().world.globalOptions.showHoverTooltips === true) {
             this.scheduleHoverTooltip(screen);
@@ -588,6 +646,15 @@ export class CanvasManager {
                 this.updateDragTarget(e);
             } else if (this.interactionMode === 'spin_ghost') {
                 this.updateGhostSpin(screen);
+            } else if (this.interactionMode === 'label_offset' && this.labelDrag) {
+                const moveX = screen.x - this.labelDrag.start.x;
+                const moveY = screen.y - this.labelDrag.start.y;
+                if (this.labelDrag.kind === 'anchor') {
+                    if (geo) this.labelDrag.currentAnchor = geo;
+                } else {
+                    this.labelDrag.currentOffset = [this.labelDrag.originalOffset[0] + moveX, this.labelDrag.originalOffset[1] + moveY];
+                }
+                this.labelDrag.moved = this.labelDrag.moved || Math.hypot(moveX, moveY) > 3;
             }
         }
 
@@ -615,6 +682,12 @@ export class CanvasManager {
                     this.ghostSpin = 0;
                     this.callbacks.onMotionPreviewChange?.(true);
                 }
+            } else if (this.interactionMode === 'label_offset' && this.labelDrag) {
+                if (this.labelDrag.moved && this.labelDrag.kind === 'anchor' && this.labelDrag.currentAnchor) {
+                    this.callbacks.onLabelAnchorMove(this.labelDrag.id, this.labelDrag.currentAnchor);
+                } else if (this.labelDrag.moved) this.callbacks.onLabelMove(this.labelDrag.id, this.labelDrag.currentOffset);
+                else this.callbacks.onLabelSelect(this.labelDrag.id, false);
+                this.labelDrag = null;
             }
             this.interactionMode = 'none';
             this.canvas.style.cursor = 'default';
@@ -826,6 +899,8 @@ export class CanvasManager {
             if (state.world.showGrid && state.world.globalOptions.gridOnTop) {
                 this.drawGraticule(path, computedStyle);
             }
+
+            this.drawLabels(state);
         } finally {
             perfMonitor.endPhase(perfSample);
         }
@@ -838,6 +913,122 @@ export class CanvasManager {
         this.ctx.beginPath();
         path(geoGraticule()());
         this.ctx.stroke();
+    }
+
+    private resolveLabelPosition(label: MapLabel, state: AppState): Coordinate | null {
+        if (this.labelDrag?.id === label.id && this.labelDrag.kind === 'anchor' && this.labelDrag.currentAnchor) return this.labelDrag.currentAnchor;
+        if (!label.attachedPlateId) return label.anchor;
+        const plate = state.world.plates.find(candidate => candidate.id === label.attachedPlateId);
+        if (!plate) return null;
+        if (state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) return null;
+        return pointPositionAt(plate, state.world.plates, label.anchor, label.anchorTime, state.world.currentTime);
+    }
+
+    private wrapLabelText(text: string, maxWidth: number): string[] {
+        const result: string[] = [];
+        for (const paragraph of text.split(/\r?\n/)) {
+            const words = paragraph.split(/\s+/).filter(Boolean);
+            if (!words.length) { result.push(''); continue; }
+            let line = words[0];
+            for (let index = 1; index < words.length; index++) {
+                const candidate = `${line} ${words[index]}`;
+                if (this.ctx.measureText(candidate).width <= maxWidth) line = candidate;
+                else { result.push(line); line = words[index]; }
+            }
+            result.push(line);
+        }
+        return result.slice(0, 10);
+    }
+
+    private drawLabels(state: AppState): void {
+        this.labelHitRegions.clear();
+        this.labelAnchorHitRegions.clear();
+        this.labelToggleHitRegions.clear();
+        const groupOpacity = new Map(state.world.entityGroups.map(group => [group.id, group.opacity ?? 1]));
+        for (const label of state.world.labels ?? []) {
+            if (!label.visible) continue;
+            const position = this.resolveLabelPosition(label, state);
+            if (!position) continue;
+            const projected = this.projectionManager.project(position);
+            if (!projected) continue; // orthographic back-face occlusion
+
+            const expanded = label.expanded || this.hoveredLabelId === label.id;
+            const offset = this.labelDrag?.id === label.id ? this.labelDrag.currentOffset : label.offset;
+            const x = projected[0] + offset[0];
+            const y = projected[1] + offset[1];
+            const padding = 7;
+            const titleHeight = 26;
+            const maxTextWidth = 220;
+            this.ctx.save();
+            this.ctx.font = '600 12px system-ui, sans-serif';
+            const titleWidth = Math.min(maxTextWidth, Math.max(44, this.ctx.measureText(label.title).width));
+            this.ctx.font = '11px system-ui, sans-serif';
+            const contentLines = expanded && label.content ? this.wrapLabelText(label.content, maxTextWidth) : [];
+            const contentWidth = contentLines.reduce((width, line) => Math.max(width, this.ctx.measureText(line).width), 0);
+            const toggleSpace = 20;
+            const width = Math.ceil(Math.max(titleWidth + toggleSpace, contentWidth) + padding * 2);
+            const contentHeight = contentLines.length ? contentLines.length * 15 + padding : 0;
+            const height = titleHeight + contentHeight;
+            const alpha = label.groupId ? (groupOpacity.get(label.groupId) ?? 1) : 1;
+            this.ctx.globalAlpha = alpha;
+
+            this.ctx.strokeStyle = label.color;
+            this.ctx.fillStyle = label.color;
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(projected[0], projected[1], 3.5, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.beginPath();
+            this.ctx.moveTo(projected[0], projected[1]);
+            this.ctx.lineTo(x, y + titleHeight / 2);
+            this.ctx.stroke();
+
+            this.ctx.fillStyle = 'rgba(20, 24, 36, 0.94)';
+            this.ctx.strokeStyle = label.color;
+            this.ctx.lineWidth = state.world.selectedLabelId === label.id ? 3 : 1.5;
+            this.ctx.beginPath();
+            this.ctx.roundRect(x, y, width, height, 5);
+            this.ctx.fill();
+            this.ctx.stroke();
+
+            this.ctx.fillStyle = '#f3f4f6';
+            this.ctx.font = '600 12px system-ui, sans-serif';
+            this.ctx.textAlign = 'left';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText(label.title, x + padding, y + titleHeight / 2, Math.max(1, width - padding * 2 - toggleSpace));
+
+            const toggleX = x + width - padding - 6;
+            const toggleY = y + titleHeight / 2;
+            this.ctx.beginPath();
+            this.ctx.arc(toggleX, toggleY, 6, 0, Math.PI * 2);
+            this.ctx.fillStyle = label.expanded ? label.color : 'rgba(255,255,255,0.08)';
+            this.ctx.fill();
+            this.ctx.strokeStyle = label.color;
+            this.ctx.lineWidth = 1.25;
+            this.ctx.stroke();
+            this.ctx.fillStyle = label.expanded ? '#111827' : '#f3f4f6';
+            this.ctx.font = 'bold 10px system-ui, sans-serif';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText(label.expanded ? '−' : '+', toggleX, toggleY - 0.5);
+            if (contentLines.length) {
+                this.ctx.strokeStyle = `${label.color}66`;
+                this.ctx.lineWidth = 1;
+                this.ctx.beginPath();
+                this.ctx.moveTo(x + padding, y + titleHeight);
+                this.ctx.lineTo(x + width - padding, y + titleHeight);
+                this.ctx.stroke();
+                this.ctx.fillStyle = '#d1d5db';
+                this.ctx.font = '11px system-ui, sans-serif';
+                this.ctx.textAlign = 'left';
+                this.ctx.textBaseline = 'top';
+                contentLines.forEach((line, index) => this.ctx.fillText(line, x + padding, y + titleHeight + 5 + index * 15, maxTextWidth));
+            }
+            this.ctx.restore();
+            this.labelHitRegions.set(label.id, { x, y, width, height });
+            this.labelAnchorHitRegions.set(label.id, { x: projected[0], y: projected[1] });
+            this.labelToggleHitRegions.set(label.id, { x: toggleX, y: toggleY, radius: 8 });
+        }
     }
 
     private drawPlates(state: AppState, path: any) {
@@ -1588,8 +1779,32 @@ export class CanvasManager {
         });
     }
 
-    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string; edge?: any } | null {
+    private hitTestLabel(mousePos: Point): { labelId: string; labelAction: 'toggle' | 'body' | 'anchor' } | null {
+        const labels = this.getState().world.labels ?? [];
+        for (let index = labels.length - 1; index >= 0; index--) {
+            const label = labels[index];
+            if (!label.visible) continue;
+            const toggle = this.labelToggleHitRegions.get(label.id);
+            if (toggle && Math.hypot(mousePos.x - toggle.x, mousePos.y - toggle.y) <= toggle.radius) {
+                return { labelId: label.id, labelAction: 'toggle' };
+            }
+            const region = this.labelHitRegions.get(label.id);
+            if (region && mousePos.x >= region.x && mousePos.x <= region.x + region.width
+                && mousePos.y >= region.y && mousePos.y <= region.y + region.height) {
+                return { labelId: label.id, labelAction: 'body' };
+            }
+            const anchor = this.labelAnchorHitRegions.get(label.id);
+            if (anchor && Math.hypot(mousePos.x - anchor.x, mousePos.y - anchor.y) <= 9) {
+                return { labelId: label.id, labelAction: 'anchor' };
+            }
+        }
+        return null;
+    }
+
+    private hitTest(mousePos: Point): { plateId?: string; featureId?: string; plumeId?: string; labelId?: string; labelAction?: 'toggle' | 'body' | 'anchor'; edge?: any } | null {
         const state = this.getState();
+        const labelHit = this.hitTestLabel(mousePos);
+        if (labelHit) return labelHit;
         if (state.world.mantlePlumes) {
             for (const plume of state.world.mantlePlumes) {
                 const proj = this.projectionManager.project(plume.position);

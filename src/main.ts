@@ -20,7 +20,8 @@ import {
     CameraView,
     DASH_PRESETS,
     resolveLineTypeDefaults,
-    defaultLineTypeDefaults
+    defaultLineTypeDefaults,
+    MapLabel
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -31,7 +32,7 @@ import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
 import { remapImportedWorld } from './importHelpers';
-import { migrateSaveFile, type SaveFile } from './migration';
+import { migrateSaveFile, CURRENT_SAVE_VERSION, type SaveFile } from './migration';
 import { pointPositionAt, ensureMotionModel, getMotionModel, activeEulerPole } from './motion/RotationModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
@@ -151,6 +152,10 @@ class TectoLiteApp {
             {
                 onDrawComplete: (points) => this.handleDrawComplete(points),
                 onFeaturePlace: (pos, type) => this.handleFeaturePlace(pos, type),
+                onLabelPlace: (position, attachedPlateId) => this.handleLabelPlace(position, attachedPlateId),
+                onLabelSelect: (labelId, toggleContent) => this.handleLabelSelect(labelId, toggleContent),
+                onLabelMove: (labelId, offset) => this.handleLabelMove(labelId, offset),
+                onLabelAnchorMove: (labelId, anchor) => this.handleLabelAnchorMove(labelId, anchor),
                 onSelect: (plateId, featureId, featureIds, plumeId) => this.handleSelect(plateId, featureId, featureIds, plumeId),
                 onSplitApply: (points) => this.handleSplitApply(points),
                 onSplitPreviewChange: (active) => this.handleSplitPreviewChange(active),
@@ -215,10 +220,10 @@ class TectoLiteApp {
 
     private autosaveNow(): void {
         if (!this.hasUnsavedChanges || this.autosaveFailed) return;
-        if (this.state.world.plates.length === 0) return;
+        if (this.state.world.plates.length === 0 && this.state.world.labels.length === 0) return;
         try {
             localStorage.setItem(TectoLiteApp.AUTOSAVE_KEY, JSON.stringify({
-                version: 1,
+                version: CURRENT_SAVE_VERSION,
                 savedAt: new Date().toISOString(),
                 world: this.state.world,
                 viewport: this.state.viewport,
@@ -246,12 +251,14 @@ class TectoLiteApp {
             const raw = localStorage.getItem(TectoLiteApp.AUTOSAVE_KEY);
             if (!raw) return;
             const data = JSON.parse(raw) as SaveFile;
-            if (!data?.world || !Array.isArray(data.world.plates) || data.world.plates.length === 0) return;
+            if (!data?.world || !Array.isArray(data.world.plates)) return;
+            const autosaveEntityCount = data.world.plates.length + (Array.isArray(data.world.labels) ? data.world.labels.length : 0);
+            if (autosaveEntityCount === 0) return;
             const when = data.savedAt ? new Date(data.savedAt).toLocaleString() : 'an earlier session';
 
             this.showModal({
                 title: 'Restore autosaved session?',
-                content: `An autosave from <b>${when}</b> with ${data.world.plates.length} plate(s) was found. The current session ended without saving.`,
+                content: `An autosave from <b>${when}</b> with ${autosaveEntityCount} map entities was found. The current session ended without saving.`,
                 buttons: [
                     {
                         text: 'Restore Autosave',
@@ -1370,6 +1377,7 @@ class TectoLiteApp {
                 case 's': this.setActiveTool('split'); break;
                 case 'g': this.setActiveTool('fuse'); break;
                 case 'l': this.setActiveTool('link'); break;
+                case 'a': this.setActiveTool('label'); break;
 
                 case 'enter':
                     if (this.state.activeTool === 'draw') {
@@ -1601,6 +1609,7 @@ class TectoLiteApp {
                         world: {
                             ...this.state.world,
                             plates: [...this.state.world.plates, ...processedPlates],
+                            labels: [...this.state.world.labels, ...remapped.labels],
                             entityGroups: [...this.state.world.entityGroups, ...remapped.entityGroups],
                             riftAxes: [...(this.state.world.riftAxes || []), ...remapped.riftAxes],
                             tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions]
@@ -2079,6 +2088,9 @@ class TectoLiteApp {
             case 'feature':
                 hintText = "Pick a feature type from Tool Options.";
                 break;
+            case 'label':
+                hintText = "Click a map point to place a label. Clicking a plate attaches the label to its motion by default.";
+                break;
             case 'poly_feature':
                 hintText = "Click anywhere to start drawing a custom region feature.";
                 break;
@@ -2343,6 +2355,115 @@ class TectoLiteApp {
         this.canvasManager?.render();
     }
 
+    private handleLabelPlace(position: Coordinate, suggestedPlateId?: string): void {
+        const activePlates = this.state.world.plates.filter(plate =>
+            plate.birthTime <= this.state.world.currentTime
+            && (plate.deathTime === null || plate.deathTime > this.state.world.currentTime)
+        );
+        const attachmentOptions = activePlates.map(plate =>
+            `<option value="${plate.id}" ${plate.id === suggestedPlateId ? 'selected' : ''}>${escapeHtml(plate.name)}</option>`
+        ).join('');
+        this.showModal({
+            title: 'Add Label',
+            width: '460px',
+            content: `
+                <label class="property-label" for="label-title-input">Title</label>
+                <input id="label-title-input" class="property-input" maxlength="120" placeholder="Label title" style="width:100%; margin:5px 0 12px;">
+                <label class="property-label" for="label-content-input">Content</label>
+                <textarea id="label-content-input" class="property-input" rows="5" maxlength="2000" placeholder="Optional detail shown on click or hover" style="width:100%; margin:5px 0 12px;"></textarea>
+                <label class="property-label" for="label-attachment-input">Moves with</label>
+                <select id="label-attachment-input" class="property-input" style="width:100%; margin:5px 0 12px;">
+                    <option value="" ${suggestedPlateId ? '' : 'selected'}>Nothing (fixed geographic point)</option>
+                    ${attachmentOptions}
+                </select>
+                <label class="property-label" for="label-color-input">Color</label>
+                <input id="label-color-input" type="color" value="#fbbf24" style="width:100%; height:38px; margin-top:5px;">
+            `,
+            buttons: [
+                {
+                    text: 'Create Label',
+                    subtext: 'The title stays visible; use its small +/− circle to pin or collapse detail text.',
+                    onClick: () => {
+                        const title = (document.getElementById('label-title-input') as HTMLInputElement | null)?.value.trim();
+                        if (!title) { this.showToast('Enter a label title'); return false; }
+                        const content = (document.getElementById('label-content-input') as HTMLTextAreaElement | null)?.value.trim() ?? '';
+                        const attachedPlateId = (document.getElementById('label-attachment-input') as HTMLSelectElement | null)?.value || undefined;
+                        const color = (document.getElementById('label-color-input') as HTMLInputElement | null)?.value || '#fbbf24';
+                        const label: MapLabel = {
+                            id: generateId(), title, content, color,
+                            anchor: [...position] as Coordinate,
+                            anchorTime: this.state.world.currentTime,
+                            offset: [18, -30],
+                            visible: true, locked: false, expanded: false,
+                            attachedPlateId
+                        };
+                        this.pushState();
+                        this.state.world.labels = [...this.state.world.labels, label];
+                        this.state.world.selectedLabelId = label.id;
+                        this.state.world.selectedPlateId = null;
+                        this.state.world.selectedPlateIds = [];
+                        this.state.world.selectedFeatureId = null;
+                        this.state.world.selectedFeatureIds = [];
+                        this.updateUI();
+                        this.canvasManager?.render();
+                    }
+                },
+                { text: 'Cancel', isSecondary: true, onClick: () => undefined }
+            ]
+        });
+        window.setTimeout(() => (document.getElementById('label-title-input') as HTMLInputElement | null)?.focus(), 0);
+    }
+
+    private handleLabelSelect(labelId: string, toggleContent = false): void {
+        const label = this.state.world.labels.find(candidate => candidate.id === labelId);
+        if (!label) return;
+        if (toggleContent) {
+            this.pushState();
+            this.state.world.labels = this.state.world.labels.map(candidate =>
+                candidate.id === labelId ? { ...candidate, expanded: !candidate.expanded } : candidate
+            );
+        }
+        this.state.world.selectedLabelId = labelId;
+        this.state.world.selectedPlateId = null;
+        this.state.world.selectedPlateIds = [];
+        this.state.world.selectedFeatureId = null;
+        this.state.world.selectedFeatureIds = [];
+        this.updateHint(toggleContent
+            ? `${label.title} content ${label.expanded ? 'collapsed' : 'pinned'}.`
+            : `Selected ${label.title}. Use the circle on its title to pin or collapse content.`);
+        this.updateUI();
+        this.canvasManager?.render();
+        this.timelineSystem?.render(null);
+    }
+
+    private handleLabelMove(labelId: string, offset: [number, number]): void {
+        const label = this.state.world.labels.find(candidate => candidate.id === labelId);
+        if (!label || label.locked) return;
+        this.pushState();
+        this.state.world.labels = this.state.world.labels.map(candidate =>
+            candidate.id === labelId ? { ...candidate, offset } : candidate
+        );
+        this.state.world.selectedLabelId = labelId;
+        this.state.world.selectedPlateId = null;
+        this.state.world.selectedPlateIds = [];
+        this.updateUI();
+        this.canvasManager?.render();
+    }
+
+    private handleLabelAnchorMove(labelId: string, anchor: Coordinate): void {
+        const label = this.state.world.labels.find(candidate => candidate.id === labelId);
+        if (!label || label.locked) return;
+        this.pushState();
+        this.state.world.labels = this.state.world.labels.map(candidate =>
+            candidate.id === labelId ? { ...candidate, anchor, anchorTime: this.state.world.currentTime } : candidate
+        );
+        this.state.world.selectedLabelId = labelId;
+        this.state.world.selectedPlateId = null;
+        this.state.world.selectedPlateIds = [];
+        this.updateUI();
+        this.canvasManager?.render();
+    }
+
     private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null): void {
         // Reset fusion/link state if switching away
         if (this.state.activeTool !== 'fuse') this.fusionFirstPlateId = null;
@@ -2373,6 +2494,7 @@ class TectoLiteApp {
             }
         }
 
+        this.state.world.selectedLabelId = null;
         if (plumeId) {
             this.state.world.selectedPlateId = null;
             this.state.world.selectedPlateIds = [];
@@ -2845,9 +2967,12 @@ class TectoLiteApp {
     private deleteSelected(): void {
         this.pushState(); // Save state for undo
 
-        const { selectedFeatureId, selectedFeatureIds, selectedPlateId } = this.state.world;
+        const { selectedFeatureId, selectedFeatureIds, selectedPlateId, selectedLabelId } = this.state.world;
 
-        if (selectedFeatureId || (selectedFeatureIds && selectedFeatureIds.length > 0)) {
+        if (selectedLabelId) {
+            this.state.world.labels = this.state.world.labels.filter(label => label.id !== selectedLabelId);
+            this.state.world.selectedLabelId = null;
+        } else if (selectedFeatureId || (selectedFeatureIds && selectedFeatureIds.length > 0)) {
             // Build set of all feature IDs to delete
             const idsToDelete = new Set<string>();
             if (selectedFeatureId) idsToDelete.add(selectedFeatureId);
@@ -2904,14 +3029,14 @@ class TectoLiteApp {
     }
 
     private createEntityGroup(): void {
-        const selectedPlateIds = this.getSelectedPlateIds();
+        const selectedEntityIds = this.getSelectedEntityIds();
         this.showModal({
             title: 'Create Entity Group',
             content: '<label class="property-label" for="entity-group-name-input">Group name</label><input id="entity-group-name-input" class="property-input" maxlength="80" placeholder="e.g. Northern Islands" style="width:100%; margin-top:6px;">',
             buttons: [
                 {
                     text: 'Create Group',
-                    subtext: selectedPlateIds.length ? `${selectedPlateIds.length} selected ${selectedPlateIds.length === 1 ? 'entity' : 'entities'} will be added automatically.` : 'You can drag entities into it afterwards.',
+                    subtext: selectedEntityIds.length ? `${selectedEntityIds.length} selected ${selectedEntityIds.length === 1 ? 'entity' : 'entities'} will be added automatically.` : 'You can drag entities into it afterwards.',
                     onClick: () => {
                         const name = (document.getElementById('entity-group-name-input') as HTMLInputElement | null)?.value.trim();
                         if (!name) { this.showToast('Enter a group name'); return false; }
@@ -2922,13 +3047,17 @@ class TectoLiteApp {
                         this.pushState();
                         const id = generateId();
                         this.state.world.entityGroups = [...this.state.world.entityGroups, { id, name, collapsed: false }];
-                        if (selectedPlateIds.length) {
-                            const selectedIds = new Set(selectedPlateIds);
+                        if (selectedEntityIds.length) {
+                            const selectedIds = new Set(selectedEntityIds);
                             this.state.world.plates = this.state.world.plates.map(plate =>
                                 selectedIds.has(plate.id) ? { ...plate, groupId: id } : plate
                             );
+                            this.state.world.labels = this.state.world.labels.map(label =>
+                                selectedIds.has(label.id) ? { ...label, groupId: id } : label
+                            );
                         }
                         this.updateExplorer();
+                        this.updatePropertiesPanel();
                     }
                 },
                 { text: 'Cancel', isSecondary: true, onClick: () => undefined }
@@ -2937,14 +3066,20 @@ class TectoLiteApp {
         window.setTimeout(() => (document.getElementById('entity-group-name-input') as HTMLInputElement | null)?.focus(), 0);
     }
 
-    private assignPlatesToEntityGroup(plateIds: string[], groupId: string | null): void {
-        const ids = new Set(plateIds);
-        if (!this.state.world.plates.some(plate => ids.has(plate.id) && (plate.groupId ?? null) !== groupId)) return;
+    private assignEntitiesToGroup(entityIds: string[], groupId: string | null): void {
+        const ids = new Set(entityIds);
+        const hasChange = this.state.world.plates.some(plate => ids.has(plate.id) && (plate.groupId ?? null) !== groupId)
+            || this.state.world.labels.some(label => ids.has(label.id) && (label.groupId ?? null) !== groupId);
+        if (!hasChange) return;
         this.pushState();
         this.state.world.plates = this.state.world.plates.map(candidate =>
             ids.has(candidate.id) ? { ...candidate, groupId: groupId ?? undefined } : candidate
         );
+        this.state.world.labels = this.state.world.labels.map(candidate =>
+            ids.has(candidate.id) ? { ...candidate, groupId: groupId ?? undefined } : candidate
+        );
         this.updateExplorer();
+        this.updatePropertiesPanel();
     }
 
     private renameEntityGroup(groupId: string): void {
@@ -2983,7 +3118,11 @@ class TectoLiteApp {
         this.state.world.plates = this.state.world.plates.map(plate =>
             plate.groupId === groupId ? { ...plate, groupId: undefined } : plate
         );
+        this.state.world.labels = this.state.world.labels.map(label =>
+            label.groupId === groupId ? { ...label, groupId: undefined } : label
+        );
         this.updateExplorer();
+        this.updatePropertiesPanel();
     }
 
     private toggleEntityGroupCollapsed(groupId: string): void {
@@ -2994,31 +3133,37 @@ class TectoLiteApp {
     }
 
     private toggleEntityGroupVisibility(groupId: string): void {
-        const members = this.state.world.plates.filter(plate => plate.groupId === groupId);
+        const members = [...this.state.world.plates, ...this.state.world.labels].filter(entity => entity.groupId === groupId);
         if (!members.length) return;
         const visible = !members.some(plate => plate.visible);
         this.pushState();
         this.state.world.plates = this.state.world.plates.map(plate =>
             plate.groupId === groupId ? { ...plate, visible } : plate
         );
+        this.state.world.labels = this.state.world.labels.map(label =>
+            label.groupId === groupId ? { ...label, visible } : label
+        );
         this.updateExplorer();
         this.canvasManager?.render();
     }
 
     private toggleEntityGroupLocked(groupId: string): void {
-        const members = this.state.world.plates.filter(plate => plate.groupId === groupId);
+        const members = [...this.state.world.plates, ...this.state.world.labels].filter(entity => entity.groupId === groupId);
         if (!members.length) return;
         const locked = !members.every(plate => plate.locked);
         this.pushState();
         this.state.world.plates = this.state.world.plates.map(plate =>
             plate.groupId === groupId ? { ...plate, locked } : plate
         );
+        this.state.world.labels = this.state.world.labels.map(label =>
+            label.groupId === groupId ? { ...label, locked } : label
+        );
         this.updateExplorer();
         this.updatePropertiesPanel();
     }
 
     private recolorEntityGroup(groupId: string): void {
-        const members = this.state.world.plates.filter(plate => plate.groupId === groupId);
+        const members = [...this.state.world.plates, ...this.state.world.labels].filter(entity => entity.groupId === groupId);
         if (!members.length) return;
         this.showModal({
             title: 'Recolor Group Entities',
@@ -3033,6 +3178,9 @@ class TectoLiteApp {
                         this.state.world.plates = this.state.world.plates.map(plate =>
                             plate.groupId === groupId ? { ...plate, color } : plate
                         );
+                        this.state.world.labels = this.state.world.labels.map(label =>
+                            label.groupId === groupId ? { ...label, color } : label
+                        );
                         this.updateExplorer();
                         this.canvasManager?.render();
                     }
@@ -3045,16 +3193,20 @@ class TectoLiteApp {
     private deleteEntityGroupMembers(groupId: string): void {
         const group = this.state.world.entityGroups.find(candidate => candidate.id === groupId);
         const ids = this.state.world.plates.filter(plate => plate.groupId === groupId).map(plate => plate.id);
-        if (!group || !ids.length) return;
+        const labelIds = this.state.world.labels.filter(label => label.groupId === groupId).map(label => label.id);
+        const total = ids.length + labelIds.length;
+        if (!group || !total) return;
         this.showModal({
             title: 'Delete Group Entities',
-            content: `Delete all <strong>${ids.length}</strong> entities in <strong>${escapeHtml(group.name)}</strong>? This changes the map and can be undone.`,
+            content: `Delete all <strong>${total}</strong> entities in <strong>${escapeHtml(group.name)}</strong>? This changes the map and can be undone.`,
             buttons: [
                 {
-                    text: `Delete ${ids.length} entities`,
+                    text: `Delete ${total} entities`,
                     onClick: () => {
                         this.pushState();
                         this.state.world.entityGroups = this.state.world.entityGroups.filter(candidate => candidate.id !== groupId);
+                        this.state.world.labels = this.state.world.labels.filter(label => !labelIds.includes(label.id));
+                        if (labelIds.includes(this.state.world.selectedLabelId ?? '')) this.state.world.selectedLabelId = null;
                         this.deletePlates(ids);
                     }
                 },
@@ -3070,6 +3222,12 @@ class TectoLiteApp {
         return selectedIds.includes(primaryId) ? selectedIds : [primaryId];
     }
 
+    private getSelectedEntityIds(): string[] {
+        const plateIds = this.getSelectedPlateIds();
+        if (plateIds.length) return plateIds;
+        return this.state.world.selectedLabelId ? [this.state.world.selectedLabelId] : [];
+    }
+
     private selectExplorerPlateRange(targetId: string): void {
         const orderedIds = Array.from(document.querySelectorAll<HTMLElement>('#plate-list .plate-item'))
             .map(item => item.dataset.plateId)
@@ -3080,6 +3238,7 @@ class TectoLiteApp {
         this.state.world.selectedPlateIds = selectedIds;
         this.state.world.selectedFeatureId = null;
         this.state.world.selectedFeatureIds = [];
+        this.state.world.selectedLabelId = null;
         this.updateHint(`Selected ${selectedIds.length} entities.`);
         this.updateUI();
         this.canvasManager?.render();
@@ -3134,34 +3293,70 @@ class TectoLiteApp {
         });
     }
 
-    private renderGroupedExplorer(content: HTMLElement, visiblePlates: TectonicPlate[], filterText: string): void {
+    private renderExplorerLabelRows(container: HTMLElement, labels: MapLabel[]): void {
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = labels.map(label => `
+            <div class="plate-item ${this.state.world.selectedLabelId === label.id ? 'selected' : ''}" draggable="true" data-label-id="${label.id}" title="Label; drag to another group">
+              <span class="plate-color" style="background:${label.color}"></span>
+              <span class="plate-name">⚑ ${escapeHtml(label.title)}</span>
+              <button class="plate-visibility" data-visible="${label.visible}" title="Toggle visibility">${label.visible ? '👁️' : '🚫'}</button>
+            </div>
+        `).join('');
+        wrapper.querySelectorAll<HTMLElement>('[data-label-id]').forEach(item => {
+            item.addEventListener('click', event => {
+                if ((event.target as HTMLElement).classList.contains('plate-visibility')) return;
+                if (item.dataset.labelId) this.handleLabelSelect(item.dataset.labelId, false);
+            });
+            item.addEventListener('dragstart', event => {
+                if (!item.dataset.labelId) return;
+                event.dataTransfer?.setData('application/x-tectolite-entities', JSON.stringify([item.dataset.labelId]));
+                if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+            });
+        });
+        wrapper.querySelectorAll<HTMLElement>('.plate-visibility').forEach(button => {
+            button.addEventListener('click', event => {
+                event.stopPropagation();
+                const labelId = button.closest<HTMLElement>('[data-label-id]')?.dataset.labelId;
+                if (!labelId) return;
+                this.state.world.labels = this.state.world.labels.map(label => label.id === labelId ? { ...label, visible: !label.visible } : label);
+                this.updateExplorer();
+                this.canvasManager?.render();
+            });
+        });
+        while (wrapper.firstChild) container.appendChild(wrapper.firstChild);
+    }
+
+    private renderGroupedExplorer(content: HTMLElement, visiblePlates: TectonicPlate[], visibleLabels: MapLabel[], filterText: string): void {
         const groups = this.state.world.entityGroups ?? [];
-        const selectedPlateIds = this.getSelectedPlateIds();
-        const selectedIdSet = new Set(selectedPlateIds);
-        const selectedPlates = this.state.world.plates.filter(plate => selectedIdSet.has(plate.id));
-        const selectedGroupId = selectedPlates.length > 0 && selectedPlates.every(plate => (plate.groupId ?? null) === (selectedPlates[0].groupId ?? null))
-            ? (selectedPlates[0].groupId ?? '')
+        const selectedEntityIds = this.getSelectedEntityIds();
+        const selectedIdSet = new Set(selectedEntityIds);
+        const selectedEntities = [...this.state.world.plates, ...this.state.world.labels].filter(entity => selectedIdSet.has(entity.id));
+        const selectedGroupId = selectedEntities.length > 0 && selectedEntities.every(entity => (entity.groupId ?? null) === (selectedEntities[0].groupId ?? null))
+            ? (selectedEntities[0].groupId ?? '')
             : null;
         const toolbar = document.createElement('div');
         toolbar.className = 'entity-group-toolbar';
         toolbar.innerHTML = `
             <button class="entity-group-create" title="Create a group; selected entities are added automatically">+ Group</button>
-            <select class="entity-group-assign" title="Move ${selectedPlateIds.length || 'the selected'} ${selectedPlateIds.length === 1 ? 'entity' : 'entities'} to a group" ${selectedPlateIds.length ? '' : 'disabled'}>
+            <select class="entity-group-assign" title="Move ${selectedEntityIds.length || 'the selected'} ${selectedEntityIds.length === 1 ? 'entity' : 'entities'} to a group" ${selectedEntityIds.length ? '' : 'disabled'}>
                 <option value="" ${selectedGroupId === '' ? 'selected' : ''}>Ungrouped</option>
                 ${groups.map(group => `<option value="${group.id}" ${selectedGroupId === group.id ? 'selected' : ''}>${escapeHtml(group.name)}</option>`).join('')}
             </select>
         `;
         toolbar.querySelector('.entity-group-create')?.addEventListener('click', () => this.createEntityGroup());
         toolbar.querySelector<HTMLSelectElement>('.entity-group-assign')?.addEventListener('change', event => {
-            if (selectedPlateIds.length) this.assignPlatesToEntityGroup(selectedPlateIds, (event.target as HTMLSelectElement).value || null);
+            if (selectedEntityIds.length) this.assignEntitiesToGroup(selectedEntityIds, (event.target as HTMLSelectElement).value || null);
         });
         content.appendChild(toolbar);
 
         const renderGroup = (groupId: string | null, name: string, collapsed: boolean, editable: boolean) => {
-            const allMembers = this.state.world.plates.filter(plate => (plate.groupId ?? null) === groupId);
+            const allPlateMembers = this.state.world.plates.filter(plate => (plate.groupId ?? null) === groupId);
+            const allLabelMembers = this.state.world.labels.filter(label => (label.groupId ?? null) === groupId);
+            const allMembers = [...allPlateMembers, ...allLabelMembers];
             const groupMatches = !!filterText && name.toLowerCase().includes(filterText);
-            const members = groupMatches ? allMembers : visiblePlates.filter(plate => (plate.groupId ?? null) === groupId);
-            if (filterText && members.length === 0) return;
+            const plateMembers = groupMatches ? allPlateMembers : visiblePlates.filter(plate => (plate.groupId ?? null) === groupId);
+            const labelMembers = groupMatches ? allLabelMembers : visibleLabels.filter(label => (label.groupId ?? null) === groupId);
+            if (filterText && plateMembers.length + labelMembers.length === 0) return;
 
             const wrapper = document.createElement('div');
             wrapper.className = 'entity-group';
@@ -3215,7 +3410,14 @@ class TectoLiteApp {
                 header.classList.remove('drag-over');
                 const plateIdsJson = event.dataTransfer?.getData('application/x-tectolite-plates');
                 const plateId = event.dataTransfer?.getData('application/x-tectolite-plate');
+                const entityIdsJson = event.dataTransfer?.getData('application/x-tectolite-entities');
                 let plateIds: string[] = [];
+                if (entityIdsJson) {
+                    try {
+                        const parsed = JSON.parse(entityIdsJson);
+                        if (Array.isArray(parsed)) plateIds = parsed.filter((id): id is string => typeof id === 'string');
+                    } catch { /* Fall back to older plate drag payloads. */ }
+                }
                 if (plateIdsJson) {
                     try {
                         const parsed = JSON.parse(plateIdsJson);
@@ -3223,7 +3425,7 @@ class TectoLiteApp {
                     } catch { /* Fall back to the single dragged entity. */ }
                 }
                 if (!plateIds.length && plateId) plateIds = [plateId];
-                if (plateIds.length) this.assignPlatesToEntityGroup(plateIds, groupId);
+                if (plateIds.length) this.assignEntitiesToGroup(plateIds, groupId);
             });
             wrapper.appendChild(header);
 
@@ -3262,17 +3464,18 @@ class TectoLiteApp {
             if (!collapsed || filterText) {
                 const rows = document.createElement('div');
                 rows.className = 'entity-group-members';
-                if (members.length) this.renderExplorerPlateRows(rows, members);
-                else rows.innerHTML = '<p class="empty-message">Empty group — drag an entity here</p>';
+                if (plateMembers.length) this.renderExplorerPlateRows(rows, plateMembers);
+                if (labelMembers.length) this.renderExplorerLabelRows(rows, labelMembers);
+                if (!plateMembers.length && !labelMembers.length) rows.innerHTML = '<p class="empty-message">Empty group — drag an entity here</p>';
                 wrapper.appendChild(rows);
             }
             content.appendChild(wrapper);
         };
 
         for (const group of groups) renderGroup(group.id, group.name, !!group.collapsed, true);
-        const ungrouped = this.state.world.plates.filter(plate => !plate.groupId);
-        if (ungrouped.length) renderGroup(null, 'Ungrouped', false, false);
-        if (visiblePlates.length === 0 && !groups.some(group => group.name.toLowerCase().includes(filterText))) {
+        const hasUngrouped = this.state.world.plates.some(plate => !plate.groupId) || this.state.world.labels.some(label => !label.groupId);
+        if (hasUngrouped) renderGroup(null, 'Ungrouped', false, false);
+        if (visiblePlates.length === 0 && visibleLabels.length === 0 && !groups.some(group => group.name.toLowerCase().includes(filterText))) {
             const empty = document.createElement('p');
             empty.className = 'empty-message';
             empty.textContent = 'No entities or groups match the filter';
@@ -3290,7 +3493,7 @@ class TectoLiteApp {
 
         // --- 0. SEARCH / FILTER (shown once the list gets long, or while filtering) ---
         const filterText = this.explorerFilter.trim().toLowerCase();
-        if (this.state.world.plates.length > 5 || filterText) {
+        if (this.state.world.plates.length + this.state.world.labels.length > 5 || filterText) {
             const searchWrap = document.createElement('div');
             searchWrap.style.cssText = 'padding: 0 0 8px 0;';
             searchWrap.innerHTML = '<input type="text" id="plate-search" class="property-input" placeholder="Filter plates…" style="width: 100%; padding: 4px 6px; font-size: 11px;">';
@@ -3311,17 +3514,20 @@ class TectoLiteApp {
         const visiblePlates = filterText
             ? this.state.world.plates.filter(p => p.name.toLowerCase().includes(filterText))
             : this.state.world.plates;
+        const visibleLabels = filterText
+            ? this.state.world.labels.filter(label => label.title.toLowerCase().includes(filterText) || label.content.toLowerCase().includes(filterText))
+            : this.state.world.labels;
 
         // --- 1. ENTITIES / GROUPS SECTION ---
-        const platesSection = this.createExplorerSection('Entities', 'plates', visiblePlates.length);
+        const platesSection = this.createExplorerSection('Entities', 'plates', visiblePlates.length + visibleLabels.length);
         list.appendChild(platesSection.header);
 
         if (this.explorerState.sections['plates']) {
             const content = platesSection.content;
-            if (this.state.world.plates.length === 0) {
-                content.innerHTML = '<p class="empty-message">Draw a landmass to create a plate</p>';
+            if (this.state.world.plates.length === 0 && this.state.world.labels.length === 0) {
+                content.innerHTML = '<p class="empty-message">Draw a landmass or place a label to create an entity</p>';
             } else {
-                this.renderGroupedExplorer(content, visiblePlates, filterText);
+                this.renderGroupedExplorer(content, visiblePlates, visibleLabels, filterText);
             }
             list.appendChild(content);
         }
@@ -3486,6 +3692,80 @@ class TectoLiteApp {
     private updatePropertiesPanel(): void {
         const content = document.getElementById('properties-content');
         if (!content) return;
+
+        const selectedLabel = this.state.world.labels.find(label => label.id === this.state.world.selectedLabelId);
+        if (selectedLabel) {
+            const panel = document.getElementById('properties-panel');
+            const timelinePanel = document.getElementById('timeline-panel');
+            const titleEl = document.getElementById('properties-panel-title');
+            if (titleEl) titleEl.textContent = 'Label Properties';
+            if (panel) { panel.style.display = 'flex'; panel.style.flexDirection = 'column'; panel.style.flex = '2'; }
+            if (timelinePanel) timelinePanel.style.flex = '1';
+            const plateOptions = this.state.world.plates.map(plate =>
+                `<option value="${plate.id}" ${selectedLabel.attachedPlateId === plate.id ? 'selected' : ''}>${escapeHtml(plate.name)}</option>`
+            ).join('');
+            const groupOptions = this.state.world.entityGroups.map(group =>
+                `<option value="${group.id}" ${selectedLabel.groupId === group.id ? 'selected' : ''}>${escapeHtml(group.name)}</option>`
+            ).join('');
+            content.innerHTML = `
+                <div class="property-group"><label class="property-label">Title</label><input id="prop-label-title" class="property-input" maxlength="120" value="${escapeHtml(selectedLabel.title)}"></div>
+                <div class="property-group"><label class="property-label">Content</label><textarea id="prop-label-content" class="property-input" rows="6" maxlength="2000">${escapeHtml(selectedLabel.content)}</textarea></div>
+                <div class="property-group"><label class="property-label">System State</label><div style="display:flex; gap:10px;">
+                    <label style="font-size:11px;"><input type="checkbox" id="prop-label-visible" ${selectedLabel.visible ? 'checked' : ''}> Visible</label>
+                    <label style="font-size:11px;"><input type="checkbox" id="prop-label-locked" ${selectedLabel.locked ? 'checked' : ''}> Locked</label>
+                    <label style="font-size:11px;"><input type="checkbox" id="prop-label-expanded" ${selectedLabel.expanded ? 'checked' : ''}> Content pinned</label>
+                </div></div>
+                <div class="property-group"><label class="property-label">Color</label><input id="prop-label-color" type="color" value="${selectedLabel.color}" style="width:100%; height:36px;"></div>
+                <div class="property-group"><label class="property-label">Moves with</label><select id="prop-label-attachment" class="property-input">
+                    <option value="" ${selectedLabel.attachedPlateId ? '' : 'selected'}>Nothing (fixed)</option>${plateOptions}
+                </select></div>
+                <div class="property-group"><label class="property-label">Explorer Group</label><select id="prop-label-group" class="property-input">
+                    <option value="" ${selectedLabel.groupId ? '' : 'selected'}>Ungrouped</option>${groupOptions}
+                </select></div>
+                <div class="property-group"><label class="property-label">Flag offset (pixels)</label><div style="display:flex; gap:6px;">
+                    <input id="prop-label-offset-x" type="number" class="property-input" value="${selectedLabel.offset[0]}" title="Horizontal offset">
+                    <input id="prop-label-offset-y" type="number" class="property-input" value="${selectedLabel.offset[1]}" title="Vertical offset">
+                </div></div>
+                <button id="btn-delete-label" class="btn btn-danger">Delete Label</button>
+            `;
+            const update = (changes: Partial<MapLabel>, refreshExplorer = false) => {
+                this.pushState();
+                this.state.world.labels = this.state.world.labels.map(label => label.id === selectedLabel.id ? { ...label, ...changes } : label);
+                if (refreshExplorer) this.updateExplorer();
+                this.canvasManager?.render();
+            };
+            document.getElementById('prop-label-title')?.addEventListener('change', event => update({ title: (event.target as HTMLInputElement).value.trim() || 'Untitled label' }, true));
+            document.getElementById('prop-label-content')?.addEventListener('change', event => update({ content: (event.target as HTMLTextAreaElement).value }));
+            document.getElementById('prop-label-visible')?.addEventListener('change', event => update({ visible: (event.target as HTMLInputElement).checked }, true));
+            document.getElementById('prop-label-locked')?.addEventListener('change', event => update({ locked: (event.target as HTMLInputElement).checked }, true));
+            document.getElementById('prop-label-expanded')?.addEventListener('change', event => update({ expanded: (event.target as HTMLInputElement).checked }));
+            document.getElementById('prop-label-color')?.addEventListener('input', event => update({ color: (event.target as HTMLInputElement).value }, true));
+            document.getElementById('prop-label-group')?.addEventListener('change', event => update({ groupId: (event.target as HTMLSelectElement).value || undefined }, true));
+            document.getElementById('prop-label-attachment')?.addEventListener('change', event => {
+                let currentAnchor = selectedLabel.anchor;
+                if (selectedLabel.attachedPlateId) {
+                    const oldPlate = this.state.world.plates.find(plate => plate.id === selectedLabel.attachedPlateId);
+                    if (oldPlate) currentAnchor = pointPositionAt(oldPlate, this.state.world.plates, selectedLabel.anchor, selectedLabel.anchorTime, this.state.world.currentTime);
+                }
+                update({ attachedPlateId: (event.target as HTMLSelectElement).value || undefined, anchor: currentAnchor, anchorTime: this.state.world.currentTime });
+            });
+            const updateOffset = () => {
+                const x = Number((document.getElementById('prop-label-offset-x') as HTMLInputElement).value);
+                const y = Number((document.getElementById('prop-label-offset-y') as HTMLInputElement).value);
+                if (Number.isFinite(x) && Number.isFinite(y)) update({ offset: [x, y] });
+            };
+            document.getElementById('prop-label-offset-x')?.addEventListener('change', updateOffset);
+            document.getElementById('prop-label-offset-y')?.addEventListener('change', updateOffset);
+            document.getElementById('btn-delete-label')?.addEventListener('click', () => {
+                this.pushState();
+                this.state.world.labels = this.state.world.labels.filter(label => label.id !== selectedLabel.id);
+                this.state.world.selectedLabelId = null;
+                this.updateUI();
+                this.canvasManager?.render();
+            });
+            this.updateEdgePropertiesPanel();
+            return;
+        }
 
 
 

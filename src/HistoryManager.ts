@@ -161,6 +161,11 @@ export class HistoryManager {
             world: {
                 ...world,
                 plates: (world.plates ?? []).map(clonePlate),
+                labels: (world.labels ?? []).map((label: any) => ({
+                    ...label,
+                    anchor: cloneCoord(label.anchor),
+                    offset: cloneCoord(label.offset)
+                })),
                 entityGroups: (world.entityGroups ?? []).map((group: EntityGroup) => ({ ...group })),
                 selectedFeatureIds: [...(world.selectedFeatureIds ?? [])],
                 globalOptions: {

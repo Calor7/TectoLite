@@ -56,6 +56,25 @@ describe('remapImportedWorld', () => {
         expect(result.plates[1].groupId).toBeUndefined();
     });
 
+    it('remaps attached labels, groups, and anchor time during merge import', () => {
+        const world = makeWorld([makePlate('a')], {
+            entityGroups: [{ id: 'old-group', name: 'Annotations' }],
+            labels: [{
+                id: 'label-1', title: 'Arc', content: 'Detail', anchor: [10, 20],
+                anchorTime: 5, offset: [18, -30], color: '#fbbf24', visible: true,
+                locked: false, expanded: false, attachedPlateId: 'a', groupId: 'old-group'
+            }]
+        });
+
+        const result = remapImportedWorld(world, 100);
+
+        expect(result.labels).toHaveLength(1);
+        expect(result.labels[0].id).not.toBe('label-1');
+        expect(result.labels[0].attachedPlateId).toBe(result.plates[0].id);
+        expect(result.labels[0].groupId).toBe(result.entityGroups[0].id);
+        expect(result.labels[0].anchorTime).toBe(105);
+    });
+
     it('remaps parent and link references onto the new IDs', () => {
         const world = makeWorld([
             makePlate('parent'),

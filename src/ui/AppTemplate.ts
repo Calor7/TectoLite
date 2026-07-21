@@ -245,6 +245,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <input type="checkbox" id="check-hover-tooltips" ${g.showHoverTooltips === true ? 'checked' : ''}> Hover Tooltips <span class="info-icon" data-tooltip="Show plate name, age and speed when hovering">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-label-hover" ${g.expandLabelsOnHover !== false ? 'checked' : ''}> Expand Labels on Hover <span class="info-icon" data-tooltip="Temporarily show label content while hovering its title">(i)</span>
+                        </label>
+                        <label class="view-dropdown-item">
                             <input type="checkbox" id="check-show-hidden-plates" ${g.showHiddenPlates ? 'checked' : ''}> Show Hidden Plates <span class="info-icon" data-tooltip="Reveal plates even if their visibility is toggled off">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
@@ -342,6 +345,11 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     <span class="tool-icon">✎</span>
                     <span class="tool-label">Edit</span>
                     <span class="info-icon" data-tooltip="Modify plate geometry; Ctrl+drag moves the whole shape (Hotkey: E)">(i)</span>
+                  </button>
+                  <button class="tool-btn" data-tool="label" style="flex:1;">
+                    <span class="tool-icon">⚑</span>
+                    <span class="tool-label">Label</span>
+                    <span class="info-icon" data-tooltip="Place a flag-style title and detail annotation (Hotkey: A)">(i)</span>
                   </button>
 
               </div>

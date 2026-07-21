@@ -24,6 +24,7 @@ const CHECKBOX_SETTINGS: readonly CheckboxSetting[] = [
     { id: 'check-prediction-flowlines', read: s => s.world.globalOptions.showPredictionFlowlines === true, write: (s, v) => { s.world.globalOptions.showPredictionFlowlines = v; }, effects: ['render'] },
     { id: 'check-velocity-arrows', read: s => s.world.globalOptions.showVelocityArrows === true, write: (s, v) => { s.world.globalOptions.showVelocityArrows = v; }, effects: ['render'] },
     { id: 'check-hover-tooltips', read: s => s.world.globalOptions.showHoverTooltips === true, write: (s, v) => { s.world.globalOptions.showHoverTooltips = v; }, effects: ['render'] },
+    { id: 'check-label-hover', read: s => s.world.globalOptions.expandLabelsOnHover !== false, write: (s, v) => { s.world.globalOptions.expandLabelsOnHover = v; }, effects: ['render'] },
     { id: 'check-show-hidden-plates', read: s => s.world.globalOptions.showHiddenPlates === true, write: (s, v) => { s.world.globalOptions.showHiddenPlates = v; }, effects: ['explorer', 'render'] },
     { id: 'check-grid-on-top', read: s => s.world.globalOptions.gridOnTop === true, write: (s, v) => { s.world.globalOptions.gridOnTop = v; }, effects: ['render'] },
     { id: 'check-boundary-viz', read: s => s.world.globalOptions.enableBoundaryVisualization === true, write: (s, v) => { s.world.globalOptions.enableBoundaryVisualization = v; }, effects: ['recalculate'] }
