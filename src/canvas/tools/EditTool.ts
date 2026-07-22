@@ -1,4 +1,4 @@
-import { Coordinate, Point, AppState } from '../../types';
+import { Coordinate, Point, AppState, Polygon, TectonicPlate } from '../../types';
 import { InputTool } from './InputTool';
 import { ProjectionManager } from '../ProjectionManager';
 import { latLonToVector, rotateVector, vectorToLatLon, calculateSphericalCentroid, cross, dot, normalize } from '../../utils/sphericalMath';
@@ -20,7 +20,7 @@ export class EditTool implements InputTool {
         hasMoved?: boolean;
     } | null = null;
 
-    private tempPolygons: { plateId: string; polygons: any[] } | null = null;
+    private tempPolygons: { plateId: string; polygons: Polygon[] } | null = null;
 
     // Rotation State
     private ghostSpin: number = 0;
@@ -41,6 +41,7 @@ export class EditTool implements InputTool {
         private onApply: () => void,
         private getNearestElement: (x: number, y: number) => { type: 'vertex' | 'edge', data: any } | null,
         private onHoverChange: () => void,
+        private onNotice?: (message: string) => void,
         // private onDragTargetRequest?: (plateId: string, axis: Vector3, angleRad: number) => void // Unused
         // _onDragTargetRequest removed as unused
     ) { }
@@ -87,7 +88,11 @@ export class EditTool implements InputTool {
         if (e.button === 2) {
             // If hovering a vertex, delete it.
             if (this.hoveredVertex) {
-                this.deleteVertex(this.hoveredVertex);
+                if (e.shiftKey) {
+                    this.deletePolygon(this.hoveredVertex);
+                } else {
+                    this.deleteVertex(this.hoveredVertex);
+                }
             }
             return;
         }
@@ -178,11 +183,23 @@ export class EditTool implements InputTool {
         };
     }
 
-    private ensureTempPolygons(plate: any) {
+    private ensureTempPolygons(plate: TectonicPlate) {
         if (!this.tempPolygons || this.tempPolygons.plateId !== plate.id) {
             this.tempPolygons = {
                 plateId: plate.id,
-                polygons: JSON.parse(JSON.stringify(plate.polygons))
+                // Only polygon data can be modified by this tool. Clone it explicitly so
+                // large, detailed plates do not pay the cost of JSON serialization on the
+                // first edit while still keeping the pending edit isolated from app state.
+                polygons: plate.polygons.map(poly => ({
+                    ...poly,
+                    points: poly.points.map(point => [...point] as Coordinate),
+                    edgeMeta: poly.edgeMeta?.map(meta => ({
+                        ...meta,
+                        siblings: meta.siblings?.map(sibling => ({ ...sibling }))
+                    })),
+                    riftEdgeIndices: poly.riftEdgeIndices?.slice(),
+                    edgeStyles: poly.edgeStyles?.map(style => ({ ...style }))
+                }))
             };
         }
     }
@@ -283,9 +300,43 @@ export class EditTool implements InputTool {
             this.cancel();
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
             if (this.hoveredVertex) {
-                this.deleteVertex(this.hoveredVertex);
+                if (e.shiftKey) {
+                    this.deletePolygon(this.hoveredVertex);
+                } else {
+                    this.deleteVertex(this.hoveredVertex);
+                }
             }
         }
+    }
+
+    private clearTopologyInteractionState(plateId: string): void {
+        this.hoveredVertex = null;
+        this.hoveredEdge = null;
+        if (this.dragState?.plateId === plateId) {
+            this.dragState = null;
+        }
+    }
+
+    private deletePolygon(target: { plateId: string; polyIndex: number }): void {
+        const state = this.getState();
+        const plate = state.world.plates.find(candidate => candidate.id === target.plateId);
+        if (!plate) return;
+
+        const currentPolygons = this.tempPolygons?.plateId === plate.id
+            ? this.tempPolygons.polygons
+            : plate.polygons;
+        // A plate must retain at least one polygon. Whole-component deletion is
+        // intended for disconnected geometry produced by fusion and similar tools.
+        if (currentPolygons.length <= 1) {
+            this.onNotice?.("A plate must keep at least one polygon, so its only polygon can't be removed.");
+            return;
+        }
+        if (!currentPolygons[target.polyIndex]) return;
+
+        this.ensureTempPolygons(plate);
+        this.tempPolygons!.polygons.splice(target.polyIndex, 1);
+        this.clearTopologyInteractionState(plate.id);
+        this.onUpdate(true);
     }
 
     private deleteVertex(vertex: { plateId: string; polyIndex: number; vertexIndex: number }) {
@@ -293,12 +344,58 @@ export class EditTool implements InputTool {
         const plate = state.world.plates.find(p => p.id === vertex.plateId);
         if (!plate) return;
 
+        const currentPolygons = this.tempPolygons?.plateId === plate.id
+            ? this.tempPolygons.polygons
+            : plate.polygons;
+        const currentPoly = currentPolygons[vertex.polyIndex];
+        if (!currentPoly || !Number.isInteger(vertex.vertexIndex) || vertex.vertexIndex < 0 ||
+            vertex.vertexIndex >= currentPoly.points.length) {
+            // A topology change can make a previously valid hover index stale.
+            this.hoveredVertex = null;
+            this.hoveredEdge = null;
+            return;
+        }
+        if (currentPoly.points.length <= 3) {
+            // A valid closed polygon cannot be reduced below three vertices.
+            // Explain the explicit whole-component action instead of silently
+            // converting an ordinary vertex deletion into a larger operation.
+            if (currentPolygons.length > 1) {
+                this.onNotice?.('A polygon needs at least 3 vertices. Hold Shift while right-clicking, or press Shift+Delete, to remove this whole polygon.');
+            } else {
+                this.onNotice?.("A polygon needs at least 3 vertices, and the plate's only polygon can't be removed.");
+            }
+            return;
+        }
+
         this.ensureTempPolygons(plate);
         const poly = this.tempPolygons!.polygons[vertex.polyIndex];
-        if (poly && poly.points.length > 3) {
-            poly.points.splice(vertex.vertexIndex, 1);
-            this.onUpdate(!!this.tempPolygons);
-        }
+        const oldPointCount = poly.points.length;
+        const deletedIndex = vertex.vertexIndex;
+        poly.points.splice(deletedIndex, 1);
+
+        // Deleting a vertex removes both incident edges and shifts every later
+        // edge index. Discard metadata for the newly joined edge because neither
+        // old edge describes it accurately, then remap the unaffected edges.
+        const previousEdgeIndex = deletedIndex === 0
+            ? (poly.closed === false ? -1 : oldPointCount - 1)
+            : deletedIndex - 1;
+        const removedEdgeIndices = new Set([previousEdgeIndex, deletedIndex]);
+        const remapEdgeIndex = (edgeIndex: number) => edgeIndex > deletedIndex ? edgeIndex - 1 : edgeIndex;
+
+        poly.edgeMeta = poly.edgeMeta
+            ?.filter(meta => !removedEdgeIndices.has(meta.edgeIndex))
+            .map(meta => ({ ...meta, edgeIndex: remapEdgeIndex(meta.edgeIndex) }));
+        poly.riftEdgeIndices = poly.riftEdgeIndices
+            ?.filter(edgeIndex => !removedEdgeIndices.has(edgeIndex))
+            .map(remapEdgeIndex);
+        poly.edgeStyles = poly.edgeStyles
+            ?.filter(style => !removedEdgeIndices.has(style.edgeIndex))
+            .map(style => ({ ...style, edgeIndex: remapEdgeIndex(style.edgeIndex) }));
+
+        // The old index may now be out of bounds (most notably when the last
+        // vertex was deleted), so never let rendering consume the stale target.
+        this.clearTopologyInteractionState(vertex.plateId);
+        this.onUpdate(true);
     }
 
     onKeyUp(_e: KeyboardEvent): void { }

@@ -31,6 +31,7 @@ export interface CanvasManagerCallbacks {
     onDrawUpdate?: (count: number) => void;
     onGizmoUpdate?: (rate: number) => void;
     onEditPending?: (active: boolean) => void;
+    onEditNotice?: (message: string) => void;
     getPaintSettings?: () => PaintSettings;
     onPaintComplete?: (ownerPlateId: string, path: Coordinate[], settings: PaintSettings) => void;
     onPaintRejected?: (reason: string) => void;
@@ -184,7 +185,8 @@ export class CanvasManager {
             (hasChanges) => { this.markDirty(); this.callbacks.onEditPending?.(hasChanges); },
             () => { document.getElementById('btn-edit-apply')?.click(); },
             (x, y) => this.findNearestBoundaryElement(x, y),
-            () => this.markDirty()
+            () => this.markDirty(),
+            message => this.callbacks.onEditNotice?.(message)
         );
         // Set up snap candidate provider for edit tool (same as draw tool)
         this.editTool.setSnapCandidateProvider(() => this.getAllPlateVertices());
@@ -437,17 +439,24 @@ export class CanvasManager {
     public startRenderLoop(): void {
         const loop = () => {
             perfMonitor.beginFrame();
-            if (this.isDirty) {
-                this.isDirty = false;
-                this.render();
+            try {
+                if (this.isDirty) {
+                    this.isDirty = false;
+                    this.render();
+                }
+                if (perfMonitor.isEnabled()) {
+                    const state = this.getState();
+                    const ringCount = state.world.plates.filter(plate => plate.riftAxisId || plate.junctionId || plate.slabId).length;
+                    perfMonitor.setCounts(state.world.plates.length, ringCount);
+                }
+            } catch (error) {
+                // An invalid transient geometry must not permanently stop the
+                // requestAnimationFrame chain and make the whole editor appear frozen.
+                console.error('Canvas render failed:', error);
+            } finally {
+                perfMonitor.endFrame();
+                this.animationId = requestAnimationFrame(loop);
             }
-            if (perfMonitor.isEnabled()) {
-                const state = this.getState();
-                const ringCount = state.world.plates.filter(plate => plate.riftAxisId || plate.junctionId || plate.slabId).length;
-                perfMonitor.setCounts(state.world.plates.length, ringCount);
-            }
-            perfMonitor.endFrame();
-            this.animationId = requestAnimationFrame(loop);
         };
         loop();
     }
@@ -1796,12 +1805,14 @@ export class CanvasManager {
             const poly = polygons[hoveredVertex.polyIndex];
             if (poly) {
                 const pt = poly.points[hoveredVertex.vertexIndex];
-                const proj = this.projectionManager.project(pt);
-                if (proj) {
-                    this.ctx.beginPath();
-                    this.ctx.arc(proj[0], proj[1], 6, 0, Math.PI * 2);
-                    this.ctx.fillStyle = '#ff4444';
-                    this.ctx.fill(); this.ctx.stroke();
+                if (pt) {
+                    const proj = this.projectionManager.project(pt);
+                    if (proj) {
+                        this.ctx.beginPath();
+                        this.ctx.arc(proj[0], proj[1], 6, 0, Math.PI * 2);
+                        this.ctx.fillStyle = '#ff4444';
+                        this.ctx.fill(); this.ctx.stroke();
+                    }
                 }
             }
         }

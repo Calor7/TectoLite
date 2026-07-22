@@ -179,6 +179,7 @@ class TectoLiteApp {
                     const el = document.getElementById('edit-controls');
                     if (el) el.style.display = active ? 'block' : 'none';
                 },
+                onEditNotice: message => this.showToast(message, 4000),
                 getPaintSettings: () => this.getPaintSettings(),
                 onPaintComplete: (ownerId, path, settings) => this.commitElevationStroke(ownerId, path, settings),
                 onPaintRejected: reason => this.showToast(reason)
@@ -2097,7 +2098,7 @@ class TectoLiteApp {
                 hintText = "Drag to move the rendered view on screen without rotating the globe or changing geometry.";
                 break;
             case 'edit':
-                hintText = "Select a plate, then drag edges to add points or drag vertices to move. Ctrl/Shift+drag moves the whole shape (drag the yellow ring to rotate).";
+                hintText = "Select a plate, then drag edges to add points or drag vertices to move. Right-click a vertex to delete it; Shift+right-click removes that whole polygon when the plate has multiple polygons. Ctrl/Shift+drag moves the whole shape (drag the yellow ring to rotate).";
                 break;
             case 'draw':
                 hintText = this.state.drawMode === 'line'
