@@ -740,6 +740,11 @@ export class CanvasManager {
 
     private handleKeyDown(e: KeyboardEvent) {
         if (e.key === 'Shift') this.shiftKeyDown = true;
+        const target = e.target;
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ||
+            target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable)) {
+            return;
+        }
         if (this.activeInputTool) this.activeInputTool.onKeyDown(e);
         this.markDirty();
     }
@@ -1835,10 +1840,12 @@ export class CanvasManager {
         window.addEventListener('keydown', this.handleKeyDown.bind(this));
         window.addEventListener('keyup', this.handleKeyUp.bind(this));
         this.canvas.addEventListener('contextmenu', (e) => {
-            if (this.activeInputTool instanceof PathInputTool || this.activeInputTool instanceof EditTool) {
+            if (this.getState().activeTool === 'edit' ||
+                this.activeInputTool instanceof PathInputTool || this.activeInputTool instanceof EditTool) {
                 e.preventDefault();
+                e.stopPropagation();
             }
-        });
+        }, { capture: true });
         this.canvas.addEventListener('wheel', (e) => {
             e.preventDefault();
             const state = this.getState();

@@ -300,6 +300,7 @@ export class EditTool implements InputTool {
             this.cancel();
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
             if (this.hoveredVertex) {
+                e.preventDefault();
                 if (e.shiftKey) {
                     this.deletePolygon(this.hoveredVertex);
                 } else {
@@ -360,7 +361,7 @@ export class EditTool implements InputTool {
             // Explain the explicit whole-component action instead of silently
             // converting an ordinary vertex deletion into a larger operation.
             if (currentPolygons.length > 1) {
-                this.onNotice?.('A polygon needs at least 3 vertices. Hold Shift while right-clicking, or press Shift+Delete, to remove this whole polygon.');
+                this.onNotice?.('A polygon needs at least 3 vertices. Hover one of its vertices and press Shift+Delete to remove the whole polygon.');
             } else {
                 this.onNotice?.("A polygon needs at least 3 vertices, and the plate's only polygon can't be removed.");
             }

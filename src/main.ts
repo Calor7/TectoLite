@@ -1443,7 +1443,10 @@ class TectoLiteApp {
                 }
                 case 'delete':
                 case 'backspace':
-                    this.deleteSelected();
+                    // EditTool owns these keys while editing geometry. Letting
+                    // the global handler run as well deletes the selected plate
+                    // after EditTool deletes just one polygon.
+                    if (this.state.activeTool !== 'edit') this.deleteSelected();
                     break;
 
             }
@@ -2098,7 +2101,7 @@ class TectoLiteApp {
                 hintText = "Drag to move the rendered view on screen without rotating the globe or changing geometry.";
                 break;
             case 'edit':
-                hintText = "Select a plate, then drag edges to add points or drag vertices to move. Right-click a vertex to delete it; Shift+right-click removes that whole polygon when the plate has multiple polygons. Ctrl/Shift+drag moves the whole shape (drag the yellow ring to rotate).";
+                hintText = "Select a plate, then drag edges to add points or drag vertices to move. Right-click a vertex to delete it; hover a vertex and press Shift+Delete to remove that whole polygon when the plate has multiple polygons. Ctrl/Shift+drag moves the whole shape (drag the yellow ring to rotate).";
                 break;
             case 'draw':
                 hintText = this.state.drawMode === 'line'

@@ -106,7 +106,7 @@ describe('EditTool vertex deletion', () => {
         expect(plate.polygons).toHaveLength(2);
     });
 
-    it('removes a whole component immediately with shift-right-click', () => {
+    it('removes only the hovered component with shift-delete', () => {
         const plate = createPlate();
         plate.polygons.push({
             id: 'small-poly',
@@ -114,15 +114,17 @@ describe('EditTool vertex deletion', () => {
             points: [[20, 20], [21, 20], [21, 21], [20, 21]]
         });
         const { tool } = createTool(plate, 3, 1);
+        const preventDefault = vi.fn();
 
         tool.onMouseMove(
             { shiftKey: false, ctrlKey: false, metaKey: false } as MouseEvent,
             [20, 21],
             { x: 20, y: 21 }
         );
-        tool.onMouseDown({ button: 2, shiftKey: true } as MouseEvent, null, { x: 20, y: 21 });
+        tool.onKeyDown({ key: 'Delete', shiftKey: true, preventDefault } as unknown as KeyboardEvent);
 
         expect(tool.getTempPolygons()?.polygons.map(poly => poly.id)).toEqual(['poly-1']);
+        expect(preventDefault).toHaveBeenCalledOnce();
     });
 
     it('does not remove the only polygon from a plate', () => {
