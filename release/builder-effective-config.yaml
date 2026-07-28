@@ -4,12 +4,15 @@ directories:
 appId: com.tectolite.app
 productName: TectoLite
 win:
+  icon: assets/icon.png
   target:
     - portable
 mac:
+  icon: assets/icon.png
   target:
     - dmg
 linux:
+  icon: assets/icon.png
   target:
     - AppImage
 portable:
@@ -20,5 +23,7 @@ files:
       - preload.cjs
       - dist/**/*
       - package.json
+      - LICENSE
+      - NOTICE.txt
       - node_modules/**/*
-electronVersion: 40.1.0
+electronVersion: 40.10.6

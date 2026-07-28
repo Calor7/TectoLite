@@ -43,7 +43,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <!-- Settings Dropdown (formerly Planet) -->
             <div class="view-dropdown-container">
                 <button id="btn-planet" class="btn btn-secondary" title="Application Settings" aria-controls="planet-dropdown-menu" aria-expanded="false" aria-haspopup="true">
-                    <span class="icon">⚙️</span> Settings
+                    <span class="icon">⚙️</span><span class="header-label">Settings</span>
                 </button>
                 <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px; max-height: calc(100vh - 64px); overflow-y: auto;">
                     <div class="dropdown-section">
@@ -140,7 +140,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <div class="view-dropdown-container">
 
                 <button id="btn-view-panels" class="btn btn-secondary" title="View Options" aria-controls="view-dropdown-menu" aria-expanded="false" aria-haspopup="true">
-                    <span class="icon">👁️</span> View
+                    <span class="icon">👁️</span><span class="header-label">View</span>
                 </button>
                 <div id="view-dropdown-menu" class="view-dropdown-menu" style="min-width: 250px; max-height: calc(100vh - 64px); overflow-y: auto;">
                     <!-- 1. BAR SETTING (Panels) -->
@@ -269,36 +269,36 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
 
             <button id="btn-reset-camera" class="btn btn-secondary" title="Reset View (position, rotation, and zoom)">
-                <span class="icon">⟲</span><span class="oldschool-text">RESET</span>
+                <span class="icon">⟲</span><span class="header-label oldschool-text">RESET</span>
             </button>
 
             <button id="btn-fullscreen" class="btn btn-secondary" title="Toggle Fullscreen">
-               <span class="icon">⛶</span><span class="oldschool-text">FULL</span>
+               <span class="icon">⛶</span><span class="header-label oldschool-text">FULL</span>
             </button>
 
             <button id="btn-theme-toggle" class="btn btn-secondary" title="Toggle Theme">
-              <span class="icon">🌙</span><span class="oldschool-text">THEME</span>
+              <span class="icon">🌙</span><span class="header-label oldschool-text">THEME</span>
             </button>
             <button id="btn-undo" class="btn btn-secondary" title="Undo (Ctrl+Z)">
-              <span class="icon">↶</span> Undo
+              <span class="icon">↶</span><span class="header-label">Undo</span>
             </button>
             <button id="btn-redo" class="btn btn-secondary" title="Redo (Ctrl+Y)">
-              <span class="icon">↷</span> Redo
+              <span class="icon">↷</span><span class="header-label">Redo</span>
             </button>
             <button id="btn-new-project" class="btn btn-secondary" title="Start a new project">
-              <span class="icon">+</span> New
+              <span class="icon">+</span><span class="header-label">New</span>
             </button>
             <button id="btn-export" class="btn btn-primary" title="Export (PNG, Heightmap, QGIS)">
-              <span class="icon">📤</span> Export
+              <span class="icon">📤</span><span class="header-label">Export</span>
             </button>
             <button id="btn-export-json" class="btn btn-secondary" title="Export JSON">
-              <span class="icon">💾</span> Save
+              <span class="icon">💾</span><span class="header-label">Save</span>
             </button>
             <button id="btn-import-json" class="btn btn-secondary" title="Import JSON">
-              <span class="icon">📂</span> Load
+              <span class="icon">📂</span><span class="header-label">Load</span>
             </button>
             <button id="btn-report-bug" class="btn btn-secondary" title="Report a Bug" style="font-size: 0.85em; padding: 4px 8px;">
-              Bug Report
+              <span class="icon">⚑</span><span class="header-label">Bug Report</span>
             </button>
             <input type="file" id="file-import" accept=".json" style="display: none;">
             <input type="file" id="file-overlay-upload" accept="image/*" style="display: none;">
