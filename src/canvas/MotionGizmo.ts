@@ -4,6 +4,7 @@
 import { Coordinate, EulerPole, InteractionMode } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { latLonToVector, cross, dot, normalize, vectorToLatLon } from '../utils/sphericalMath';
+import { mixColors } from '../utils/colorUtils';
 
 export type GizmoHandle = 'pole' | 'rate' | null;
 
@@ -17,8 +18,64 @@ export interface GizmoState {
 
 const HANDLE_RADIUS = 8;
 
+export interface MotionLabelOptions {
+    normalColor: string;
+    useSpeedGradient: boolean;
+    highSpeedColor: string;
+    normalSpeedMaxCmYr: number;
+    highSpeedCmYr: number;
+    outlineFullSpeedCmYr: number;
+}
+
+export const DEFAULT_MOTION_LABEL_OPTIONS: MotionLabelOptions = {
+    normalColor: '#ffffff',
+    useSpeedGradient: false,
+    highSpeedColor: '#ff3b30',
+    normalSpeedMaxCmYr: 18,
+    highSpeedCmYr: 20,
+    outlineFullSpeedCmYr: 25,
+};
+
+export interface MotionLabelStyle {
+    fillColor: string;
+    warningOutlineColor: string | null;
+}
+
+const DEFAULT_LABEL_OUTLINE = 'rgba(0, 0, 0, 0.9)';
+
+export function resolveMotionLabelStyle(speedCmYr: number, options: MotionLabelOptions): MotionLabelStyle {
+    const speed = Math.abs(speedCmYr);
+    if (!options.useSpeedGradient || speed <= options.normalSpeedMaxCmYr) {
+        return { fillColor: options.normalColor, warningOutlineColor: null };
+    }
+    const fillProgress = Math.min(1,
+        (speed - options.normalSpeedMaxCmYr)
+        / (options.highSpeedCmYr - options.normalSpeedMaxCmYr)
+    );
+    const fillColor = mixColors(options.normalColor, options.highSpeedColor, 1 - fillProgress * 0.45);
+    if (speed <= options.highSpeedCmYr) {
+        return { fillColor, warningOutlineColor: null };
+    }
+    const outlineProgress = Math.min(1,
+        (speed - options.highSpeedCmYr)
+        / (options.outlineFullSpeedCmYr - options.highSpeedCmYr)
+    );
+    const red = Number.parseInt(options.highSpeedColor.slice(1, 3), 16);
+    const green = Number.parseInt(options.highSpeedColor.slice(3, 5), 16);
+    const blue = Number.parseInt(options.highSpeedColor.slice(5, 7), 16);
+    return {
+        fillColor,
+        warningOutlineColor: `rgba(${red}, ${green}, ${blue}, ${Number(outlineProgress.toFixed(2))})`,
+    };
+}
+
 export class MotionGizmo {
     private state: GizmoState | null = null;
+    private labelOptions: MotionLabelOptions = { ...DEFAULT_MOTION_LABEL_OPTIONS };
+
+    public setLabelOptions(options: MotionLabelOptions): void {
+        this.labelOptions = { ...options };
+    }
 
     public setPlate(
         plateId: string,
@@ -185,15 +242,30 @@ export class MotionGizmo {
         ctx.textBaseline = 'middle';
         ctx.font = 'bold 11px sans-serif';
 
-        // Degrees above
-        ctx.fillStyle = '#fff';
-        ctx.fillText(`${rate.toFixed(1)}°/Ma`, midX, midY - 10);
-
-        // cm/yr below
         const radPerMa = rate * Math.PI / 180;
         const cmPerYr = (radPerMa * planetRadiusKm) / 10;
-        ctx.fillStyle = '#7d9b4e';
-        ctx.fillText(`${cmPerYr.toFixed(2)} cm/yr`, midX, midY + 10);
+        const labelStyle = resolveMotionLabelStyle(cmPerYr, this.labelOptions);
+
+        const drawVelocityLabel = (text: string, y: number) => {
+            if (labelStyle.warningOutlineColor) {
+                ctx.strokeStyle = labelStyle.warningOutlineColor;
+                ctx.lineWidth = 5;
+                ctx.lineJoin = 'round';
+                ctx.strokeText(text, midX, y);
+            }
+            ctx.strokeStyle = DEFAULT_LABEL_OUTLINE;
+            ctx.lineWidth = 3;
+            ctx.lineJoin = 'round';
+            ctx.strokeText(text, midX, y);
+            ctx.fillStyle = labelStyle.fillColor;
+            ctx.fillText(text, midX, y);
+        };
+
+        // Degrees above
+        drawVelocityLabel(`${rate.toFixed(1)}°/Ma`, midY - 10);
+
+        // cm/yr below
+        drawVelocityLabel(`${cmPerYr.toFixed(2)} cm/yr`, midY + 10);
     }
 
     // Calculate points along the rotation arc on the sphere

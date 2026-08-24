@@ -32,6 +32,8 @@ describe('header menus', () => {
         expect(html).toContain('id="link-download-windows"');
         expect(html).toContain('/releases/latest/download/TectoLite-Portable-');
         expect(html).toContain('aria-label="Download the portable Windows app"');
+        expect(html).toContain('<span class="header-label">Download app</span>');
+        expect(html.indexOf('id="link-kofi-header"')).toBeLessThan(html.indexOf('id="link-download-windows"'));
         expect(html.match(/href="https:\/\/ko-fi\.com\/refracturedgames"/g)).toHaveLength(1);
         expect(html).toContain('Ctrl+S');
         expect(html).toContain('Ctrl+O');

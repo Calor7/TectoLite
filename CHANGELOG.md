@@ -4,6 +4,26 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.4 - 2026-08-24
+
+### Added
+
+- Added saved Appearance controls for canvas motion-label colors and optional
+  speed-limit highlighting, including configurable warning start, realistic
+  maximum, and full-outline thresholds.
+
+### Changed
+
+- Canvas motion labels are white by default. With speed highlighting enabled,
+  labels transition to light red from 18 to 20 cm/yr, then gain a red outer
+  outline that fades in from 20 to 25 cm/yr.
+- Grouped the Ko-fi and Windows actions at the right edge of the header and
+  renamed the rightmost action to **Download app**.
+
+### Fixed
+
+- Fixed canvas speed text losing contrast when it overlaps a landmass.
+
 ## 1.0.3 - 2026-08-24
 
 ### Added

@@ -91,6 +91,21 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <label class="ui-color-row" for="ui-color-accent"><span>Accent</span><input type="color" id="ui-color-accent" value="#00bde3"></label>
                         </fieldset>
                         <p class="appearance-settings-note">Saved on this device. Default colors follow the Light/Dark theme.</p>
+                        <div class="canvas-motion-settings">
+                            <div class="appearance-subheader">Canvas motion labels</div>
+                            <label class="ui-color-row" for="canvas-motion-normal-color"><span>Normal color</span><input type="color" id="canvas-motion-normal-color" value="#ffffff"></label>
+                            <label class="ui-default-colors-row canvas-motion-gradient-toggle">
+                                <span>Highlight speed limit</span>
+                                <input type="checkbox" id="check-canvas-motion-speed-gradient">
+                            </label>
+                            <fieldset id="canvas-motion-gradient-fields" class="canvas-motion-gradient-fields" disabled>
+                                <label class="ui-color-row" for="canvas-motion-high-speed-color"><span>Limit color</span><input type="color" id="canvas-motion-high-speed-color" value="#ff3b30"></label>
+                                <label class="ui-color-row" for="canvas-motion-normal-speed-max"><span>Highlight from</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-normal-speed-max" value="18" min="0" max="999" step="1"> cm/yr</span></label>
+                                <label class="ui-color-row" for="canvas-motion-high-speed"><span>Realistic maximum</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-high-speed" value="20" min="1" max="1000" step="1"> cm/yr</span></label>
+                                <label class="ui-color-row" for="canvas-motion-outline-full-speed"><span>Full outline at</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-outline-full-speed" value="25" min="2" max="1000" step="1"> cm/yr</span></label>
+                            </fieldset>
+                            <p class="appearance-settings-note canvas-motion-note">Near the maximum, the fill becomes light red. Above it, the limit-colored outer outline fades in across the configured range.</p>
+                        </div>
                     </div>
                     <div class="dropdown-section">
                         <div class="dropdown-header">Timeline</div>
@@ -372,16 +387,6 @@ export function getAppHTML(opts: AppTemplateOptions): string {
               <span class="icon">${uiIcon('redo')}</span><span class="header-label header-collapse-label">Redo</span>
             </button>
 
-            <a id="link-download-windows" class="btn btn-primary header-download-link" href="${WINDOWS_PORTABLE_DOWNLOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Download the portable Windows app" title="Download the portable Windows app">
-                ${uiIcon('download')}
-                <span class="header-label">Download</span>
-            </a>
-
-            <a id="link-refracturedgames-header" class="btn btn-secondary header-support-link" href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer" aria-label="Visit Refractured Games" title="Visit Refractured Games">
-                ${uiIcon('external-link')}
-                <span class="header-label">Refractured Games</span>
-            </a>
-
             <div class="view-dropdown-container">
                 <button id="btn-help-menu" class="btn btn-secondary" title="Help and information" aria-controls="help-dropdown-menu" aria-expanded="false" aria-haspopup="true">
                     <span class="icon">${uiIcon('help-circle')}</span><span class="header-label header-collapse-label">Help</span>
@@ -397,12 +402,22 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                 </div>
             </div>
 
+            <a id="link-refracturedgames-header" class="btn btn-secondary header-support-link" href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer" aria-label="Visit Refractured Games" title="Visit Refractured Games">
+                ${uiIcon('external-link')}
+                <span class="header-label">Refractured Games</span>
+            </a>
+
             <a id="link-kofi-header" class="btn btn-secondary header-support-link" href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" aria-label="Support TectoLite on Ko-fi" title="Support TectoLite on Ko-fi">
                 <span class="kofi-icon-slot" aria-hidden="true">
                     ${uiIcon('coffee', 'ui-icon kofi-static-icon')}
                     <img class="kofi-animated-icon" data-kofi-animated-icon data-animated-src="./coffee-mug-flaticon.gif" alt="">
                 </span>
                 <span class="header-label">Ko-fi</span>
+            </a>
+
+            <a id="link-download-windows" class="btn btn-primary header-download-link" href="${WINDOWS_PORTABLE_DOWNLOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Download the portable Windows app" title="Download the portable Windows app">
+                ${uiIcon('download')}
+                <span class="header-label">Download app</span>
             </a>
             <input type="file" id="file-import" accept=".json" style="display: none;">
             <input type="file" id="file-overlay-upload" accept="image/*" multiple style="display: none;">

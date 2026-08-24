@@ -34,6 +34,14 @@ describe('UI color preferences', () => {
                 text: '#ffffff',
                 accent: '#26c6da',
             },
+            canvasMotion: {
+                normalColor: '#f8f8f8',
+                useSpeedGradient: true,
+                highSpeedColor: '#ff2244',
+                normalSpeedMaxCmYr: 12,
+                highSpeedCmYr: 28,
+                outlineFullSpeedCmYr: 33,
+            },
         };
 
         saveUiColorPreferences(storage, preferences);
@@ -73,6 +81,7 @@ describe('UI color preferences', () => {
                 text: '#ffffff',
                 accent: '#263238',
             },
+            canvasMotion: DEFAULT_UI_COLOR_PREFERENCES.canvasMotion,
         };
 
         applyUiColorPreferences(target, custom);
@@ -82,5 +91,45 @@ describe('UI color preferences', () => {
 
         applyUiColorPreferences(target, DEFAULT_UI_COLOR_PREFERENCES);
         expect(values.size).toBe(0);
+    });
+
+    it('adds default canvas-label settings when loading an older saved palette', () => {
+        const storage = memoryStorage(JSON.stringify({
+            useDefaults: false,
+            colors: {
+                background: '#101820',
+                surface: '#203040',
+                controls: '#304050',
+                text: '#ffffff',
+                accent: '#26c6da',
+            },
+        }));
+
+        expect(loadUiColorPreferences(storage).canvasMotion).toEqual(
+            DEFAULT_UI_COLOR_PREFERENCES.canvasMotion
+        );
+    });
+
+    it('rejects malformed canvas-label colors and speed ranges', () => {
+        const base = {
+            useDefaults: false,
+            colors: { ...DEFAULT_UI_COLOR_PREFERENCES.colors },
+            canvasMotion: { ...DEFAULT_UI_COLOR_PREFERENCES.canvasMotion },
+        };
+        const invalidCanvasSettings = [
+            { ...base.canvasMotion, normalColor: 'white' },
+            { ...base.canvasMotion, highSpeedColor: 'rgb(255, 0, 0)' },
+            { ...base.canvasMotion, useSpeedGradient: 'yes' },
+            { ...base.canvasMotion, normalSpeedMaxCmYr: -1 },
+            { ...base.canvasMotion, highSpeedCmYr: base.canvasMotion.normalSpeedMaxCmYr },
+            { ...base.canvasMotion, highSpeedCmYr: 1001 },
+            { ...base.canvasMotion, outlineFullSpeedCmYr: base.canvasMotion.highSpeedCmYr },
+            { ...base.canvasMotion, outlineFullSpeedCmYr: 1001 },
+        ];
+
+        for (const canvasMotion of invalidCanvasSettings) {
+            const storage = memoryStorage(JSON.stringify({ ...base, canvasMotion }));
+            expect(loadUiColorPreferences(storage)).toEqual(DEFAULT_UI_COLOR_PREFERENCES);
+        }
     });
 });

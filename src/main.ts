@@ -85,6 +85,7 @@ import { bindProgressivePropertyPanels } from './ui/ProgressiveDisclosure';
 import { bindDockController, type DockController } from './ui/DockController';
 import { loadToolPreferences, saveToolPreferences, type ToolPreferences } from './ui/ToolPreferences';
 import { bindUiColorPreferences } from './ui/UiColorPreferences';
+import { DEFAULT_MOTION_LABEL_OPTIONS, type MotionLabelOptions } from './canvas/MotionGizmo';
 
 type UnifiedExportOptions = NonNullable<Awaited<ReturnType<typeof showUnifiedExportDialog>>>;
 
@@ -164,7 +165,10 @@ class TectoLiteApp {
         document.querySelector<HTMLDivElement>('#app')!.innerHTML = this.getHTML();
         const themeIcon = document.querySelector<HTMLElement>('#btn-theme-toggle [data-theme-icon]');
         if (themeIcon) themeIcon.innerHTML = uiIcon(savedTheme === 'light' ? 'sun' : 'moon');
-        bindUiColorPreferences(document, localStorage, () => {
+        let motionLabelOptions: MotionLabelOptions = { ...DEFAULT_MOTION_LABEL_OPTIONS };
+        bindUiColorPreferences(document, localStorage, preferences => {
+            motionLabelOptions = preferences.canvasMotion;
+            this.canvasManager?.setMotionLabelOptions(motionLabelOptions);
             this.canvasManager?.markDirty();
             this.canvasManager?.render();
         });
@@ -225,6 +229,7 @@ class TectoLiteApp {
                 }
             }
         );
+        this.canvasManager.setMotionLabelOptions(motionLabelOptions);
 
         bindProgressivePropertyPanels(document);
         this.dockController = bindDockController(document, () => this.canvasManager?.resizeCanvas());

@@ -1,3 +1,5 @@
+import { DEFAULT_MOTION_LABEL_OPTIONS, type MotionLabelOptions } from '../canvas/MotionGizmo';
+
 export interface UiColors {
     background: string;
     surface: string;
@@ -9,6 +11,7 @@ export interface UiColors {
 export interface UiColorPreferences {
     useDefaults: boolean;
     colors: UiColors;
+    canvasMotion: MotionLabelOptions;
 }
 
 export interface UiColorStorage {
@@ -28,6 +31,7 @@ export const DEFAULT_UI_COLOR_PREFERENCES: UiColorPreferences = {
         text: '#eff6fb',
         accent: '#00bde3',
     },
+    canvasMotion: { ...DEFAULT_MOTION_LABEL_OPTIONS },
 };
 
 const COLOR_INPUT_IDS: Record<keyof UiColors, string> = {
@@ -42,6 +46,39 @@ function cloneDefaults(): UiColorPreferences {
     return {
         useDefaults: DEFAULT_UI_COLOR_PREFERENCES.useDefaults,
         colors: { ...DEFAULT_UI_COLOR_PREFERENCES.colors },
+        canvasMotion: { ...DEFAULT_UI_COLOR_PREFERENCES.canvasMotion },
+    };
+}
+
+function normalizeCanvasMotion(value: unknown): MotionLabelOptions | null {
+    if (value === undefined) return { ...DEFAULT_MOTION_LABEL_OPTIONS };
+    if (!value || typeof value !== 'object') return null;
+    const candidate = value as Partial<MotionLabelOptions>;
+    const validColors = typeof candidate.normalColor === 'string'
+        && HEX_COLOR.test(candidate.normalColor)
+        && typeof candidate.highSpeedColor === 'string'
+        && HEX_COLOR.test(candidate.highSpeedColor);
+    const outlineFullSpeedCmYr = candidate.outlineFullSpeedCmYr
+        ?? (typeof candidate.highSpeedCmYr === 'number' ? candidate.highSpeedCmYr + 5 : undefined);
+    const validSpeeds = typeof candidate.normalSpeedMaxCmYr === 'number'
+        && Number.isFinite(candidate.normalSpeedMaxCmYr)
+        && candidate.normalSpeedMaxCmYr >= 0
+        && typeof candidate.highSpeedCmYr === 'number'
+        && Number.isFinite(candidate.highSpeedCmYr)
+        && candidate.highSpeedCmYr > candidate.normalSpeedMaxCmYr
+        && candidate.highSpeedCmYr <= 1000
+        && typeof outlineFullSpeedCmYr === 'number'
+        && Number.isFinite(outlineFullSpeedCmYr)
+        && outlineFullSpeedCmYr > candidate.highSpeedCmYr
+        && outlineFullSpeedCmYr <= 1000;
+    if (!validColors || typeof candidate.useSpeedGradient !== 'boolean' || !validSpeeds) return null;
+    return {
+        normalColor: candidate.normalColor!.toLowerCase(),
+        useSpeedGradient: candidate.useSpeedGradient,
+        highSpeedColor: candidate.highSpeedColor!.toLowerCase(),
+        normalSpeedMaxCmYr: candidate.normalSpeedMaxCmYr!,
+        highSpeedCmYr: candidate.highSpeedCmYr!,
+        outlineFullSpeedCmYr: outlineFullSpeedCmYr!,
     };
 }
 
@@ -55,10 +92,13 @@ function normalizePreferences(value: unknown): UiColorPreferences | null {
     const colors = candidate.colors as Partial<UiColors>;
     const entries = Object.keys(COLOR_INPUT_IDS) as Array<keyof UiColors>;
     if (entries.some(key => typeof colors[key] !== 'string' || !HEX_COLOR.test(colors[key]))) return null;
+    const canvasMotion = normalizeCanvasMotion(candidate.canvasMotion);
+    if (!canvasMotion) return null;
 
     return {
         useDefaults: candidate.useDefaults,
         colors: Object.fromEntries(entries.map(key => [key, colors[key]!.toLowerCase()])) as unknown as UiColors,
+        canvasMotion,
     };
 }
 
@@ -125,10 +165,17 @@ export function applyUiColorPreferences(target: HTMLElement, preferences: UiColo
 export function bindUiColorPreferences(
     root: Document = document,
     storage: UiColorStorage = localStorage,
-    onApplied: () => void = () => undefined
+    onApplied: (preferences: UiColorPreferences) => void = () => undefined
 ): { destroy(): void } {
     const defaultCheck = root.getElementById('check-use-default-ui-colors') as HTMLInputElement | null;
     const customFields = root.getElementById('ui-color-custom-fields') as HTMLFieldSetElement | null;
+    const canvasNormalColor = root.getElementById('canvas-motion-normal-color') as HTMLInputElement | null;
+    const canvasGradientCheck = root.getElementById('check-canvas-motion-speed-gradient') as HTMLInputElement | null;
+    const canvasGradientFields = root.getElementById('canvas-motion-gradient-fields') as HTMLFieldSetElement | null;
+    const canvasHighSpeedColor = root.getElementById('canvas-motion-high-speed-color') as HTMLInputElement | null;
+    const canvasNormalSpeedMax = root.getElementById('canvas-motion-normal-speed-max') as HTMLInputElement | null;
+    const canvasHighSpeed = root.getElementById('canvas-motion-high-speed') as HTMLInputElement | null;
+    const canvasOutlineFullSpeed = root.getElementById('canvas-motion-outline-full-speed') as HTMLInputElement | null;
     const target = root.body;
     const cleanups: Array<() => void> = [];
     let preferences = loadUiColorPreferences(storage);
@@ -143,11 +190,18 @@ export function bindUiColorPreferences(
     const render = () => {
         if (defaultCheck) defaultCheck.checked = preferences.useDefaults;
         if (customFields) customFields.disabled = preferences.useDefaults;
+        if (canvasNormalColor) canvasNormalColor.value = preferences.canvasMotion.normalColor;
+        if (canvasGradientCheck) canvasGradientCheck.checked = preferences.canvasMotion.useSpeedGradient;
+        if (canvasGradientFields) canvasGradientFields.disabled = !preferences.canvasMotion.useSpeedGradient;
+        if (canvasHighSpeedColor) canvasHighSpeedColor.value = preferences.canvasMotion.highSpeedColor;
+        if (canvasNormalSpeedMax) canvasNormalSpeedMax.value = String(preferences.canvasMotion.normalSpeedMaxCmYr);
+        if (canvasHighSpeed) canvasHighSpeed.value = String(preferences.canvasMotion.highSpeedCmYr);
+        if (canvasOutlineFullSpeed) canvasOutlineFullSpeed.value = String(preferences.canvasMotion.outlineFullSpeedCmYr);
         (Object.keys(inputs) as Array<keyof UiColors>).forEach(key => {
             if (inputs[key]) inputs[key]!.value = preferences.colors[key];
         });
         applyUiColorPreferences(target, preferences);
-        onApplied();
+        onApplied(preferences);
     };
 
     const bind = (element: HTMLElement | null, event: string, listener: EventListener) => {
@@ -171,11 +225,48 @@ export function bindUiColorPreferences(
             preferences = {
                 useDefaults: false,
                 colors: { ...preferences.colors, [key]: value },
+                canvasMotion: preferences.canvasMotion,
             };
             saveUiColorPreferences(storage, preferences);
             render();
         });
     });
+
+    const updateCanvasMotion = (patch: Partial<MotionLabelOptions>, restoreInvalid = true): boolean => {
+        const normalized = normalizePreferences({
+            ...preferences,
+            canvasMotion: { ...preferences.canvasMotion, ...patch },
+        });
+        if (!normalized) {
+            if (restoreInvalid) render();
+            return false;
+        }
+        preferences = normalized;
+        saveUiColorPreferences(storage, preferences);
+        render();
+        return true;
+    };
+
+    bind(canvasNormalColor, 'input', event => {
+        updateCanvasMotion({ normalColor: (event.target as HTMLInputElement).value.toLowerCase() });
+    });
+    bind(canvasGradientCheck, 'change', event => {
+        updateCanvasMotion({ useSpeedGradient: (event.target as HTMLInputElement).checked });
+    });
+    bind(canvasHighSpeedColor, 'input', event => {
+        updateCanvasMotion({ highSpeedColor: (event.target as HTMLInputElement).value.toLowerCase() });
+    });
+    const updateCanvasMotionSpeeds = (restoreInvalid: boolean) => updateCanvasMotion({
+        normalSpeedMaxCmYr: Number(canvasNormalSpeedMax?.value),
+        highSpeedCmYr: Number(canvasHighSpeed?.value),
+        outlineFullSpeedCmYr: Number(canvasOutlineFullSpeed?.value),
+    }, restoreInvalid);
+    bind(canvasNormalSpeedMax, 'input', () => { updateCanvasMotionSpeeds(false); });
+    bind(canvasHighSpeed, 'input', () => { updateCanvasMotionSpeeds(false); });
+    bind(canvasOutlineFullSpeed, 'input', () => { updateCanvasMotionSpeeds(false); });
+    bind(canvasNormalSpeedMax, 'change', () => { updateCanvasMotionSpeeds(true); });
+    bind(canvasHighSpeed, 'change', () => { updateCanvasMotionSpeeds(true); });
+    bind(canvasOutlineFullSpeed, 'change', () => { updateCanvasMotionSpeeds(true); });
 
     render();
     return {

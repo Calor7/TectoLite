@@ -28,5 +28,11 @@ describe('contextual tool panels', () => {
         expect(html).toContain('id="ui-color-controls"');
         expect(html).toContain('id="ui-color-text"');
         expect(html).toContain('id="ui-color-accent"');
+        expect(html).toContain('id="canvas-motion-normal-color"');
+        expect(html).toContain('id="check-canvas-motion-speed-gradient"');
+        expect(html).toContain('id="canvas-motion-high-speed-color"');
+        expect(html).toContain('id="canvas-motion-normal-speed-max"');
+        expect(html).toContain('id="canvas-motion-high-speed"');
+        expect(html).toContain('id="canvas-motion-outline-full-speed"');
     });
 });

@@ -2,7 +2,7 @@ import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, B
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
-import { MotionGizmo } from './MotionGizmo';
+import { MotionGizmo, type MotionLabelOptions } from './MotionGizmo';
 import { activeEulerPole, pointPositionAt } from '../motion/RotationModel';
 import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid } from '../utils/sphericalMath';
 import { perfMonitor } from '../utils/PerfMonitor';
@@ -417,6 +417,11 @@ export class CanvasManager {
             // window resize, relative to the old and new canvas centers.
             viewport: resizeViewportAroundCanvasCenter(s.viewport, rect.width, rect.height)
         }));
+        this.markDirty();
+    }
+
+    public setMotionLabelOptions(options: MotionLabelOptions): void {
+        this.motionGizmo.setLabelOptions(options);
         this.markDirty();
     }
 
