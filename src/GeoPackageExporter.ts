@@ -1,5 +1,6 @@
 import { AppState, GeoPackageExportOptions, TectonicPlate } from './types';
 import { HeightmapGenerator, HeightmapOptions } from './systems/HeightmapGenerator';
+import { isFeatureActiveAtTime, isPlateActiveAtTime } from './utils/timeline';
 import type { Database } from 'sql.js';
 
 type InitSqlJs = typeof import('sql.js')['default'];
@@ -98,10 +99,10 @@ export class GeoPackageExporter {
       this.downloadGeoPackage();
 
       console.log(
-        `✅ GeoPackage export complete: tectolite-qgis-${Date.now()}.gpkg (${(db.export().length / 1024).toFixed(2)} KB)`
+        `GeoPackage export complete: tectolite-qgis-${Date.now()}.gpkg (${(db.export().length / 1024).toFixed(2)} KB)`
       );
     } catch (error) {
-      console.error('❌ GeoPackage export failed:', error);
+      console.error('GeoPackage export failed:', error);
       alert(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -208,7 +209,9 @@ export class GeoPackageExporter {
       VALUES (?, ?, ?, ?, ?, ?);
     `);
 
+    const currentTime = this.state.world.currentTime;
     for (const plate of this.state.world.plates) {
+      if (!plate.visible || !isPlateActiveAtTime(plate, currentTime)) continue;
       const wkb = this.polygonsToWKB(plate);
       insertStmt.bind([
         plate.id,
@@ -266,14 +269,9 @@ export class GeoPackageExporter {
 
     const currentTime = this.state.world.currentTime;
     for (const plate of this.state.world.plates) {
+      if (!plate.visible || !isPlateActiveAtTime(plate, currentTime)) continue;
       for (const feature of plate.features) {
-        // Filter: only export features active at current time
-        if (feature.generatedAt && feature.generatedAt > currentTime) {
-          continue; // Feature not yet created
-        }
-        if (feature.deathTime !== undefined && feature.deathTime !== null && feature.deathTime <= currentTime) {
-          continue; // Feature already dead
-        }
+        if (!isFeatureActiveAtTime(feature, currentTime)) continue;
 
         const wkb = this.pointToWKB(feature.position);
         insertStmt.bind([

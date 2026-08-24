@@ -68,6 +68,17 @@ describe('splitPlate', () => {
         expect(children.some(child => child.id === result.world.selectedPlateId)).toBe(true);
     });
 
+    it('applies custom result names from split options', () => {
+        const source = makePlate();
+        const result = splitPlate(makeState(source), source.id, verticalCut, {
+            inheritMomentum: true,
+            resultNames: ['Western block', 'Eastern block']
+        });
+        const children = result.world.plates.filter(plate => plate.parentPlateId === source.id);
+
+        expect(children.map(child => child.name).sort()).toEqual(['Eastern block', 'Western block']);
+    });
+
     it('partitions features between the generated children', () => {
         const left = { id: 'left-feature', type: 'mountain', position: [-5, 0] } as Feature;
         const right = { id: 'right-feature', type: 'volcano', position: [5, 0] } as Feature;
@@ -79,5 +90,43 @@ describe('splitPlate', () => {
 
         expect(assignedIds.sort()).toEqual(['left-feature', 'right-feature']);
         expect(children.every(child => child.features.length === 1)).toBe(true);
+    });
+
+    it('does not retire an overlay whose historical link ended before the split', () => {
+        const source = makePlate();
+        const detachedOverlay = makePlate({
+            id: 'detached-overlay',
+            name: 'Detached overlay',
+            linkedToPlateId: source.id,
+            linkTime: 5,
+            unlinkTime: 10,
+        });
+        const state = makeState(source);
+        state.world.plates.push(detachedOverlay);
+
+        const result = splitPlate(state, source.id, verticalCut);
+        const preserved = result.world.plates.find(plate => plate.id === detachedOverlay.id);
+
+        expect(preserved?.deathTime).toBeNull();
+        expect(result.world.plates.filter(plate => plate.parentPlateId === detachedOverlay.id)).toHaveLength(0);
+    });
+
+    it('rebases replacement overlays to a fresh link window at the split time', () => {
+        const source = makePlate();
+        const overlay = makePlate({
+            id: 'active-overlay',
+            name: 'Active overlay',
+            linkedToPlateId: source.id,
+            linkTime: 5,
+            unlinkTime: 40,
+        });
+        const state = makeState(source);
+        state.world.plates.push(overlay);
+
+        const result = splitPlate(state, source.id, verticalCut);
+        const replacements = result.world.plates.filter(plate => plate.parentPlateId === overlay.id);
+
+        expect(replacements.length).toBeGreaterThan(0);
+        expect(replacements.every(plate => plate.linkTime === 20 && plate.unlinkTime === undefined)).toBe(true);
     });
 });

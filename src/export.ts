@@ -1,27 +1,24 @@
 // PNG Export functionality
-import { AppState, Feature, WorldState, ProjectionType, CameraView, MapLabel } from './types';
-import { migrateSaveFile, CURRENT_SAVE_VERSION as SAVE_VERSION, type SaveFile } from './migration';
+import { AppState, Feature, WorldState, ProjectionType, CameraView, MapLabel, type Viewport } from './types';
+import { CURRENT_SAVE_VERSION as SAVE_VERSION } from './migration';
+import { assertProjectFileSize, parseProjectText } from './ProjectIO';
 import { ProjectionManager } from './canvas/ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from './utils/geoHelpers';
-import { pointPositionAt } from './motion/RotationModel';
+import { activeEulerPole, pointPositionAt } from './motion/RotationModel';
+import { FEATURE_ICON_DRAWERS } from './canvas/featureIcons';
 import {
-    drawMountainIcon,
-    drawVolcanoIcon,
-    drawHotspotIcon,
-    drawRiftIcon,
-    drawTrenchIcon,
-    drawIslandIcon
-} from './canvas/featureIcons';
-
-const FEATURE_DRAWERS: Record<string, (ctx: CanvasRenderingContext2D, size: number) => void> = {
-    mountain: drawMountainIcon,
-    volcano: drawVolcanoIcon,
-    hotspot: drawHotspotIcon,
-    rift: drawRiftIcon,
-    trench: drawTrenchIcon,
-    island: drawIslandIcon
-};
+    resolveFeatureTimelineOpacity,
+    resolveLineRenderStyle,
+    sortPlatesForRendering,
+} from './canvas/renderStyles';
+import {
+    EXPORT_CROP_HELP,
+    JSON_ENTIRE_TIMELINE_HELP,
+    JSON_FROM_CURRENT_HELP,
+} from './ui/workflowGuidance';
+import { escapeHtml } from './ui/safeHtml';
+import { uiIcon } from './ui/icons';
 
 export interface PNGExportOptions {
     projection: ProjectionType;
@@ -29,6 +26,25 @@ export interface PNGExportOptions {
     plateColorMode: 'native' | 'land';
     showGrid: boolean;
     includeFeatures?: boolean;
+}
+
+/**
+ * Scale the current map as a cover, not a contain. This guarantees that an
+ * export with a different aspect ratio never reveals geographic area outside
+ * the live canvas; the surplus dimension is cropped symmetrically instead.
+ */
+export function createExportViewport(viewport: Viewport, width: number, height: number): Viewport {
+    const ratio = Math.max(width / viewport.width, height / viewport.height);
+    return {
+        ...viewport,
+        width,
+        height,
+        scale: viewport.scale * ratio,
+        translate: [
+            width / 2 + (viewport.translate[0] - viewport.width / 2) * ratio,
+            height / 2 + (viewport.translate[1] - viewport.height / 2) * ratio,
+        ],
+    };
 }
 
 export function exportToPNG(
@@ -48,20 +64,11 @@ export function exportToPNG(
 
     // Setup viewport for export
     // Use the current viewport settings but scaled to the new resolution
-    const ratio = width / state.viewport.width;
+    const ratio = Math.max(width / state.viewport.width, height / state.viewport.height);
     const currentTime = state.world.currentTime;
     const { waterMode, plateColorMode, includeFeatures } = options;
 
-    const exportViewport = {
-        ...state.viewport,
-        width: width,
-        height: height,
-        scale: state.viewport.scale * ratio,
-        translate: [
-            width / 2 + (state.viewport.translate[0] - state.viewport.width / 2) * ratio,
-            height / 2 + (state.viewport.translate[1] - state.viewport.height / 2) * ratio
-        ] as [number, number]
-    };
+    const exportViewport = createExportViewport(state.viewport, width, height);
 
     // Use requested projection
     pm.update(options.projection, exportViewport);
@@ -95,7 +102,7 @@ export function exportToPNG(
     }
 
     // 3. Plates
-    for (const plate of state.world.plates) {
+    for (const plate of sortPlatesForRendering(state.world.plates)) {
         if (!plate.visible) continue;
         if (currentTime < plate.birthTime) continue;
         if (plate.deathTime !== null && currentTime >= plate.deathTime) continue;
@@ -109,17 +116,27 @@ export function exportToPNG(
             path(geojson);
 
             // Plate Color Logic
-            if (plateColorMode === 'land') {
-                ctx.fillStyle = '#C2B280'; // Ecru/Sand Land Color
-            } else {
-                ctx.fillStyle = plate.color;
+            if (polygon.closed !== false) {
+                if (plateColorMode === 'land') {
+                    ctx.fillStyle = '#C2B280'; // Ecru/Sand Land Color
+                } else {
+                    ctx.fillStyle = plate.color;
+                }
+                ctx.fill();
             }
-            ctx.fill();
 
             // Border
-            ctx.strokeStyle = waterMode === 'white' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.3)';
-            ctx.lineWidth = 1 * ratio;
+            if (plate.type === 'rift') {
+                const style = resolveLineRenderStyle(plate, state.world.globalOptions.lineTypeDefaults);
+                ctx.strokeStyle = style.color;
+                ctx.lineWidth = 2 * ratio;
+                ctx.setLineDash(style.dash.map(value => value * ratio));
+            } else {
+                ctx.strokeStyle = waterMode === 'white' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 1 * ratio;
+            }
             ctx.stroke();
+            ctx.setLineDash([]);
         }
 
 
@@ -127,7 +144,13 @@ export function exportToPNG(
         // Features
         if (includeFeatures !== false) {
             for (const feature of plate.features) {
-                drawFeature(ctx, pm, feature, ratio);
+                const opacity = resolveFeatureTimelineOpacity(
+                    feature,
+                    currentTime,
+                    state.world.showFutureFeatures
+                );
+                if (opacity === null) continue;
+                drawFeature(ctx, pm, feature, ratio, opacity);
             }
         }
 
@@ -211,7 +234,8 @@ function drawFeature(
     ctx: CanvasRenderingContext2D,
     pm: ProjectionManager,
     feature: Feature,
-    scaleRatio: number
+    scaleRatio: number,
+    opacity: number = 1
 ): void {
     const proj = pm.project(feature.position);
     if (!proj) return;
@@ -219,10 +243,11 @@ function drawFeature(
     const size = 12 * feature.scale * scaleRatio;
 
     ctx.save();
+    ctx.globalAlpha *= opacity;
     ctx.translate(proj[0], proj[1]);
     ctx.rotate(feature.rotation * Math.PI / 180);
 
-    const draw = FEATURE_DRAWERS[feature.type];
+    const draw = FEATURE_ICON_DRAWERS[feature.type];
     if (draw) draw(ctx, size);
 
     ctx.restore();
@@ -232,6 +257,7 @@ function drawFeature(
 
 // JSON Export functionality
 // Save version history:
+//   v10: multiple independently positioned reference-image overlays.
 //   v9: first-class flag labels with fixed or plate-relative anchors.
 //   v8: Explorer range selection and persistent group opacity.
 //   v7: ocean-crust automation uses one mutually exclusive strategy.
@@ -253,6 +279,168 @@ export interface ExportOptions {
     filename: string;
 }
 
+/**
+ * Create the timeline-reset world used by "From Current Time" saves.
+ *
+ * The visible plate geometry is the new birth snapshot at t=0. Historical
+ * motion/stages are discarded (not collapsed onto the same timestamp), while
+ * genuinely future changes keep their relative time. Link windows and plate
+ * events follow the same rule.
+ */
+export function createWorldFromCurrentTime(world: WorldState): WorldState {
+    const currentTime = world.currentTime;
+    const activePlates = world.plates.filter(plate =>
+        plate.birthTime <= currentTime
+        && (plate.deathTime === null || plate.deathTime > currentTime)
+    );
+    const activePlateIds = new Set(activePlates.map(plate => plate.id));
+
+    // A motion link intentionally keeps pointing at its historical parent
+    // after fusion so the full-timeline model can compose pre- and post-fusion
+    // motion. A current-time export removes retired plates, so follow the
+    // persisted fusion lineage and rebase that link to the active successor.
+    const resolveActiveLinkTarget = (targetId: string): string | undefined => {
+        const visited = new Set<string>();
+        let target = world.plates.find(plate => plate.id === targetId);
+
+        while (target && !activePlateIds.has(target.id)) {
+            if (visited.has(target.id)) return undefined;
+            visited.add(target.id);
+            if (target.deathTime === null) return undefined;
+
+            target = world.plates.find(candidate =>
+                candidate.parentPlateIds?.includes(target!.id)
+                && Math.abs(candidate.birthTime - target!.deathTime!) < 0.001
+            );
+        }
+
+        return target && activePlateIds.has(target.id) ? target.id : undefined;
+    };
+
+    const shiftFeature = (feature: Feature): Feature => ({
+        ...feature,
+        generatedAt: feature.generatedAt !== undefined
+            ? Math.max(0, feature.generatedAt - currentTime)
+            : undefined,
+        deathTime: feature.deathTime !== undefined
+            ? feature.deathTime - currentTime
+            : undefined,
+    });
+
+    const plates = activePlates.map(plate => {
+        const featuresAtStart = plate.features
+            .filter(feature => feature.deathTime === undefined || feature.deathTime === null || feature.deathTime > currentTime)
+            .map(shiftFeature);
+        const futureSegments = plate.motionSegments
+            .filter(segment => segment.time > currentTime)
+            .map(segment => ({ ...segment, time: segment.time - currentTime }))
+            .sort((left, right) => left.time - right.time);
+        const futureStages = plate.geometryStages
+            .filter(stage => stage.time > currentTime)
+            .map(stage => ({
+                ...stage,
+                time: stage.time - currentTime,
+                features: stage.features.map(shiftFeature),
+            }))
+            .sort((left, right) => left.time - right.time);
+        const activeLinkTarget = plate.linkedToPlateId
+            ? resolveActiveLinkTarget(plate.linkedToPlateId)
+            : undefined;
+        const linkStillExists = !!activeLinkTarget
+            && (plate.unlinkTime === undefined || plate.unlinkTime > currentTime);
+
+        return {
+            ...plate,
+            birthTime: 0,
+            deathTime: plate.deathTime !== null ? plate.deathTime - currentTime : null,
+            linkedToPlateId: linkStillExists ? activeLinkTarget : undefined,
+            linkTime: linkStillExists
+                ? Math.max(0, (plate.linkTime ?? currentTime) - currentTime)
+                : undefined,
+            unlinkTime: linkStillExists && plate.unlinkTime !== undefined
+                ? plate.unlinkTime - currentTime
+                : undefined,
+            polygons: plate.polygons,
+            features: featuresAtStart,
+            initialPolygons: plate.polygons,
+            initialFeatures: featuresAtStart,
+            motionSegments: [
+                { time: 0, eulerPole: activeEulerPole(plate, currentTime) },
+                ...futureSegments,
+            ],
+            geometryStages: [
+                { time: 0, polygons: plate.polygons, features: featuresAtStart },
+                ...futureStages,
+            ],
+            events: plate.events
+                .filter(event => event.time >= currentTime)
+                .map(event => ({ ...event, time: event.time - currentTime }))
+                .sort((left, right) => left.time - right.time),
+        };
+    });
+
+    const riftAxes = (world.riftAxes || [])
+        .filter(axis => axis.birthTime <= currentTime
+            && axis.state !== 'dead'
+            && (axis.deathTime === undefined || axis.deathTime > currentTime)
+            && activePlateIds.has(axis.plateIdA)
+            && activePlateIds.has(axis.plateIdB))
+        .map(axis => {
+            const latestRecorded = [...axis.isochrons]
+                .filter(isochron => isochron.time <= currentTime)
+                .sort((left, right) => right.time - left.time)[0];
+            return {
+                ...axis,
+                birthPolyline: latestRecorded?.polyline ?? axis.birthPolyline,
+                birthTime: 0,
+                frozenTime: axis.frozenTime !== undefined ? Math.max(0, axis.frozenTime - currentTime) : undefined,
+                deathTime: axis.deathTime !== undefined ? axis.deathTime - currentTime : undefined,
+                isochrons: axis.isochrons
+                    .filter(isochron => isochron.time > currentTime)
+                    .map(isochron => ({ ...isochron, time: isochron.time - currentTime }))
+                    .sort((left, right) => left.time - right.time),
+            };
+        });
+    const activeAxisIds = new Set(riftAxes.map(axis => axis.id));
+
+    return {
+        ...world,
+        currentTime: 0,
+        plates,
+        labels: world.labels.map(label => {
+            if (!label.attachedPlateId || !activePlateIds.has(label.attachedPlateId)) {
+                return { ...label, attachedPlateId: undefined, anchorTime: 0 };
+            }
+            const plate = world.plates.find(candidate => candidate.id === label.attachedPlateId)!;
+            return {
+                ...label,
+                anchor: pointPositionAt(plate, world.plates, label.anchor, label.anchorTime, currentTime),
+                anchorTime: 0,
+            };
+        }),
+        riftAxes,
+        tripleJunctions: (world.tripleJunctions || [])
+            .filter(junction => junction.birthTime <= currentTime
+                && junction.state !== 'dead'
+                && junction.axisIds.every(id => activeAxisIds.has(id)))
+            .map(junction => {
+                const latestRecorded = [...(junction.junctionHistory || [])]
+                    .filter(vertex => vertex.time <= currentTime)
+                    .sort((left, right) => right.time - left.time)[0];
+                return {
+                    ...junction,
+                    birthTime: 0,
+                    junctionHistory: [
+                        ...(latestRecorded ? [{ ...latestRecorded, time: 0 }] : []),
+                        ...(junction.junctionHistory || [])
+                            .filter(vertex => vertex.time > currentTime)
+                            .map(vertex => ({ ...vertex, time: vertex.time - currentTime })),
+                    ].sort((left, right) => left.time - right.time),
+                };
+            }),
+    };
+}
+
 export function showExportDialog(): Promise<ExportOptions | null> {
     return new Promise((resolve) => {
         // Create modal overlay
@@ -264,76 +452,91 @@ export function showExportDialog(): Promise<ExportOptions | null> {
         `;
 
         const dialog = document.createElement('div');
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'save-export-title');
         dialog.style.cssText = `
-            background: #1e1e2e; border-radius: 12px; padding: 24px;
-            min-width: 350px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 24px;
+            min-width: 350px; color: var(--text-primary); font-family: var(--font-family);
             box-shadow: 0 8px 32px rgba(0,0,0,0.4);
         `;
 
         const currentTime = (window as any).__tectoLiteCurrentTime ?? 0;
 
         dialog.innerHTML = `
-            <h3 style="margin: 0 0 16px 0; color: #89b4fa;">💾 Export Save File</h3>
+            <h3 id="save-export-title" style="margin: 0 0 16px 0; color: var(--text-primary); display:flex; align-items:center; gap:8px;">${uiIcon('save')} Export save file</h3>
             
             <div style="margin-bottom: 16px;">
                 <label style="display: block; margin-bottom: 8px; font-weight: 500;">File Name:</label>
                 <input type="text" id="export-filename" value="TectoLite-${new Date().toISOString().split('T')[0]}" 
-                    style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px;
-                    background: #313244; color: #cdd6f4; box-sizing: border-box;">
+                    style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+                    background: var(--bg-elevated); color: var(--text-primary); box-sizing: border-box;">
             </div>
             
             <div style="margin-bottom: 20px;">
                 <label style="display: block; margin-bottom: 8px; font-weight: 500;">Timeline Mode:</label>
                 <div style="display: flex; flex-direction: column; gap: 8px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; 
-                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        background: var(--bg-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
                         <input type="radio" name="export-mode" value="entire_timeline" checked>
                         <div>
-                            <div style="font-weight: 500;">📚 Entire Timeline</div>
-                            <div style="font-size: 12px; color: #a6adc8;">Save everything from time 0 onwards</div>
+                            <div style="font-weight: 500; display:flex; align-items:center; gap:7px;">${uiIcon('history')} Entire timeline</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">${JSON_ENTIRE_TIMELINE_HELP}</div>
                         </div>
                     </label>
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px;
-                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        background: var(--bg-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
                         <input type="radio" name="export-mode" value="from_current_time">
                         <div>
-                            <div style="font-weight: 500;">⏩ From Current Time (${currentTime.toFixed(1)} Ma)</div>
-                            <div style="font-size: 12px; color: #a6adc8;">Save from now, reset timeline to 0</div>
+                            <div style="font-weight: 500; display:flex; align-items:center; gap:7px;">${uiIcon('fast-forward')} From current time (${currentTime.toFixed(1)} Ma)</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">${JSON_FROM_CURRENT_HELP}</div>
                         </div>
                     </label>
                 </div>
             </div>
             
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button id="export-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px;
-                    background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
+                <button id="export-cancel" style="padding: 8px 16px; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+                    background: var(--bg-elevated); color: var(--text-primary); cursor: pointer;">Cancel</button>
                 <button id="export-confirm" style="padding: 8px 16px; border: none; border-radius: 6px;
-                    background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 500;">Export</button>
+                    background: var(--accent-primary); color: var(--accent-contrast); cursor: pointer; font-weight: 500;">Export</button>
             </div>
         `;
 
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
 
+        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        let settled = false;
         const cleanup = () => {
-            document.body.removeChild(overlay);
+            window.removeEventListener('keydown', onKeyDown);
+            overlay.remove();
+            previousFocus?.focus();
         };
-
-        dialog.querySelector('#export-cancel')?.addEventListener('click', () => {
+        const cancel = () => {
+            if (settled) return;
+            settled = true;
             cleanup();
             resolve(null);
+        };
+        const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') cancel(); };
+        window.addEventListener('keydown', onKeyDown);
+
+        dialog.querySelector('#export-cancel')?.addEventListener('click', () => {
+            cancel();
         });
 
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) {
-                cleanup();
-                resolve(null);
+                cancel();
             }
         });
 
         dialog.querySelector('#export-confirm')?.addEventListener('click', () => {
+            if (settled) return;
             const filename = (dialog.querySelector('#export-filename') as HTMLInputElement).value.trim();
             const mode = (dialog.querySelector('input[name="export-mode"]:checked') as HTMLInputElement).value as ExportMode;
+            settled = true;
             cleanup();
             resolve(filename ? { mode, filename } : null);
         });
@@ -354,78 +557,7 @@ export async function exportToJSON(state: AppState, cameraViews?: CameraView[]):
 
     // If exporting from current time, shift all timestamps so currentTime becomes 0
     if (options.mode === 'from_current_time') {
-        const timeOffset = -state.world.currentTime;
-
-        worldToSave = {
-            ...state.world,
-            currentTime: 0,
-            labels: state.world.labels.map(label => {
-                if (!label.attachedPlateId) return { ...label, anchorTime: 0 };
-                const plate = state.world.plates.find(candidate => candidate.id === label.attachedPlateId);
-                if (!plate) return { ...label, attachedPlateId: undefined, anchorTime: 0 };
-                return {
-                    ...label,
-                    anchor: pointPositionAt(plate, state.world.plates, label.anchor, label.anchorTime, state.world.currentTime),
-                    anchorTime: 0
-                };
-            }),
-            plates: state.world.plates
-                .filter(plate => {
-                    // Only include plates that are alive at current time
-                    const isBorn = state.world.currentTime >= plate.birthTime;
-                    const isDead = plate.deathTime !== null && state.world.currentTime >= plate.deathTime;
-                    return isBorn && !isDead;
-                })
-                .map(plate => ({
-                    ...plate,
-                    birthTime: Math.max(0, plate.birthTime + timeOffset),
-                    deathTime: plate.deathTime !== null ? plate.deathTime + timeOffset : null,
-                    motionSegments: plate.motionSegments
-                        .filter(s => s.time <= state.world.currentTime)
-                        .map(s => ({ ...s, time: Math.max(0, s.time + timeOffset) })),
-                    geometryStages: plate.geometryStages
-                        .filter(s => s.time <= state.world.currentTime)
-                        .map(s => ({
-                            ...s,
-                            time: Math.max(0, s.time + timeOffset),
-                            features: s.features.map(f => ({
-                                ...f,
-                                generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
-                                deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
-                            }))
-                        })),
-                    features: plate.features.map(f => ({
-                        ...f,
-                        generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
-                        deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
-                    })),
-                    initialFeatures: plate.initialFeatures.map(f => ({
-                        ...f,
-                        generatedAt: f.generatedAt !== undefined ? Math.max(0, f.generatedAt + timeOffset) : undefined,
-                        deathTime: f.deathTime !== undefined ? f.deathTime + timeOffset : undefined
-                    }))
-                })),
-            riftAxes: (state.world.riftAxes || [])
-                .filter(a => state.world.currentTime >= a.birthTime && a.state !== 'dead')
-                .map(a => ({
-                    ...a,
-                    birthTime: Math.max(0, a.birthTime + timeOffset),
-                    frozenTime: a.frozenTime !== undefined ? a.frozenTime + timeOffset : undefined,
-                    deathTime: a.deathTime !== undefined ? a.deathTime + timeOffset : undefined,
-                    isochrons: a.isochrons
-                        .map(iso => ({ time: iso.time + timeOffset, polyline: iso.polyline }))
-                        .filter(iso => iso.time >= 0),
-                })),
-            tripleJunctions: (state.world.tripleJunctions || [])
-                .filter(j => j.state !== 'dead')
-                .map(j => ({
-                    ...j,
-                    birthTime: Math.max(0, j.birthTime + timeOffset),
-                    junctionHistory: j.junctionHistory
-                        ?.map(v => ({ ...v, time: v.time + timeOffset }))
-                        .filter(v => v.time >= 0),
-                }))
-        };
+        worldToSave = createWorldFromCurrentTime(state.world);
 
     }
 
@@ -465,122 +597,118 @@ export function showImportDialog(filename: string, plateCount: number, currentTi
         `;
 
         const dialog = document.createElement('div');
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'save-import-title');
         dialog.style.cssText = `
-            background: #1e1e2e; border-radius: 12px; padding: 24px;
-            min-width: 350px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 24px;
+            min-width: 350px; color: var(--text-primary); font-family: var(--font-family);
             box-shadow: 0 8px 32px rgba(0,0,0,0.4);
         `;
 
         dialog.innerHTML = `
-            <h3 style="margin: 0 0 16px 0; color: #a6e3a1;">📂 Import Save File</h3>
+            <h3 id="save-import-title" style="margin: 0 0 16px 0; color: var(--text-primary); display:flex; align-items:center; gap:8px;">${uiIcon('folder-open')} Import save file</h3>
             
-            <div style="margin-bottom: 16px; padding: 12px; background: #313244; border-radius: 6px;">
-                <div style="font-weight: 500; margin-bottom: 4px;">${filename}</div>
-                <div style="font-size: 12px; color: #a6adc8;">${plateCount} plate(s) found</div>
+            <div style="margin-bottom: 16px; padding: 12px; background: var(--bg-elevated); border-radius: var(--radius-sm);">
+                <div style="font-weight: 500; margin-bottom: 4px;">${escapeHtml(filename)}</div>
+                <div style="font-size: 12px; color: var(--text-secondary);">${plateCount} plate(s) found</div>
             </div>
             
             <div style="margin-bottom: 20px;">
                 <label style="display: block; margin-bottom: 8px; font-weight: 500;">Import Location:</label>
                 <div style="display: flex; flex-direction: column; gap: 8px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; 
-                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        background: var(--bg-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
                         <input type="radio" name="import-mode" value="replace_current" checked>
                         <div>
                             <div style="font-weight: 500; display: flex; align-items: center; gap: 6px;">
-                                ♻️ Replace Current Simulation
-                                <span title="Restore the saved file exactly. Use Import modes below to merge into the current timeline." style="font-size: 11px; color: #a6adc8; cursor: help;">(i)</span>
+                                ${uiIcon('refresh')} Replace current simulation
+                                <span title="Restore the saved file exactly. Use Import modes below to merge into the current timeline." style="font-size: 11px; color: var(--text-secondary); cursor: help;">(i)</span>
                             </div>
-                            <div style="font-size: 12px; color: #a6adc8;">Fully restore the saved state</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">Fully restore the saved state</div>
                         </div>
                     </label>
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; 
-                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        background: var(--bg-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
                         <input type="radio" name="import-mode" value="at_beginning">
                         <div>
-                            <div style="font-weight: 500;">⏮️ At Beginning (Time 0)</div>
-                            <div style="font-size: 12px; color: #a6adc8;">Add plates starting from the beginning</div>
+                            <div style="font-weight: 500; display:flex; align-items:center; gap:7px;">${uiIcon('rewind')} At beginning (time 0)</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">Add plates starting from the beginning</div>
                         </div>
                     </label>
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px;
-                        background: #313244; border-radius: 6px; border: 1px solid #45475a;">
+                        background: var(--bg-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
                         <input type="radio" name="import-mode" value="at_current_time">
                         <div>
-                            <div style="font-weight: 500;">⏩ At Current Time (${currentTime.toFixed(1)} Ma)</div>
-                            <div style="font-size: 12px; color: #a6adc8;">Add plates at the current simulation time</div>
+                            <div style="font-weight: 500; display:flex; align-items:center; gap:7px;">${uiIcon('fast-forward')} At current time (${currentTime.toFixed(1)} Ma)</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">Add plates at the current simulation time</div>
                         </div>
                     </label>
                 </div>
             </div>
             
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button id="import-cancel" style="padding: 8px 16px; border: 1px solid #45475a; border-radius: 6px;
-                    background: #313244; color: #cdd6f4; cursor: pointer;">Cancel</button>
+                <button id="import-cancel" style="padding: 8px 16px; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+                    background: var(--bg-elevated); color: var(--text-primary); cursor: pointer;">Cancel</button>
                 <button id="import-confirm" style="padding: 8px 16px; border: none; border-radius: 6px;
-                    background: #a6e3a1; color: #1e1e2e; cursor: pointer; font-weight: 500;">Import</button>
+                    background: var(--accent-success); color: var(--accent-contrast); cursor: pointer; font-weight: 500;">Import</button>
             </div>
         `;
 
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
 
+        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        let settled = false;
         const cleanup = () => {
-            document.body.removeChild(overlay);
+            window.removeEventListener('keydown', onKeyDown);
+            overlay.remove();
+            previousFocus?.focus();
         };
-
-        dialog.querySelector('#import-cancel')?.addEventListener('click', () => {
+        const cancel = () => {
+            if (settled) return;
+            settled = true;
             cleanup();
             resolve(null);
+        };
+        const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') cancel(); };
+        window.addEventListener('keydown', onKeyDown);
+
+        dialog.querySelector('#import-cancel')?.addEventListener('click', () => {
+            cancel();
         });
 
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) {
-                cleanup();
-                resolve(null);
+                cancel();
             }
         });
 
         dialog.querySelector('#import-confirm')?.addEventListener('click', () => {
+            if (settled) return;
             const mode = (dialog.querySelector('input[name="import-mode"]:checked') as HTMLInputElement).value as ImportMode;
+            settled = true;
             cleanup();
             resolve(mode);
         });
+        (dialog.querySelector('input[name="import-mode"]:checked') as HTMLInputElement | null)?.focus();
     });
 }
 
 // Parse file to get metadata without full import
 export function parseImportFile(file: File): Promise<{ world: WorldState; viewport?: any; name: string; activeTool?: string; activeFeatureType?: string; cameraViews?: CameraView[] }> {
     return new Promise((resolve, reject) => {
+        try {
+            assertProjectFileSize(file.size);
+        } catch (error) {
+            reject(error);
+            return;
+        }
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
                 const text = e.target?.result as string;
-                const data = JSON.parse(text) as SaveFile;
-
-                if (!data.world || !Array.isArray(data.world.plates)) {
-                    throw new Error('Invalid save file format');
-                }
-
-                // Reject saves from the future before migrating — a newer
-                // version may use fields we don't understand.
-                if (data.version && data.version > SAVE_VERSION) {
-                    throw new Error('Unsupported save file version');
-                }
-
-                // Walk the save through every version-gated migration step up
-                // to CURRENT_SAVE_VERSION (line-type rename, motion-model
-                // migration, etc.). After this, data.version === SAVE_VERSION.
-                migrateSaveFile(data);
-
-                const world = data.world as WorldState;
-
-                resolve({
-                    world,
-                    viewport: data.viewport as any, // Optional
-                    name: data.name || file.name,
-                    activeTool: data.activeTool,
-                    activeFeatureType: data.activeFeatureType,
-                    cameraViews: Array.isArray(data.cameraViews) ? data.cameraViews as CameraView[] : undefined
-                });
+                resolve(parseProjectText(text, file.name));
             } catch (err) {
                 reject(err);
             }
@@ -625,36 +753,39 @@ export function showUnifiedExportDialog(defaults?: {
         `;
 
         const dialog = document.createElement('div');
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'unified-export-title');
         dialog.style.cssText = `
-            background: #1e1e2e; border-radius: 12px; padding: 24px;
-            min-width: 450px; color: #cdd6f4; font-family: system-ui, sans-serif;
+            background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 24px;
+            min-width: 450px; color: var(--text-primary); font-family: var(--font-family);
             box-shadow: 0 8px 32px rgba(0,0,0,0.4);
             max-height: 80vh; overflow-y: auto;
         `;
 
         dialog.innerHTML = `
-            <h3 style="margin: 0 0 20px 0; color: #89b4fa;">📤 Export Options</h3>
+            <h3 id="unified-export-title" style="margin: 0 0 20px 0; color: var(--text-primary); display:flex; align-items:center; gap:8px;">${uiIcon('upload')} Export options</h3>
             
             <!-- Format Selector -->
             <div style="margin-bottom: 20px;">
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Export Format:</label>
                 <div style="display: flex; gap: 8px;">
-                    <button id="fmt-png" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid #89b4fa; background: #313244; border-radius: 6px; color: #cdd6f4; cursor: pointer; font-weight: 600;">
-                        🖼️ PNG Image
+                    <button id="fmt-png" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid var(--accent-primary); background: var(--bg-elevated); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; font-weight: 600; display:inline-flex; align-items:center; justify-content:center; gap:7px;">
+                        ${uiIcon('image')} PNG image
                     </button>
-                    <button id="fmt-heightmap" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid #45475a; background: #313244; border-radius: 6px; color: #cdd6f4; cursor: pointer; font-weight: 600;">
-                        🗺️ Heightmap
+                    <button id="fmt-heightmap" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid var(--border-default); background: var(--bg-elevated); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; font-weight: 600; display:inline-flex; align-items:center; justify-content:center; gap:7px;">
+                        ${uiIcon('map')} Heightmap
                     </button>
-                    <button id="fmt-qgis" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid #45475a; background: #313244; border-radius: 6px; color: #cdd6f4; cursor: pointer; font-weight: 600;">
-                        🌍 QGIS
+                    <button id="fmt-qgis" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid var(--border-default); background: var(--bg-elevated); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; font-weight: 600; display:inline-flex; align-items:center; justify-content:center; gap:7px;">
+                        ${uiIcon('globe')} QGIS
                     </button>
                 </div>
             </div>
 
             <!-- PNG Options -->
-            <div id="options-png" style="display: block; margin-bottom: 20px; padding: 16px; background: #313244; border-radius: 6px; border-left: 4px solid #89b4fa;">
+            <div id="options-png" style="display: block; margin-bottom: 20px; padding: 16px; background: var(--bg-elevated); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-primary);">
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Projection:</label>
-                <select id="export-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4; margin-bottom: 12px;">
+                <select id="export-projection" style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary); margin-bottom: 12px;">
                     <option value="orthographic">Globe (Orthographic)</option>
                     <option value="equirectangular">Flat Map (Equirectangular)</option>
                     <option value="mercator">Mercator</option>
@@ -662,7 +793,7 @@ export function showUnifiedExportDialog(defaults?: {
                     <option value="robinson">Robinson</option>
                 </select>
                 <label style="display: block; margin-bottom: 8px; font-weight: 500;">Preset:</label>
-                <select id="png-preset" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4; margin-bottom: 12px;">
+                <select id="png-preset" style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary); margin-bottom: 12px;">
                     <option value="custom" selected>Custom</option>
                     <option value="presentation">Presentation (1920×1080)</option>
                     <option value="print">Print (4096×2160)</option>
@@ -682,20 +813,21 @@ export function showUnifiedExportDialog(defaults?: {
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution:</label>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                     <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
-                        <input type="number" id="export-width" value="1920" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                        <label style="font-size: 12px; color: var(--text-secondary);">Width</label>
+                        <input type="number" id="export-width" value="1920" style="width: 100%; padding: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary);">
                     </div>
                     <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
-                        <input type="number" id="export-height" value="1080" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                        <label style="font-size: 12px; color: var(--text-secondary);">Height</label>
+                        <input type="number" id="export-height" value="1080" style="width: 100%; padding: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary);">
                     </div>
                 </div>
+                <div id="export-crop-guidance" role="note" style="font-size: 10px; line-height: 1.35; color: var(--text-secondary); margin-top: 8px;">${EXPORT_CROP_HELP}</div>
             </div>
 
             <!-- Heightmap Options -->
-            <div id="options-heightmap" style="display: none; margin-bottom: 20px; padding: 16px; background: #313244; border-radius: 6px; border-left: 4px solid #89b4fa;">
+            <div id="options-heightmap" style="display: none; margin-bottom: 20px; padding: 16px; background: var(--bg-elevated); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-primary);">
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Projection:</label>
-                <select id="hm-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4; margin-bottom: 12px;">
+                <select id="hm-projection" style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary); margin-bottom: 12px;">
                     <option value="equirectangular">Equirectangular</option>
                     <option value="mercator">Mercator</option>
                     <option value="mollweide">Mollweide</option>
@@ -705,20 +837,20 @@ export function showUnifiedExportDialog(defaults?: {
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution:</label>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                     <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
-                        <input type="number" id="hm-width" value="4096" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                        <label style="font-size: 12px; color: var(--text-secondary);">Width</label>
+                        <input type="number" id="hm-width" value="4096" style="width: 100%; padding: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary);">
                     </div>
                     <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
-                        <input type="number" id="hm-height" value="2048" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                        <label style="font-size: 12px; color: var(--text-secondary);">Height</label>
+                        <input type="number" id="hm-height" value="2048" style="width: 100%; padding: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary);">
                     </div>
                 </div>
             </div>
 
             <!-- QGIS Options -->
-            <div id="options-qgis" style="display: none; margin-bottom: 20px; padding: 16px; background: #313244; border-radius: 6px; border-left: 4px solid #89b4fa;">
+            <div id="options-qgis" style="display: none; margin-bottom: 20px; padding: 16px; background: var(--bg-elevated); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-primary);">
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Projection:</label>
-                <select id="qgis-projection" style="width: 100%; padding: 8px 12px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4; margin-bottom: 12px;">
+                <select id="qgis-projection" style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary); margin-bottom: 12px;">
                     <option value="equirectangular">Equirectangular</option>
                     <option value="mercator">Mercator</option>
                     <option value="mollweide">Mollweide</option>
@@ -732,19 +864,19 @@ export function showUnifiedExportDialog(defaults?: {
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution:</label>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                     <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Width</label>
-                        <input type="number" id="qgis-width" value="2048" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                        <label style="font-size: 12px; color: var(--text-secondary);">Width</label>
+                        <input type="number" id="qgis-width" value="2048" style="width: 100%; padding: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary);">
                     </div>
                     <div>
-                        <label style="font-size: 12px; color: #a6adc8;">Height</label>
-                        <input type="number" id="qgis-height" value="1024" style="width: 100%; padding: 8px; border: 1px solid #45475a; border-radius: 6px; background: #2a2a3e; color: #cdd6f4;">
+                        <label style="font-size: 12px; color: var(--text-secondary);">Height</label>
+                        <input type="number" id="qgis-height" value="1024" style="width: 100%; padding: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary);">
                     </div>
                 </div>
             </div>
 
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button id="export-cancel" style="padding: 10px 20px; border: 1px solid #45475a; border-radius: 6px; background: #313244; color: #cdd6f4; cursor: pointer; font-weight: 500;">Cancel</button>
-                <button id="export-confirm" style="padding: 10px 20px; border: none; border-radius: 6px; background: #89b4fa; color: #1e1e2e; cursor: pointer; font-weight: 600;">Export</button>
+                <button id="export-cancel" style="padding: 10px 20px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; font-weight: 500;">Cancel</button>
+                <button id="export-confirm" style="padding: 10px 20px; border: none; border-radius: var(--radius-sm); background: var(--accent-primary); color: var(--accent-contrast); cursor: pointer; font-weight: 600;">Export</button>
             </div>
         `;
 
@@ -765,9 +897,9 @@ export function showUnifiedExportDialog(defaults?: {
 
                 // Update button styles
                 formatBtns.forEach((b) => {
-                    (b as HTMLElement).style.borderColor = '#45475a';
+                    (b as HTMLElement).style.borderColor = 'var(--border-default)';
                 });
-                (target as HTMLElement).style.borderColor = '#89b4fa';
+                (target as HTMLElement).style.borderColor = 'var(--accent-primary)';
 
                 // Show/hide option panels
                 (dialog.querySelector('#options-png') as HTMLElement).style.display = format === 'png' ? 'block' : 'none';
@@ -810,14 +942,28 @@ export function showUnifiedExportDialog(defaults?: {
             applyPngPreset(presetSelect.value);
         });
 
-        const cleanup = () => document.body.removeChild(overlay);
-        const onCancel = () => { cleanup(); resolve(null); };
+        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        let settled = false;
+        const cleanup = () => {
+            window.removeEventListener('keydown', onKeyDown);
+            overlay.remove();
+            previousFocus?.focus();
+        };
+        const onCancel = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(null);
+        };
+        const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancel(); };
+        window.addEventListener('keydown', onKeyDown);
 
         dialog.querySelector('#export-cancel')?.addEventListener('click', onCancel);
         overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
 
         dialog.querySelector('#export-confirm')?.addEventListener('click', () => {
-            cleanup();
+            if (settled) return;
+            let result: UnifiedExportOptions | null = null;
 
             if (selectedFormat === 'png') {
                 const w = parseInt((dialog.querySelector('#export-width') as HTMLInputElement).value);
@@ -826,21 +972,21 @@ export function showUnifiedExportDialog(defaults?: {
                 const showGrid = (dialog.querySelector('#png-show-grid') as HTMLInputElement).checked;
                 const includeFeatures = (dialog.querySelector('#png-include-features') as HTMLInputElement).checked;
                 if (w > 0 && h > 0) {
-                    resolve({
+                    result = {
                         format: 'png',
                         projection: proj,
                         width: w,
                         height: h,
                         showGrid,
                         includeFeatures
-                    });
+                    };
                 }
             } else if (selectedFormat === 'heightmap') {
                 const w = parseInt((dialog.querySelector('#hm-width') as HTMLInputElement).value);
                 const h = parseInt((dialog.querySelector('#hm-height') as HTMLInputElement).value);
                 const proj = (dialog.querySelector('#hm-projection') as HTMLSelectElement).value as ProjectionType;
                 if (w > 0 && h > 0) {
-                    resolve({ format: 'heightmap', projection: proj, width: w, height: h });
+                    result = { format: 'heightmap', projection: proj, width: w, height: h };
                 }
             } else if (selectedFormat === 'qgis') {
                 const w = parseInt((dialog.querySelector('#qgis-width') as HTMLInputElement).value);
@@ -848,9 +994,14 @@ export function showUnifiedExportDialog(defaults?: {
                 const proj = (dialog.querySelector('#qgis-projection') as HTMLSelectElement).value as ProjectionType;
                 const hm = (dialog.querySelector('#qgis-heightmap') as HTMLInputElement).checked;
                 if (w > 0 && h > 0) {
-                    resolve({ format: 'qgis', projection: proj, width: w, height: h, includeHeightmap: hm });
+                    result = { format: 'qgis', projection: proj, width: w, height: h, includeHeightmap: hm };
                 }
             }
+            if (!result) return;
+            settled = true;
+            cleanup();
+            resolve(result);
         });
+        (dialog.querySelector('#fmt-png') as HTMLButtonElement | null)?.focus();
     });
 }

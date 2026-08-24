@@ -4,23 +4,50 @@ directories:
   buildResources: assets
   output: release
 
+asar: true
+
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+
 win:
   icon: assets/icon.png
   target:
     - portable
+    - nsis
 
 mac:
   icon: assets/icon.png
+  hardenedRuntime: true
   target:
     - dmg
+    - zip
 
 linux:
   icon: assets/icon.png
+  category: Education
   target:
     - AppImage
+    - deb
 
 portable:
-  artifactName: ${productName}-${version}.exe
+  artifactName: ${productName}-Portable-${version}-${arch}.${ext}
+
+nsis:
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+appImage:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+deb:
+  artifactName: ${productName}-${version}-${arch}.${ext}
 
 files:
   - electron-main.cjs
@@ -29,7 +56,7 @@ files:
   - package.json
   - LICENSE
   - NOTICE.txt
-  - node_modules/**/*
+  - '!node_modules/**/*'
 
 
 

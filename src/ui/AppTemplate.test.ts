@@ -47,4 +47,17 @@ describe('application settings template', () => {
         expect(html).toContain('aria-controls="planet-dropdown-menu" aria-expanded="false" aria-haspopup="true"');
         expect(html).toContain('aria-controls="view-dropdown-menu" aria-expanded="false" aria-haspopup="true"');
     });
+
+    it('exposes multi-image reference overlay selection and transform controls', () => {
+        const html = renderSettings();
+
+        expect(html).toContain('id="overlay-select"');
+        expect(html).toContain('id="check-edit-overlay"');
+        expect(html).toContain('id="overlay-size-slider"');
+        expect(html).toContain('id="overlay-x-input"');
+        expect(html).toContain('id="overlay-y-input"');
+        expect(html).toContain('id="btn-overlay-front"');
+        expect(html).toContain('id="file-overlay-upload" accept="image/*" multiple');
+        expect(html).toContain('Large images are resized and compressed automatically');
+    });
 });

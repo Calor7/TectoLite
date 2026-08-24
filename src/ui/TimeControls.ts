@@ -3,13 +3,17 @@
  * and time transformation utilities.
  * Extracted from main.ts TectoLiteApp class.
  */
+import { uiIcon } from './icons';
 
 /**
  * Updates the play button text based on playing state.
  */
 export function updatePlayButton(isPlaying: boolean): void {
     const btn = document.getElementById('btn-play');
-    if (btn) btn.textContent = isPlaying ? '⏸️' : '▶️';
+    if (btn) {
+        btn.innerHTML = uiIcon(isPlaying ? 'pause' : 'play');
+        btn.setAttribute('aria-label', isPlaying ? 'Pause timeline' : 'Play timeline');
+    }
 }
 
 /**
@@ -27,16 +31,16 @@ export function showToast(message: string, duration: number = 2000): void {
         bottom: 80px;
         left: 50%;
         transform: translateX(-50%);
-        background: rgba(30, 30, 46, 0.95);
-        color: #cdd6f4;
-        padding: 12px 24px;
-        border-radius: 8px;
+        background: color-mix(in srgb, var(--bg-surface) 95%, transparent);
+        color: var(--text-primary);
+        padding: 10px 16px;
+        border-radius: var(--radius-sm);
         font-size: 14px;
         z-index: 10000;
         pointer-events: none;
         animation: toastFadeIn 0.2s ease-out;
-        border: 1px solid rgba(137, 180, 250, 0.3);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        border: 1px solid var(--border-default);
+        box-shadow: var(--shadow-md);
     `;
     toast.textContent = message;
 

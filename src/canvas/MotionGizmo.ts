@@ -192,7 +192,7 @@ export class MotionGizmo {
         // cm/yr below
         const radPerMa = rate * Math.PI / 180;
         const cmPerYr = (radPerMa * planetRadiusKm) / 10;
-        ctx.fillStyle = '#a6e3a1';
+        ctx.fillStyle = '#7d9b4e';
         ctx.fillText(`${cmPerYr.toFixed(2)} cm/yr`, midX, midY + 10);
     }
 

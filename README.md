@@ -10,6 +10,10 @@ Oceanic crust generation is experimental. It is disabled by default and appears 
 
 The retired guided-event automation prototype, mesh runtime, and unused elevation-editing runtime are not part of the active application. `HeightmapGenerator` remains active for raster export.
 
+## Download
+
+[Download the latest portable Windows app](https://github.com/Calor7/TectoLite/releases/latest/download/TectoLite-Portable-1.0.2-x64.exe), or browse [all TectoLite releases](https://github.com/Calor7/TectoLite/releases).
+
 ## Development
 
 Requirements: Node.js 20 or newer and npm.
@@ -65,3 +69,7 @@ Before tagging a release:
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE). See [NOTICE.txt](NOTICE.txt) for attribution.
+
+## Asset attribution
+
+<a href="https://www.flaticon.com/free-animated-icons/coffee-mug" title="coffee mug animated icons">Coffee mug animated icons created by Magnific - Flaticon</a>

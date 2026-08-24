@@ -293,12 +293,60 @@ export class EditTool implements InputTool {
         const plate = state.world.plates.find(p => p.id === vertex.plateId);
         if (!plate) return;
 
+        const currentPolygons = this.tempPolygons?.plateId === plate.id
+            ? this.tempPolygons.polygons
+            : plate.polygons;
+        const currentPoly = currentPolygons[vertex.polyIndex];
+        if (!currentPoly || !Number.isInteger(vertex.vertexIndex) ||
+            vertex.vertexIndex < 0 || vertex.vertexIndex >= currentPoly.points.length) {
+            this.hoveredVertex = null;
+            this.hoveredEdge = null;
+            return;
+        }
+
+        // A polygon cannot remain valid below three vertices. When this is one
+        // component of a multi-polygon plate, finish the normal deletion by
+        // removing the component instead of leaving an undeletable triangle.
+        if (currentPoly.points.length <= 3) {
+            if (currentPolygons.length > 1) {
+                this.ensureTempPolygons(plate);
+                this.tempPolygons!.polygons.splice(vertex.polyIndex, 1);
+                this.hoveredVertex = null;
+                this.hoveredEdge = null;
+                this.dragState = null;
+                this.onUpdate(true);
+            }
+            return;
+        }
+
         this.ensureTempPolygons(plate);
         const poly = this.tempPolygons!.polygons[vertex.polyIndex];
-        if (poly && poly.points.length > 3) {
-            poly.points.splice(vertex.vertexIndex, 1);
-            this.onUpdate(!!this.tempPolygons);
-        }
+        const oldPointCount = poly.points.length;
+        const deletedIndex = vertex.vertexIndex;
+        poly.points.splice(deletedIndex, 1);
+
+        // Delete the two incident edge records and shift unaffected metadata so
+        // applying the edit cannot leave out-of-range edge indices behind.
+        const previousEdgeIndex = deletedIndex === 0
+            ? (poly.closed === false ? -1 : oldPointCount - 1)
+            : deletedIndex - 1;
+        const removedEdgeIndices = new Set([previousEdgeIndex, deletedIndex]);
+        const remapEdgeIndex = (edgeIndex: number) => edgeIndex > deletedIndex ? edgeIndex - 1 : edgeIndex;
+        poly.edgeMeta = poly.edgeMeta
+            ?.filter((meta: { edgeIndex: number }) => !removedEdgeIndices.has(meta.edgeIndex))
+            .map((meta: { edgeIndex: number }) => ({ ...meta, edgeIndex: remapEdgeIndex(meta.edgeIndex) }));
+        poly.riftEdgeIndices = poly.riftEdgeIndices
+            ?.filter((edgeIndex: number) => !removedEdgeIndices.has(edgeIndex))
+            .map(remapEdgeIndex);
+        poly.edgeStyles = poly.edgeStyles
+            ?.filter((style: { edgeIndex: number }) => !removedEdgeIndices.has(style.edgeIndex))
+            .map((style: { edgeIndex: number }) => ({ ...style, edgeIndex: remapEdgeIndex(style.edgeIndex) }));
+
+        // Never render the old hover index after shortening the point array.
+        this.hoveredVertex = null;
+        this.hoveredEdge = null;
+        this.dragState = null;
+        this.onUpdate(true);
     }
 
     onKeyUp(_e: KeyboardEvent): void { }

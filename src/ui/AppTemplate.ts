@@ -9,6 +9,12 @@ import {
   DASH_PRESETS,
   resolveLineTypeDefaults,
 } from '../types';
+import { FEATURE_TOOL_HELP, FUSE_TOOL_HELP, LINK_TOOL_HELP } from './workflowGuidance';
+import { uiIcon } from './icons';
+import { FEATURE_ICON_CATALOG, FEATURE_TOOL_TYPES, featureToolIcon } from '../canvas/featureIcons';
+
+const APP_VERSION = typeof __APP_VERSION__ === 'undefined' ? 'development' : __APP_VERSION__;
+const WINDOWS_PORTABLE_DOWNLOAD_URL = `https://github.com/Calor7/TectoLite/releases/latest/download/TectoLite-Portable-${APP_VERSION}-x64.exe`;
 
 export interface AppTemplateOptions {
   globalOptions: GlobalOptions;
@@ -26,24 +32,49 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                 <header class="app-header">
                     <h1 class="app-title">
                         <a href="https://github.com/Calor7/TectoLite" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none;">
-                            TECTOLITE
+                            ${uiIcon('hexagon', 'app-brand-mark')}<span>TectoLite</span>
                         </a>
                         <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a></span>
-                        <span class="app-links" style="margin-left: 20px; font-size: 0.7em; display: inline-flex; gap: 15px; align-items: center;">
-                                <a href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" style="color: var(--text-secondary); text-decoration: none;"><span class="coffee-icon">☕</span> Feed my coffee addiction</a>
-                                <a href="https://refracturedgames.eo.page/zcyvj" target="_blank" rel="noopener noreferrer" id="link-subscribe" style="color: var(--accent-primary); text-decoration: none; font-weight: 600;">Subscribe to Updates</a>
-                        </span>
                     </h1>
+                    <nav class="workspace-controls" aria-label="Workspace panels">
+                        <button type="button" id="btn-toggle-explorer-dock" class="workspace-control-btn" aria-pressed="false" title="Show or hide Explorer">
+                            ${uiIcon('map')}<span>Explorer</span>
+                        </button>
+                        <button type="button" id="btn-toggle-tool-options" class="workspace-control-btn" aria-pressed="false" title="Show or hide options for the selected tool">
+                            ${uiIcon('settings')}<span>Tool Options</span>
+                        </button>
+                        <button type="button" id="btn-toggle-inspector-dock" class="workspace-control-btn" aria-pressed="false" title="Show or hide the selected object's Properties">
+                            ${uiIcon('edit')}<span>Properties</span>
+                        </button>
+                    </nav>
                     <div class="header-actions">
             <!-- Projection Selector Moved to Sidebar -->
-            <button id="btn-tutorial-help" class="btn" title="Show Tutorial" style="background-color: var(--accent-danger); color: white; font-weight: bold; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; padding: 0;">
-                ?
-            </button>
+
+            <div class="view-dropdown-container">
+                <button id="btn-file-menu" class="btn btn-secondary" title="Project file actions" aria-controls="file-dropdown-menu" aria-expanded="false" aria-haspopup="true">
+                    <span class="icon">${uiIcon('file')}</span><span class="header-label">File</span>
+                </button>
+                <div id="file-dropdown-menu" class="view-dropdown-menu header-compact-menu">
+                    <button id="btn-new-project" class="view-dropdown-item header-menu-action" title="Start a new project">
+                        <span>${uiIcon('file-plus')} New project</span>
+                    </button>
+                    <button id="btn-export-json" class="view-dropdown-item header-menu-action" title="Save project (Ctrl+S)">
+                        <span>${uiIcon('save')} Save project</span><kbd>Ctrl+S</kbd>
+                    </button>
+                    <button id="btn-import-json" class="view-dropdown-item header-menu-action" title="Load project (Ctrl+O)">
+                        <span>${uiIcon('folder-open')} Load project</span><kbd>Ctrl+O</kbd>
+                    </button>
+                    <button id="btn-export" class="view-dropdown-item header-menu-action" title="Export PNG, Heightmap, or QGIS data">
+                        <span>${uiIcon('upload')} Export map…</span>
+                    </button>
+                </div>
+            </div>
+            <span id="autosave-status" class="autosave-status" role="status" aria-live="polite">Recovery storage ready</span>
             
             <!-- Settings Dropdown (formerly Planet) -->
             <div class="view-dropdown-container">
                 <button id="btn-planet" class="btn btn-secondary" title="Application Settings" aria-controls="planet-dropdown-menu" aria-expanded="false" aria-haspopup="true">
-                    <span class="icon">⚙️</span><span class="header-label">Settings</span>
+                    <span class="icon">${uiIcon('settings')}</span><span class="header-label header-collapse-label">Settings</span>
                 </button>
                 <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px; max-height: calc(100vh - 64px); overflow-y: auto;">
                     <div class="dropdown-section">
@@ -140,9 +171,21 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <div class="view-dropdown-container">
 
                 <button id="btn-view-panels" class="btn btn-secondary" title="View Options" aria-controls="view-dropdown-menu" aria-expanded="false" aria-haspopup="true">
-                    <span class="icon">👁️</span><span class="header-label">View</span>
+                    <span class="icon">${uiIcon('eye')}</span><span class="header-label header-collapse-label">View</span>
                 </button>
                 <div id="view-dropdown-menu" class="view-dropdown-menu" style="min-width: 250px; max-height: calc(100vh - 64px); overflow-y: auto;">
+                    <div class="dropdown-section narrow-header-menu-actions" aria-label="Window and appearance actions">
+                        <div class="dropdown-header">Window &amp; appearance</div>
+                        <button id="btn-reset-camera-menu" class="view-dropdown-item header-menu-action" type="button">
+                            <span>${uiIcon('rotate-ccw')} Reset view</span>
+                        </button>
+                        <button id="btn-fullscreen-menu" class="view-dropdown-item header-menu-action" type="button">
+                            <span>${uiIcon('maximize')} Fullscreen</span>
+                        </button>
+                        <button id="btn-theme-toggle-menu" class="view-dropdown-item header-menu-action" type="button">
+                            <span>${uiIcon('moon')} Toggle theme</span>
+                        </button>
+                    </div>
                     <!-- 1. BAR SETTING (Panels) -->
                     <div class="dropdown-section">
                         <div class="dropdown-header">Bars</div>
@@ -150,10 +193,13 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <input type="checkbox" id="check-view-tools" checked> Tools
                         </label>
                         <label class="view-dropdown-item">
-                            <input type="checkbox" id="check-view-plates" checked> Plates
+                            <input type="checkbox" id="check-view-plates"> Explorer
                         </label>
                         <label class="view-dropdown-item">
-                            <input type="checkbox" id="check-view-props" checked> Properties
+                            <input type="checkbox" id="check-view-props"> Inspector
+                        </label>
+                        <label class="view-dropdown-item">
+                            <input type="checkbox" id="check-view-history"> Plate History
                         </label>
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-view-timeline" checked> Timeline
@@ -176,22 +222,47 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
                     <!-- 3. IMAGE OVERLAY -->
                     <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
-                        <div class="dropdown-header">Reference Overlay</div>
+                        <div class="dropdown-header">Reference Overlays <span id="overlay-count" style="font-weight: normal; opacity: .7;">(0)</span></div>
                         <label class="view-dropdown-item">
-                            <input type="checkbox" id="check-show-overlay"> Show Overlay <span class="info-icon" data-tooltip="Show uploaded reference map for tracing">(i)</span>
+                            <input type="checkbox" id="check-show-overlay"> Show selected <span class="info-icon" data-tooltip="Show or hide the selected reference image">(i)</span>
                         </label>
                         <div style="padding: 2px 8px 4px 28px; display: flex; flex-direction: column; gap: 4px;">
-                            <button id="btn-upload-overlay" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">
-                                &#x1F4BE; Upload Map
+                            <select id="overlay-select" class="tool-select" aria-label="Selected reference image" style="width: 100%; font-size: 11px;">
+                                <option value="">No reference images</option>
+                            </select>
+                            <button id="btn-upload-overlay" class="btn btn-secondary" title="Large images are resized and compressed automatically" style="font-size: 11px; padding: 4px 8px;">
+                                + Add Image
                             </button>
+                            <label style="font-size: 10px; display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                                <input type="checkbox" id="check-edit-overlay"> Move / resize on canvas
+                            </label>
                             <div style="display: flex; align-items: center; gap: 4px;">
                                 <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Opacity:</label>
                                 <input type="range" id="overlay-opacity-slider" min="0" max="100" value="50" style="flex: 1; height: 4px;">
                                 <span id="overlay-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 30px;">50%</span>
                             </div>
-                            <button id="btn-clear-overlay" class="btn btn-secondary" style="font-size: 11px; padding: 4px 8px;">
-                                &#x2717; Clear
-                            </button>
+                            <div style="display: flex; align-items: center; gap: 4px;">
+                                <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Size:</label>
+                                <input type="range" id="overlay-size-slider" min="5" max="1000" value="100" style="flex: 1; height: 4px;">
+                                <span id="overlay-size-value" style="font-size: 10px; color: var(--text-secondary); min-width: 34px;">100%</span>
+                            </div>
+                            <div style="display: grid; grid-template-columns: auto 1fr auto 1fr; align-items: center; gap: 3px;">
+                                <label for="overlay-x-input" style="font-size: 10px; color: var(--text-secondary);">X</label>
+                                <input id="overlay-x-input" type="number" value="0" step="1" class="tool-input" style="width: 54px; font-size: 10px;">
+                                <label for="overlay-y-input" style="font-size: 10px; color: var(--text-secondary);">Y</label>
+                                <input id="overlay-y-input" type="number" value="0" step="1" class="tool-input" style="width: 54px; font-size: 10px;">
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 4px;">
+                                <label for="overlay-rotation-input" style="font-size: 10px; color: var(--text-secondary);">Rotation</label>
+                                <input id="overlay-rotation-input" type="number" value="0" step="1" class="tool-input" style="width: 58px; font-size: 10px;">
+                                <span style="font-size: 10px; color: var(--text-secondary);">°</span>
+                            </div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+                                <button id="btn-overlay-back" class="btn btn-secondary" style="font-size: 10px; padding: 3px;">Send Back</button>
+                                <button id="btn-overlay-front" class="btn btn-secondary" style="font-size: 10px; padding: 3px;">Bring Front</button>
+                                <button id="btn-reset-overlay" class="btn btn-secondary" style="font-size: 10px; padding: 3px;">Reset</button>
+                                <button id="btn-clear-overlay" class="btn btn-secondary" style="font-size: 10px; padding: 3px;">Remove</button>
+                            </div>
                         </div>
                     </div>
 
@@ -228,7 +299,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <input type="checkbox" id="check-euler-poles"> Show Euler Poles <span class="info-icon" data-tooltip="Show all rotation axes (Euler poles)">(i)</span>
                         </label>
                         <label class="view-dropdown-item">
-                             <input type="checkbox" id="check-future-features"> Show Future/Past <span class="info-icon" data-tooltip="Show features not yet born">(i)</span>
+                             <input type="checkbox" id="check-future-features"> Show Future/Past <span class="info-icon" data-tooltip="Show features outside their active lifetime as faint previews">(i)</span>
                         </label>
 
 
@@ -269,44 +340,66 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
 
             <button id="btn-reset-camera" class="btn btn-secondary" title="Reset View (position, rotation, and zoom)">
-                <span class="icon">⟲</span><span class="header-label oldschool-text">RESET</span>
+                <span class="icon">${uiIcon('rotate-ccw')}</span><span class="header-label header-collapse-label">Reset</span>
             </button>
 
             <button id="btn-fullscreen" class="btn btn-secondary" title="Toggle Fullscreen">
-               <span class="icon">⛶</span><span class="header-label oldschool-text">FULL</span>
+               <span class="icon">${uiIcon('maximize')}</span><span class="header-label header-collapse-label">Fullscreen</span>
             </button>
 
             <button id="btn-theme-toggle" class="btn btn-secondary" title="Toggle Theme">
-              <span class="icon">🌙</span><span class="header-label oldschool-text">THEME</span>
+              <span class="icon" data-theme-icon>${uiIcon('moon')}</span><span class="header-label header-collapse-label">Theme</span>
             </button>
             <button id="btn-undo" class="btn btn-secondary" title="Undo (Ctrl+Z)">
-              <span class="icon">↶</span><span class="header-label">Undo</span>
+              <span class="icon">${uiIcon('undo')}</span><span class="header-label header-collapse-label">Undo</span>
             </button>
             <button id="btn-redo" class="btn btn-secondary" title="Redo (Ctrl+Y)">
-              <span class="icon">↷</span><span class="header-label">Redo</span>
+              <span class="icon">${uiIcon('redo')}</span><span class="header-label header-collapse-label">Redo</span>
             </button>
-            <button id="btn-new-project" class="btn btn-secondary" title="Start a new project">
-              <span class="icon">+</span><span class="header-label">New</span>
-            </button>
-            <button id="btn-export" class="btn btn-primary" title="Export (PNG, Heightmap, QGIS)">
-              <span class="icon">📤</span><span class="header-label">Export</span>
-            </button>
-            <button id="btn-export-json" class="btn btn-secondary" title="Export JSON">
-              <span class="icon">💾</span><span class="header-label">Save</span>
-            </button>
-            <button id="btn-import-json" class="btn btn-secondary" title="Import JSON">
-              <span class="icon">📂</span><span class="header-label">Load</span>
-            </button>
-            <button id="btn-report-bug" class="btn btn-secondary" title="Report a Bug" style="font-size: 0.85em; padding: 4px 8px;">
-              <span class="icon">⚑</span><span class="header-label">Bug Report</span>
-            </button>
+
+            <a id="link-download-windows" class="btn btn-primary header-download-link" href="${WINDOWS_PORTABLE_DOWNLOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Download the portable Windows app" title="Download the portable Windows app">
+                ${uiIcon('download')}
+                <span class="header-label">Download</span>
+            </a>
+
+            <a id="link-refracturedgames-header" class="btn btn-secondary header-support-link" href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer" aria-label="Visit Refractured Games" title="Visit Refractured Games">
+                ${uiIcon('external-link')}
+                <span class="header-label">Refractured Games</span>
+            </a>
+
+            <div class="view-dropdown-container">
+                <button id="btn-help-menu" class="btn btn-secondary" title="Help and information" aria-controls="help-dropdown-menu" aria-expanded="false" aria-haspopup="true">
+                    <span class="icon">${uiIcon('help-circle')}</span><span class="header-label header-collapse-label">Help</span>
+                </button>
+                <div id="help-dropdown-menu" class="view-dropdown-menu header-compact-menu">
+                    <button id="btn-tutorial-help" class="view-dropdown-item header-menu-action" title="Show Tutorial"><span>${uiIcon('book-open')} Tutorial and manual</span></button>
+                    <button id="btn-hotkey-help" class="view-dropdown-item header-menu-action" title="Show keyboard shortcuts"><span>${uiIcon('keyboard')} Keyboard shortcuts</span><kbd>?</kbd></button>
+                    <button id="btn-report-bug" class="view-dropdown-item header-menu-action" title="Report a Bug"><span>${uiIcon('flag')} Report a bug</span></button>
+                    <a class="view-dropdown-item header-menu-action" href="https://github.com/Calor7/TectoLite" target="_blank" rel="noopener noreferrer"><span>${uiIcon('external-link')} Source and issues</span></a>
+                    <a class="view-dropdown-item header-menu-action" href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer"><span>${uiIcon('globe')} Refractured Games</span></a>
+                    <a class="view-dropdown-item header-menu-action" href="https://refracturedgames.eo.page/zcyvj" target="_blank" rel="noopener noreferrer" id="link-subscribe"><span>${uiIcon('mail')} Subscribe to updates</span></a>
+                    <div class="app-version">TectoLite v${APP_VERSION}</div>
+                </div>
+            </div>
+
+            <a id="link-kofi-header" class="btn btn-secondary header-support-link" href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" aria-label="Support TectoLite on Ko-fi" title="Support TectoLite on Ko-fi">
+                <span class="kofi-icon-slot" aria-hidden="true">
+                    ${uiIcon('coffee', 'ui-icon kofi-static-icon')}
+                    <img class="kofi-animated-icon" data-kofi-animated-icon data-animated-src="./coffee-mug-flaticon.gif" alt="">
+                </span>
+                <span class="header-label">Ko-fi</span>
+            </a>
             <input type="file" id="file-import" accept=".json" style="display: none;">
-            <input type="file" id="file-overlay-upload" accept="image/*" style="display: none;">
+            <input type="file" id="file-overlay-upload" accept="image/*" multiple style="display: none;">
           </div>
         </header>
         
         <div class="main-content">
-          <aside class="toolbar" id="toolbar">
+          <aside class="toolbar" id="toolbar" aria-label="Map tools">
+            <label class="tool-names-toggle" title="Show or hide the names beneath tool icons">
+                <input type="checkbox" id="check-show-tool-names" checked>
+                <span>Show tool names</span>
+            </label>
             <!-- 1. TOOLS GROUP -->
             <div class="tool-group">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -319,67 +412,128 @@ export function getAppHTML(opts: AppTemplateOptions): string {
               <!-- Layer Mode Removed -->
               
               <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-                  <button class="tool-btn active" data-tool="select" style="flex:1;">
-                    <span class="tool-icon">👆</span>
+                  <button class="tool-btn active" data-tool="select" aria-label="Select" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('mouse-pointer')}</span>
                     <span class="tool-label">Select</span>
                     <span class="info-icon" data-tooltip="Select plates/features to edit (Hotkey: V)">(i)</span>
                   </button>
-                  <button class="tool-btn" data-tool="pan" style="flex:1;">
-                    <span class="tool-icon">🔄</span>
+                  <button class="tool-btn" data-tool="pan" aria-label="Rotate globe" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('orbit')}</span>
                     <span class="tool-label">Rotate</span>
                     <span class="info-icon" data-tooltip="Rotate the globe or projection without changing map geometry (Hotkey: H)">(i)</span>
                   </button>
-                  <button class="tool-btn" data-tool="view_pan" style="flex:1;">
-                    <span class="tool-icon">✥</span>
+                  <button class="tool-btn" data-tool="view_pan" aria-label="Move view" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('move')}</span>
                     <span class="tool-label">Move View</span>
                     <span class="info-icon" data-tooltip="Move the rendered view on screen without rotating the globe or changing geometry (Hotkey: P)">(i)</span>
                   </button>
               </div>
               <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-                  <button class="tool-btn" data-tool="draw" style="flex:1;">
-                    <span class="tool-icon">✏️</span>
+                  <button class="tool-btn" data-tool="draw" aria-label="Draw" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('pencil')}</span>
                     <span class="tool-label">Draw</span>
                     <span class="info-icon" data-tooltip="Draw new plate boundaries (Hotkey: D)">(i)</span>
                   </button>
-                  <button class="tool-btn" data-tool="edit" style="flex:1;">
-                    <span class="tool-icon">✎</span>
+                  <button class="tool-btn" data-tool="edit" aria-label="Edit geometry" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('edit')}</span>
                     <span class="tool-label">Edit</span>
                     <span class="info-icon" data-tooltip="Modify plate geometry; Ctrl+drag moves the whole shape (Hotkey: E)">(i)</span>
                   </button>
-                  <button class="tool-btn" data-tool="label" style="flex:1;">
-                    <span class="tool-icon">⚑</span>
+                  <button class="tool-btn" data-tool="feature" aria-label="Place feature" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('mountain')}</span>
+                    <span class="tool-label">Feature</span>
+                    <span class="info-icon" data-tooltip="${FEATURE_TOOL_HELP}">(i)</span>
+                  </button>
+                  <button class="tool-btn" data-tool="label" aria-label="Place label" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('flag')}</span>
                     <span class="tool-label">Label</span>
                     <span class="info-icon" data-tooltip="Place a flag-style title and detail annotation (Hotkey: A)">(i)</span>
                   </button>
 
               </div>
               <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-                  <button class="tool-btn" data-tool="split" style="flex:1;">
-                    <span class="tool-icon">✂️</span>
+                  <button class="tool-btn" data-tool="split" aria-label="Split plate" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('scissors')}</span>
                     <span class="tool-label">Split</span>
                     <span class="info-icon" data-tooltip="Divide a plate in two (Hotkey: S)">(i)</span>
                   </button>
-                   <button class="tool-btn" data-tool="link" style="flex:1;">
-                    <span class="tool-icon">🔗</span>
+                  <button class="tool-btn" data-tool="link" aria-label="Link motion" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('link')}</span>
                     <span class="tool-label">Link</span>
-                    <span class="info-icon" data-tooltip="Group plates to move together (Hotkey: L)">(i)</span>
+                    <span class="info-icon" data-tooltip="${LINK_TOOL_HELP}">(i)</span>
                   </button>
-                  <button class="tool-btn" data-tool="fuse" style="flex:1;">
-                    <span class="tool-icon">🧬</span>
+                  <button class="tool-btn" data-tool="fuse" aria-label="Fuse plates" style="flex:1;">
+                    <span class="tool-icon">${uiIcon('merge')}</span>
                     <span class="tool-label">Fuse</span>
-                    <span class="info-icon" data-tooltip="Merge two plates (Hotkey: G)">(i)</span>
+                    <span class="info-icon" data-tooltip="${FUSE_TOOL_HELP}">(i)</span>
                   </button>
 
 
 
               </div>
             </div>
-            
+
+          </aside>
+
+          <div class="resizer-x" id="resizer-left" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
+
             <!-- 2. CONTEXT / OPTIONS GROUP -->
-            <div class="tool-group" style="flex: 1; min-height: 0;">
+            <aside class="tool-options-sidebar collapsed" id="tool-options-sidebar" aria-label="Tool options" aria-hidden="true">
                  <h3 id="title-tool-options" class="tool-group-title">Tool Options</h3>
+                 <p id="tool-options-empty" class="tool-options-empty" hidden>This tool has no additional options.</p>
                  
                  <!-- Dynamic Controls Stack -->
+
+                 <div id="navigation-controls" class="tool-option-card" style="display:none; flex-direction:column; gap:8px;">
+                     <div class="tool-option-card-title">Navigation</div>
+                     <label class="tool-option-field">
+                         <span>Drag sensitivity</span>
+                         <select id="navigation-sensitivity" class="tool-select">
+                             <option value="0.6">Low</option>
+                             <option value="1">Normal</option>
+                             <option value="1.5">High</option>
+                         </select>
+                     </label>
+                     <label class="tool-option-check"><input type="checkbox" id="check-navigation-reverse"> Reverse drag direction</label>
+                     <label class="tool-option-check"><input type="checkbox" id="check-navigation-reachable"> Keep map reachable</label>
+                     <div id="rotate-navigation-actions" style="display:none; flex-direction:column; gap:4px;">
+                         <button id="btn-reset-orientation" class="btn btn-secondary">${uiIcon('rotate-ccw')} Reset orientation</button>
+                         <button id="btn-north-up" class="btn btn-secondary">${uiIcon('orbit')} North up</button>
+                     </div>
+                     <div id="move-view-navigation-actions" style="display:none; flex-direction:column; gap:4px;">
+                         <button id="btn-center-view" class="btn btn-secondary">${uiIcon('maximize')} Centre view</button>
+                         <button id="btn-center-selection" class="btn btn-secondary">${uiIcon('map')} Centre on selection</button>
+                     </div>
+                 </div>
+
+                 <div id="label-tool-controls" class="tool-option-card" style="display:none; flex-direction:column; gap:8px;">
+                     <div class="tool-option-card-title">Label defaults</div>
+                     <label class="tool-option-field">
+                         <span>Moves with</span>
+                         <select id="label-default-attachment" class="tool-select">
+                             <option value="auto">Automatic (clicked plate)</option>
+                             <option value="fixed">Nothing (fixed point)</option>
+                             <option value="selected">Selected plate</option>
+                         </select>
+                     </label>
+                     <label class="tool-option-field">
+                         <span>Default colour</span>
+                         <input id="label-default-color" type="color" value="#fbbf24">
+                     </label>
+                     <label class="tool-option-check"><input type="checkbox" id="check-label-default-expanded"> Start expanded</label>
+                     <div class="tool-option-note">Each label can still override these values before creation or in Properties.</div>
+                 </div>
+
+                 <div id="feature-selector" style="display: none; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px;">
+                     <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px;">Feature Type</div>
+                     <div class="feature-grid">
+                         ${FEATURE_TOOL_TYPES.map(type => {
+                           const feature = FEATURE_ICON_CATALOG[type];
+                           return `<button class="feature-btn${type === 'mountain' ? ' active' : ''}" data-feature="${type}" title="${feature.description}">${featureToolIcon(type)}<span>${feature.label}</span></button>`;
+                         }).join('')}
+                     </div>
+                     <div style="font-size: 9px; line-height: 1.35; color: var(--text-secondary); margin-top: 6px;">Select a plate before placing plate-bound features. Hotspots are manually placed fixed markers.</div>
+                 </div>
 
                  <!-- Draw Mode Controls (visible when Draw tool is active) -->
                  <div id="draw-mode-controls" style="display: none; flex-direction: column; gap: 6px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px;">
@@ -400,6 +554,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                              <option value="transform">Transform</option>
                              <option value="generic">Generic</option>
                          </select>
+                         <div style="font-size: 9px; line-height: 1.3; color: var(--text-secondary); margin-top: 3px;">Lines render above landmasses by default. Their individual color can be overridden after creation.</div>
                      </div>
                      <div id="polygon-type-group" style="display: block;">
                          <label style="font-size: 10px; color: var(--text-secondary);">Polygon Type</label>
@@ -418,32 +573,60 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                      </label>
                  </div>
 
-                 <div id="split-controls" style="display: none; flex-direction:column; gap:4px;">
-                     <div style="align-self: center; font-size: 11px; color: var(--text-secondary);">Confirm Split?</div>
-                     <button class="btn btn-success" id="btn-split-apply">✓ Apply</button>
-                     <button class="btn btn-secondary" id="btn-split-cancel">✗ Cancel</button>
+                 <div id="split-controls" class="tool-option-card" style="display:none; flex-direction:column; gap:8px;">
+                     <div class="tool-option-card-title">Split configuration</div>
+                     <div id="split-workflow-status" class="tool-workflow-status">Select a plate, then draw the split boundary.</div>
+                     <fieldset class="tool-option-fieldset">
+                         <legend>New plate motion</legend>
+                         <label class="tool-option-check"><input type="radio" name="split-momentum" id="split-inherit-momentum" value="inherit"> Inherit parent motion</label>
+                         <label class="tool-option-check"><input type="radio" name="split-momentum" id="split-reset-momentum" value="reset"> Start stationary</label>
+                     </fieldset>
+                     <label class="tool-option-check"><input type="checkbox" id="check-split-selected-only"> Split selected landmass only</label>
+                     <label class="tool-option-field"><span>First result name</span><input id="split-name-a" class="property-input" maxlength="120" placeholder="Automatic (A)"></label>
+                     <label class="tool-option-field"><span>Second result name</span><input id="split-name-b" class="property-input" maxlength="120" placeholder="Automatic (B)"></label>
+                     <button class="btn btn-success" id="btn-split-apply" disabled>${uiIcon('check')} Apply split</button>
+                     <button class="btn btn-secondary" id="btn-split-cancel">${uiIcon('x')} Cancel boundary</button>
+                 </div>
+
+                 <div id="link-controls" class="tool-option-card" style="display:none; flex-direction:column; gap:8px;">
+                     <div class="tool-option-card-title">Link workflow</div>
+                     <div class="tool-workflow-row"><span>Starts at</span><strong id="link-workflow-time">0 Ma</strong></div>
+                     <div class="tool-workflow-slot"><span>Parent / anchor</span><strong id="link-workflow-source">Choose on map</strong></div>
+                     <div class="tool-workflow-slot"><span>Child / target</span><strong id="link-workflow-target">Waiting for parent</strong></div>
+                     <div id="link-workflow-result" class="tool-option-note">The child follows the parent exactly from the current timeline time.</div>
+                     <button id="btn-clear-link-workflow" class="btn btn-secondary">${uiIcon('x')} Clear selection</button>
+                 </div>
+
+                 <div id="fuse-controls" class="tool-option-card" style="display:none; flex-direction:column; gap:8px;">
+                     <div class="tool-option-card-title">Fuse workflow</div>
+                     <div class="tool-workflow-row"><span>Fusion time</span><strong id="fuse-workflow-time">0 Ma</strong></div>
+                     <div class="tool-workflow-slot"><span>Motion source</span><strong id="fuse-workflow-source">Choose on map</strong></div>
+                     <div class="tool-workflow-slot"><span>Other plate</span><strong id="fuse-workflow-target">Waiting for source</strong></div>
+                     <label class="tool-option-field"><span>Result name</span><input id="fuse-result-name" class="property-input" maxlength="120" placeholder="Automatic fused name"></label>
+                     <div class="tool-option-note">Geometry, features, and links are combined. The first plate supplies initial motion.</div>
+                     <button id="btn-clear-fuse-workflow" class="btn btn-secondary">${uiIcon('x')} Clear selection</button>
                  </div>
 
 
 
                  <div id="motion-controls" style="display: none; flex-direction:column; gap:4px;">
                       <div style="font-size: 11px; color: var(--text-secondary);">Confirm Motion?</div>
-                      <button class="btn btn-success" id="btn-motion-apply">✓ Apply</button>
-                      <button class="btn btn-secondary" id="btn-motion-cancel">✗ Cancel</button>
+                      <button class="btn btn-success" id="btn-motion-apply">${uiIcon('check')} Apply</button>
+                      <button class="btn btn-secondary" id="btn-motion-cancel">${uiIcon('x')} Cancel</button>
                  </div>
 
                  <div id="edit-controls" style="display: none; flex-direction:column; gap:4px; margin-top: 8px; border-top: 1px solid var(--border-default); padding-top: 8px;">
                      <div style="align-self: center; font-size: 11px; color: var(--text-secondary); font-weight: bold;">Apply Changes?</div>
                      <div style="display:flex; gap: 4px;">
-                         <button class="btn btn-success" id="btn-edit-apply" style="flex:1;">✓ Apply</button>
-                         <button class="btn btn-secondary" id="btn-edit-cancel" style="flex:1;">✗ Cancel</button>
+                         <button class="btn btn-success" id="btn-edit-apply" style="flex:1;">${uiIcon('check')} Apply</button>
+                         <button class="btn btn-secondary" id="btn-edit-cancel" style="flex:1;">${uiIcon('x')} Cancel</button>
                      </div>
                  </div>
 
 
 
                  <!-- Select Mode Controls (visible when Select tool is active) -->
-                 <div id="select-mode-controls" style="display: none; flex-direction: column; gap: 6px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px; flex: 1; min-height: 0;">
+                 <div id="select-mode-controls" style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px; flex: 1; min-height: 0;">
                      <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">Select Options</div>
                      
                      <div>
@@ -493,17 +676,15 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         ${opts.customPresetListHtml}
                     </div>
                  </div>
-            </div>
+            </aside>
 
             <!-- 3. VIEW GROUP -->
 
             <!-- 5. PLATES LIST -->
 
-          </aside>
+          <div class="resizer-x" id="resizer-tool-options" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
           
-          <div class="resizer-x" id="resizer-left" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
-          
-          <aside class="plate-sidebar" id="plate-sidebar">
+          <aside class="plate-sidebar collapsed" id="plate-sidebar">
              <h3 class="tool-group-title" style="padding: 16px 16px 0 16px;">Explorer</h3>
              <div id="plate-list" class="plate-list" style="padding: 0 16px 16px 16px; overflow-y: auto; flex:1;"></div>
           </aside>
@@ -518,7 +699,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
           
           <div class="resizer-x" id="resizer-right" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
 
-          <div class="right-sidebar" id="right-sidebar">
+          <div class="right-sidebar collapsed" id="right-sidebar">
             <aside class="properties-panel" id="properties-panel">
                 <h3 class="panel-title" id="properties-panel-title">Plate Properties</h3>
                 <div id="properties-content">
@@ -531,7 +712,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                   <!-- JS Populated -->
                 </div>
             </aside>
-            <div id="timeline-panel" class="timeline-panel">
+            <div id="timeline-panel" class="timeline-panel history-collapsed">
                 <div class="timeline-title">Plate History</div>
                 <!-- Timeline items injected here -->
             </div>
@@ -542,7 +723,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
         <footer class="timeline-bar" id="timeline-bar">
           <div class="time-controls">
-            <button id="btn-play" class="btn btn-icon" title="Play/Pause (Space)">▶️</button>
+            <button id="btn-play" class="btn btn-icon" title="Play/Pause (Space)" aria-label="Play timeline">${uiIcon('play')}</button>
             <select id="speed-select" class="speed-select" title="Playback speed">
               <option value="0.5">0.5 Ma/s</option>
               <option value="1" selected>1 Ma/s</option>
@@ -563,13 +744,14 @@ export function getAppHTML(opts: AppTemplateOptions): string {
               </div>
             </div>
           </div>
+          <button id="btn-toggle-history-dock" class="btn btn-icon timeline-history-toggle" type="button" title="Show or hide plate history" aria-label="Toggle plate history" aria-pressed="false">${uiIcon('history')}</button>
           <button id="btn-reset-time" class="btn btn-secondary" title="Jump back to 0 Ma">Reset</button>
         </footer>
         <div id="global-tooltip"></div>
         <!-- Time Input Modal -->
-        <div id="time-input-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
+        <div id="time-input-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="time-input-title" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
           <div class="modal-content" style="background: var(--bg-secondary); border: 2px solid var(--border-default); border-radius: 4px; padding: 16px; min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
-            <h3 style="margin-top: 0; color: var(--text-primary);">Set Current Time</h3>
+            <h3 id="time-input-title" style="margin-top: 0; color: var(--text-primary);">Set Current Time</h3>
             <input type="number" id="time-input-field" class="property-input" style="width: 100%; padding: 8px; margin-bottom: 12px; font-size: 14px;" placeholder="Enter time value">
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
               <button id="btn-time-input-cancel" class="btn btn-secondary" style="padding: 6px 12px;">Cancel</button>
@@ -578,10 +760,10 @@ export function getAppHTML(opts: AppTemplateOptions): string {
           </div>
         </div>
         <!-- Apply Edit Modal -->
-        <div id="apply-edit-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
-          <div class="modal-content" style="background: #1e1e2e; border: 1px solid var(--border-default); border-radius: 8px; padding: 20px; min-width: 400px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;">
-            <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">Apply Plate Geometry</h3>
-            <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">Choose how to apply these changes to the timeline:</div>
+        <div id="apply-edit-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="apply-edit-title" aria-describedby="apply-edit-description" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
+          <div class="modal-content" style="background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 20px; min-width: 400px; box-shadow: var(--shadow-lg); display: flex; flex-direction: column; gap: 16px;">
+            <h3 id="apply-edit-title" style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">Apply Plate Geometry</h3>
+            <div id="apply-edit-description" style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">Choose how to apply these changes to the timeline:</div>
             
             <div style="display: flex; flex-direction: column; gap: 8px;">
                 <button id="btn-apply-generation" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
@@ -591,7 +773,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                 
                 <button id="btn-apply-event" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
                     <span style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--color-success);">Insert Event at Current Time</span>
-                    <span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Creates a new 'Edit' event at <span id="lbl-current-time" style="color:white; font-weight:bold;">0</span> Ma. The shape changes only from this point forward.</span>
+                    <span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Creates a new 'Edit' event at <span id="lbl-current-time" style="color:var(--text-primary); font-weight:bold;">0</span> Ma. The shape changes only from this point forward.</span>
                 </button>
             </div>
             
@@ -602,9 +784,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
         </div>
         
         <!-- Drag Target Modal (Dynamic Velocity Feedback) -->
-        <div id="drag-target-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
+        <div id="drag-target-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="drag-target-title" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
           <div class="modal-content" style="background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 8px; padding: 20px; min-width: 400px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;">
-            <h3 style="margin: 0; color: var(--text-primary); border-bottom: 1px solid var(--border-default); padding-bottom: 8px;">Set Motion Target</h3>
+            <h3 id="drag-target-title" style="margin: 0; color: var(--text-primary); border-bottom: 1px solid var(--border-default); padding-bottom: 8px;">Set Motion Target</h3>
             
             <div style="display: flex; flex-direction: column; gap: 5px;">
                 <label style="color: var(--text-secondary); font-size: 12px; text-transform: uppercase; font-weight: 600;">Current Time</label>

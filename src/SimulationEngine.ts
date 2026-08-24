@@ -378,7 +378,7 @@ export class SimulationEngine {
 
             for (const plate of connectedPlates) {
                 if (plate.riftGenerationMode === 'never') continue;
-                if (plate.deathTime !== null && currentTime > plate.deathTime) continue;
+                if (plate.deathTime !== null && currentTime >= plate.deathTime) continue;
 
                 // Growing strips (_growing suffix) are cleaned up by update() each frame.
                 // We only consider permanent strips for backfill scheduling.

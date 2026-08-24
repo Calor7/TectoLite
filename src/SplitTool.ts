@@ -19,6 +19,7 @@ import {
     isPointInPolygon,
 } from './utils/sphericalMath';
 import { derivePlateGeometry, pointPositionAt, activeEulerPole } from './motion/RotationModel';
+import { isMotionLinkActiveAtTime } from './motion/LinkModel';
 
 // Legacy interface for start/end splits
 interface SplitLine {
@@ -352,13 +353,20 @@ function assignSplitEdgeMeta(
     return { metaA, metaB, groupId };
 }
 
+export interface SplitPlateOptions {
+    inheritMomentum?: boolean;
+    onlySelected?: boolean;
+    resultNames?: [string | undefined, string | undefined];
+}
+
 export function splitPlate(
     state: AppState,
     plateId: string,
     splitLine: SplitLine | SplitPolyline,
-    inheritMomentum: boolean = false,
-    onlySelected: boolean = false
+    options: SplitPlateOptions = {}
 ): AppState {
+    const inheritMomentum = options.inheritMomentum ?? false;
+    const onlySelected = options.onlySelected ?? false;
     const leftPlateId = generateId();
     const rightPlateId = generateId();
     const currentState = state;
@@ -971,7 +979,7 @@ export function splitPlate(
     const leftPlate: TectonicPlate = {
         ...plateToSplit,
         id: leftPlateId,
-        name: `${plateToSplit.name} (A)`,
+        name: options.resultNames?.[0]?.trim() || `${plateToSplit.name} (A)`,
         description: inheritedDescription,
         polygons: leftPolygons,
         features: leftFeatures,
@@ -999,7 +1007,7 @@ export function splitPlate(
         ...plateToSplit,
         id: rightPlateId,
         description: inheritedDescription,
-        name: `${plateToSplit.name} (B)`,
+        name: options.resultNames?.[1]?.trim() || `${plateToSplit.name} (B)`,
         polygons: rightPolygons,
         features: rightFeatures,
         motionSegments: [{ time: currentTime, eulerPole: { ...inheritedPole } }],
@@ -1025,7 +1033,7 @@ export function splitPlate(
     // --- RECURSIVE SPLIT OF CHILD PLATES (Oceanic Strips) ---
     const processedChildren: TectonicPlate[] = [];
     const children = onlySelected ? [] : currentState.world.plates.filter(p =>
-        p.linkedToPlateId === plateId &&
+        isMotionLinkActiveAtTime(p, currentTime, plateId) &&
         (p.deathTime === null || p.deathTime > currentTime) &&
         !p.riftAxisId  // Skip axis-derived ocean plates â€” they're ephemeral (re-derived each frame)
     );
@@ -1110,6 +1118,8 @@ export function splitPlate(
                     initialFeatures: childLeftFeatures,
                     center: calculateSphericalCentroid(childLeftPolys[0].points),
                     linkedToPlateId: leftPlateId,
+                    linkTime: currentTime,
+                    unlinkTime: undefined,
                     birthTime: currentTime,
                     parentPlateId: child.id,
                     // Fresh motion model — linked children inherit motion from
@@ -1129,6 +1139,8 @@ export function splitPlate(
                     initialFeatures: childRightFeatures,
                     center: calculateSphericalCentroid(childRightPolys[0].points),
                     linkedToPlateId: rightPlateId,
+                    linkTime: currentTime,
+                    unlinkTime: undefined,
                     birthTime: currentTime,
                     parentPlateId: child.id,
                     motionSegments: [{ time: currentTime, eulerPole: { position: [0, 90], rate: 0, visible: false } }],
@@ -1167,6 +1179,8 @@ export function splitPlate(
                     initialFeatures: newFeatures,
                     features: newFeatures,
                     linkedToPlateId: newParentId,
+                    linkTime: currentTime,
+                    unlinkTime: undefined,
                     // Fresh motion model — linked children inherit motion from
                     // their parent via linkedToPlateId; own segments are identity.
                     motionSegments: [{ time: currentTime, eulerPole: { position: [0, 90], rate: 0, visible: false } }],

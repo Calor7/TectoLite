@@ -98,11 +98,7 @@ export type LayerMode = 'plate' | 'landmass';
 
 export interface MantlePlume {
   id: string;
-  position: Coordinate; // Fixed geographic location (lat/lon)
-  radius: number;       // Size of the hotspot magmatism
-  strength: number;     // How frequently it spawns features
-  active: boolean;
-  spawnRate?: number;   // Override global spawn rate (Ma per feature)
+  position: Coordinate; // Manually placed fixed geographic marker (lat/lon)
 }
 
 
@@ -384,7 +380,6 @@ export interface GlobalOptions {
   gridThickness: number;
   ratePresets?: number[];
   enableBoundaryVisualization?: boolean;
-  hotspotSpawnRate?: number;
   showHints?: boolean;
   showLinks?: boolean;
   showPredictionFlowlines?: boolean;
@@ -435,9 +430,12 @@ export interface WorldState {
 
   // Transient state for visualization/physics (not persisted in save files usually, but good to have in runtime state)
   boundaries?: Boundary[];
-  mantlePlumes?: MantlePlume[]; // Active mantle plumes
-  // Image Overlay for tracing existing maps
-  imageOverlay?: ImageOverlay;
+  mantlePlumes?: MantlePlume[]; // Manually placed fixed hotspot markers
+  // Reference images for tracing existing maps. The legacy singular field is
+  // retained only so pre-v10 save files can be migrated on load.
+  imageOverlays: ImageOverlay[];
+  selectedImageOverlayId: string | null;
+  imageOverlay?: LegacyImageOverlay;
 }
 
 /**
@@ -470,6 +468,8 @@ export type PaintMode = 'brush' | 'poly_fill';
 export type OverlayMode = 'fixed' | 'projection';
 
 export interface ImageOverlay {
+  id: string;
+  name: string;
   imageData: string; // Base64 encoded image or URL
   visible: boolean;
   opacity: number; // 0-1
@@ -479,6 +479,11 @@ export interface ImageOverlay {
   rotation: number; // Rotation in degrees
   mode: OverlayMode; // 'fixed' = screen overlay, 'projection' = map projection
 }
+
+export type LegacyImageOverlay = Omit<ImageOverlay, 'id' | 'name'> & {
+  id?: string;
+  name?: string;
+};
 
 export interface AppState {
   world: WorldState;
@@ -574,8 +579,6 @@ export function createDefaultWorldState(): WorldState {
       gridThickness: 1.0,
       ratePresets: [0.5, 1.0, 2.0, 5.0], // Default presets
       enableBoundaryVisualization: false,
-      hotspotSpawnRate: 1.0,
-
       showHints: true,
 
       // Visual defaults
@@ -600,7 +603,9 @@ export function createDefaultWorldState(): WorldState {
     },
     // Rift axis defaults
     riftAxes: [],
-    tripleJunctions: []
+    tripleJunctions: [],
+    imageOverlays: [],
+    selectedImageOverlayId: null
   };
 }
 

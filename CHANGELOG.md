@@ -4,12 +4,56 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.2 - 2026-08-24
+
 ### Added
 
+- Added a hover-activated, reduced-motion-aware Ko-fi mug animation with the
+  creator attribution recorded in the README.
+- Added a prominent web-only Windows download button targeting the portable
+  executable from the latest GitHub Release.
 - Added first-class flag labels with always-visible titles, click/hover detail
   expansion, globe occlusion, plate-relative or fixed anchoring, draggable
   anchors and text cards, grouping, locking, visibility, color, persistence,
   undo/redo, and merge-import support.
+- Added durable crash recovery using an atomic desktop file or browser IndexedDB,
+  with visible save status and a restore prompt after an interrupted session.
+- Added a first-run project chooser, File and Help menus, keyboard-shortcut guide,
+  accessible shared dialogs, and contextual workflow guidance.
+- Added deep project-file validation and migration limits, a strict renderer CSP,
+  lifecycle integration tests, and release coverage/security gates.
+- Added signed-release configuration, cross-platform packaging, packaged export
+  smoke tests, and SHA-256 artifact manifests.
+
+### Changed
+
+- Increased timeline surface and event-icon contrast in both themes.
+- Tool names are now shown by default and can be hidden independently of the
+  Tool Options dock.
+- Tool Options and Properties are persistent, explicitly controlled docks;
+  Properties now shows a calm empty state when nothing is selected.
+- Kept Ko-fi as a dedicated top-right button in both the web and desktop apps,
+  without duplicating it inside Help.
+- Refined the interface with the Basalt Field palette, restrained monochrome
+  icons, clearer controls, and responsive Refractured Games and Ko-fi links.
+- Lines now render above landmasses at equal layer priority, while explicit
+  layer values still control intentional overrides.
+- Upgraded Electron and the release toolchain and hardened desktop navigation,
+  permissions, IPC sender checks, application fuses, and autosave storage.
+
+### Fixed
+
+- Fixed tool changes collapsing or reopening sidebars and interrupting the
+  workspace layout; panel visibility controls now keep their accessible state
+  synchronized as well.
+- Fixed right-sidebar tutorial cards covering the central manual and hardened
+  tutorial content wrapping near its right edge.
+- Fixed image export aspect-ratio handling so output crops the visible surface
+  instead of revealing a wider or taller map area.
+- Fixed custom colors not applying consistently to selected line features.
+- Fixed overlays such as orogenies drifting after their linked parent plates
+  fuse, including later changes to the fused plate's motion.
+- Fixed current-time exports retaining links to retired pre-fusion plates.
 
 ## 1.0.1 - 2026-07-17
 

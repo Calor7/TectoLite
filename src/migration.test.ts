@@ -167,6 +167,56 @@ describe('migrateSaveFile', () => {
         expect(save.version).toBe(CURRENT_SAVE_VERSION);
     });
 
+    it('migrates the legacy image overlay into the v10 overlay collection', () => {
+        const save = makeSave([makePlate('a')], 9);
+        const world = save.world as unknown as Record<string, unknown>;
+        world.imageOverlay = {
+            imageData: 'data:image/png;base64,legacy',
+            visible: true,
+            opacity: 0.75,
+            scale: 1.5,
+            offsetX: 24,
+            offsetY: -12,
+            rotation: 15,
+            mode: 'fixed'
+        };
+
+        migrateSaveFile(save);
+
+        expect(world.imageOverlay).toBeUndefined();
+        expect(world.imageOverlays).toEqual([expect.objectContaining({
+            id: 'overlay-1',
+            name: 'Reference 1',
+            imageData: 'data:image/png;base64,legacy',
+            opacity: 0.75,
+            scale: 1.5,
+            offsetX: 24,
+            offsetY: -12
+        })]);
+        expect(world.selectedImageOverlayId).toBe('overlay-1');
+        expect(save.version).toBe(CURRENT_SAVE_VERSION);
+    });
+
+    it('preserves fixed hotspot markers while removing retired plume spawn settings', () => {
+        const save = makeSave([makePlate('a')], 10);
+        const world = save.world as unknown as Record<string, unknown>;
+        world.globalOptions = { hotspotSpawnRate: 2.5, showHints: true };
+        world.mantlePlumes = [{
+            id: 'plume-1',
+            position: [12, 34],
+            radius: 50,
+            strength: 1,
+            active: false,
+            spawnRate: 0.5
+        }];
+
+        migrateSaveFile(save);
+
+        expect(save.version).toBe(CURRENT_SAVE_VERSION);
+        expect(world.globalOptions).toEqual({ showHints: true });
+        expect(world.mantlePlumes).toEqual([{ id: 'plume-1', position: [12, 34] }]);
+    });
+
     it('handles v0 / undefined version gracefully', () => {
         const plate = makePlate('a', { lineType: 'rift' as any });
         const save = makeSave([plate], 0 as any);

@@ -100,10 +100,15 @@ function fallbackMerge(plate1: TectonicPlate, plate2: TectonicPlate): Polygon[] 
 /**
  * Fuse two plates into one
  */
+export interface FusePlateOptions {
+    resultName?: string;
+}
+
 export function fusePlates(
     state: AppState,
     plate1Id: string,
-    plate2Id: string
+    plate2Id: string,
+    options: FusePlateOptions = {}
 ): FuseResult {
     const plate1 = state.world.plates.find(p => p.id === plate1Id);
     const plate2 = state.world.plates.find(p => p.id === plate2Id);
@@ -149,7 +154,7 @@ export function fusePlates(
 
     const fusedPlate: TectonicPlate = {
         id: generateId(),
-        name: `${plate1.name}-${plate2.name} (Fused)`,
+        name: options.resultName?.trim() || `${plate1.name}-${plate2.name} (Fused)`,
         // Explorer organization is inherited only when both parents agree.
         groupId: plate1.groupId === plate2.groupId ? plate1.groupId : undefined,
         color: mixedColor,

@@ -2,6 +2,7 @@
 import { AppState, TectonicPlate, MotionSegment, GeometryStage, Coordinate, PlateEvent } from '../types';
 import { ensureMotionModel } from '../motion/RotationModel';
 import type { ModalOptions } from '../ui/ModalSystem';
+import { uiIcon, type UiIconName } from '../ui/icons';
 // import toDisplayTime, toInternalTime removed
 
 
@@ -28,12 +29,13 @@ export interface TimelineHost {
     setTime(time: number): void;
 }
 
-const EVENT_ICONS: Record<string, string> = {
-    birth: '★',
-    motion: '⟳',
-    split: '✂',
-    fuse: '🔗',
-    death: '†'
+const EVENT_ICONS: Record<TimelineEventItem['type'], UiIconName> = {
+    birth: 'file-plus',
+    motion: 'orbit',
+    split: 'scissors',
+    fuse: 'merge',
+    death: 'trash',
+    shape: 'edit'
 };
 
 export class TimelineSystem {
@@ -194,7 +196,7 @@ export class TimelineSystem {
 
         const icon = document.createElement('span');
         icon.className = 'timeline-icon';
-        icon.textContent = this.getIconForType(event.type);
+        icon.innerHTML = this.getIconForType(event.type);
 
         header.appendChild(icon);
         header.appendChild(timeBadge);
@@ -308,7 +310,7 @@ export class TimelineSystem {
             cascadeWrapper.style.alignItems = 'center';
             cascadeWrapper.style.marginLeft = '8px';
             cascadeWrapper.style.fontSize = '10px';
-            cascadeWrapper.style.color = '#a6adc8';
+            cascadeWrapper.style.color = 'var(--text-secondary)';
             cascadeWrapper.title = 'Shift subsequent events';
 
             cascadeCheckbox = document.createElement('input');
@@ -335,8 +337,8 @@ export class TimelineSystem {
         return row;
     }
 
-    private getIconForType(type: string): string {
-        return EVENT_ICONS[type] || '•';
+    private getIconForType(type: TimelineEventItem['type']): string {
+        return uiIcon(EVENT_ICONS[type]);
     }
 
     // --- Logic Handlers ---

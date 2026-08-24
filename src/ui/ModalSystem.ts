@@ -2,6 +2,7 @@
  * ModalSystem - Generic modal dialog and theme toggle.
  * Extracted from main.ts TectoLiteApp class.
  */
+import { uiIcon } from './icons';
 
 export interface ModalButton {
     text: string;
@@ -17,86 +18,237 @@ export interface ModalOptions {
     buttons: ModalButton[];
 }
 
+interface ActiveModal {
+    restoreTarget: HTMLElement | null;
+    close: (restoreFocus: boolean) => void;
+}
+
+const FOCUSABLE_SELECTOR = [
+    'a[href]',
+    'area[href]',
+    'button:not([disabled])',
+    'input:not([disabled]):not([type="hidden"])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    'iframe',
+    'object',
+    'embed',
+    '[contenteditable="true"]',
+    '[tabindex]:not([tabindex="-1"])'
+].join(',');
+
+let modalId = 0;
+let activeModal: ActiveModal | null = null;
+
+/** @internal Exported so the keyboard contract can be tested without a DOM shim. */
+export function getWrappedFocusIndex(currentIndex: number, focusableCount: number, backwards: boolean): number {
+    if (focusableCount <= 0) return -1;
+    if (currentIndex < 0) return backwards ? focusableCount - 1 : 0;
+    if (backwards) return currentIndex === 0 ? focusableCount - 1 : currentIndex - 1;
+    return currentIndex === focusableCount - 1 ? 0 : currentIndex + 1;
+}
+
+/** @internal Shared by showModal and focused accessibility tests. */
+export function getModalDialogAttributes(titleId: string, descriptionId: string): Record<string, string> {
+    return {
+        role: 'dialog',
+        'aria-modal': 'true',
+        'aria-labelledby': titleId,
+        'aria-describedby': descriptionId
+    };
+}
+
 /**
- * Shows a modal dialog. In retro mode, falls back to native confirm/alert.
+ * Implicit dismissal must never run a potentially destructive secondary action.
+ * Escape/backdrop still close a modal that has another secondary choice, but only
+ * familiar cancellation labels receive their callback.
+ *
+ * @internal Exported for contract tests.
+ */
+export function isSafeImplicitDismissAction(button: ModalButton): boolean {
+    return Boolean(button.isSecondary && /^(cancel|close|back|not now)$/i.test(button.text.trim()));
+}
+
+/** @internal Escape and backdrop clicks are available only with an alternate action. */
+export function canImplicitlyDismiss(buttons: ModalButton[]): boolean {
+    return buttons.some(button => button.isSecondary);
+}
+
+function getCurrentFocusTarget(): HTMLElement | null {
+    return document.activeElement instanceof HTMLElement ? document.activeElement : null;
+}
+
+function getRestoreFocusTarget(element: HTMLElement | null): HTMLElement | null {
+    if (!element) return null;
+    const closedHeaderMenu = element.closest<HTMLElement>('.view-dropdown-menu:not(.show)');
+    if (!closedHeaderMenu) return element;
+
+    const trigger = closedHeaderMenu.parentElement?.querySelector<HTMLElement>(
+        `:scope > button[aria-controls="${closedHeaderMenu.id}"]`
+    );
+    return trigger ?? element;
+}
+
+function isFocusableVisible(element: HTMLElement): boolean {
+    if (element.hasAttribute('hidden') || element.getAttribute('aria-hidden') === 'true') return false;
+    if (element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+}
+
+function getFocusableElements(dialog: HTMLElement): HTMLElement[] {
+    return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(isFocusableVisible);
+}
+
+function focusInitialElement(dialog: HTMLElement, body: HTMLElement, secondaryButtons: HTMLButtonElement[]): void {
+    const autofocusTarget = dialog.querySelector<HTMLElement>('[autofocus]');
+    const bodyTarget = getFocusableElements(body)[0];
+    const safeSecondary = secondaryButtons.find(button => button.dataset.safeDismiss === 'true');
+    const target = autofocusTarget && isFocusableVisible(autofocusTarget)
+        ? autofocusTarget
+        : bodyTarget ?? safeSecondary ?? dialog;
+    target.focus({ preventScroll: true });
+}
+
+/**
+ * Shows one accessible modal dialog. Calling showModal while another managed
+ * modal is open replaces the old one rather than stacking two modal layers.
  */
 export function showModal(options: ModalOptions): void {
-    // MODERN THEME MODAL (Standard TectoLite UI)
+    const restoreTarget = activeModal?.restoreTarget ?? getCurrentFocusTarget();
+    activeModal?.close(false);
+
+    const instanceId = ++modalId;
+    const titleId = `app-modal-title-${instanceId}`;
+    const descriptionId = `app-modal-description-${instanceId}`;
+    const previousBodyOverflow = document.body.style.overflow;
+
     const overlay = document.createElement('div');
-    overlay.style.cssText = `
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.6); z-index: 10000;
-      display: flex; align-items: center; justify-content: center;
-    `;
+    overlay.className = 'app-modal-overlay';
+    overlay.dataset.managedModal = 'true';
 
     const dialog = document.createElement('div');
-    dialog.style.cssText = `
-      background: #1e1e2e; border: 1px solid var(--border-default); border-radius: 8px; padding: 20px;
-      min-width: ${options.width || '400px'}; color: var(--text-primary); font-family: system-ui, sans-serif;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px;
-    `;
-
-    dialog.innerHTML = `
-      <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; border-bottom: 1px solid var(--border-default); padding-bottom: 12px;">${options.title}</h3>
-      <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">${options.content}</div>
-      <div id="modal-btn-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;"></div>
-    `;
-
-    overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
-
-    const btnContainer = dialog.querySelector('#modal-btn-container');
-    if (btnContainer) {
-        const mainButtons = options.buttons.filter(b => !b.isSecondary);
-        const secondaryButtons = options.buttons.filter(b => b.isSecondary);
-
-        mainButtons.forEach(btn => {
-            const b = document.createElement('button');
-            b.className = 'btn';
-            b.style.cssText = `
-                text-align: left; padding: 12px; display: flex; flex-direction: column; 
-                background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;
-                cursor: pointer; color: var(--text-primary);
-            `;
-
-            let inner = `<span style="font-weight: 600; font-size: 14px; color: var(--color-primary); margin-bottom: 2px;">${btn.text}</span>`;
-            if (btn.subtext) {
-                inner += `<span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">${btn.subtext}</span>`;
-            }
-            b.innerHTML = inner;
-
-            b.addEventListener('mouseenter', () => b.style.borderColor = 'var(--color-primary)');
-            b.addEventListener('mouseleave', () => b.style.borderColor = 'var(--border-default)');
-
-            b.addEventListener('click', () => {
-                const result = btn.onClick();
-                if (result !== false) {
-                    document.body.removeChild(overlay);
-                }
-            });
-            btnContainer.appendChild(b);
-        });
-
-        if (secondaryButtons.length > 0) {
-            const row = document.createElement('div');
-            row.style.cssText = `display: flex; justify-content: flex-end; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-default);`;
-
-            secondaryButtons.forEach(btn => {
-                const b = document.createElement('button');
-                b.className = 'btn btn-secondary';
-                b.innerText = btn.text;
-                b.style.cssText = `padding: 6px 16px; margin-left: 8px;`;
-                b.addEventListener('click', () => {
-                    const result = btn.onClick();
-                    if (result !== false) {
-                        document.body.removeChild(overlay);
-                    }
-                });
-                row.appendChild(b);
-            });
-            btnContainer.appendChild(row);
-        }
+    dialog.className = 'app-modal-dialog';
+    dialog.tabIndex = -1;
+    dialog.style.setProperty('--app-modal-width', options.width || '400px');
+    for (const [name, value] of Object.entries(getModalDialogAttributes(titleId, descriptionId))) {
+        dialog.setAttribute(name, value);
     }
+
+    const title = document.createElement('h3');
+    title.id = titleId;
+    title.className = 'app-modal-title';
+    title.textContent = options.title;
+
+    const body = document.createElement('div');
+    body.id = descriptionId;
+    body.className = 'app-modal-body';
+    // Modal content is deliberately rich HTML supplied by trusted application
+    // callers. User-controlled values must be escaped by those callers.
+    body.innerHTML = options.content;
+
+    const buttonContainer = document.createElement('div');
+    buttonContainer.className = 'app-modal-actions';
+
+    dialog.append(title, body, buttonContainer);
+    overlay.appendChild(dialog);
+
+    const primaryButtons = options.buttons.filter(button => !button.isSecondary);
+    const secondaryOptions = options.buttons.filter(button => button.isSecondary);
+    const secondaryElements: HTMLButtonElement[] = [];
+    let closed = false;
+
+    const close = (shouldRestoreFocus: boolean): void => {
+        if (closed) return;
+        closed = true;
+        overlay.remove();
+        document.body.style.overflow = previousBodyOverflow;
+        if (activeModal?.close === close) activeModal = null;
+
+        const focusTarget = getRestoreFocusTarget(restoreTarget);
+        if (shouldRestoreFocus && focusTarget?.isConnected) {
+            focusTarget.focus({ preventScroll: true });
+        }
+    };
+
+    const runAction = (button: ModalButton): void => {
+        const result = button.onClick();
+        if (result !== false) close(true);
+    };
+
+    const createButton = (button: ModalButton, secondary: boolean): HTMLButtonElement => {
+        const element = document.createElement('button');
+        element.type = 'button';
+        element.className = secondary ? 'btn btn-secondary app-modal-secondary' : 'btn app-modal-primary';
+        element.addEventListener('click', () => runAction(button));
+
+        if (secondary) {
+            element.textContent = button.text;
+            element.dataset.safeDismiss = String(isSafeImplicitDismissAction(button));
+        } else {
+            const label = document.createElement('span');
+            label.className = 'app-modal-button-label';
+            label.textContent = button.text;
+            element.appendChild(label);
+
+            if (button.subtext) {
+                const subtext = document.createElement('span');
+                subtext.className = 'app-modal-button-subtext';
+                subtext.textContent = button.subtext;
+                element.appendChild(subtext);
+            }
+        }
+        return element;
+    };
+
+    for (const button of primaryButtons) {
+        buttonContainer.appendChild(createButton(button, false));
+    }
+
+    if (secondaryOptions.length > 0) {
+        const secondaryRow = document.createElement('div');
+        secondaryRow.className = 'app-modal-secondary-row';
+        for (const button of secondaryOptions) {
+            const element = createButton(button, true);
+            secondaryElements.push(element);
+            secondaryRow.appendChild(element);
+        }
+        buttonContainer.appendChild(secondaryRow);
+    }
+
+    const dismissImplicitly = (): void => {
+        if (!canImplicitlyDismiss(options.buttons)) return;
+        const safeAction = secondaryOptions.find(isSafeImplicitDismissAction);
+        if (safeAction) runAction(safeAction);
+        else close(true);
+    };
+
+    overlay.addEventListener('click', event => {
+        if (event.target === overlay) dismissImplicitly();
+    });
+
+    overlay.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && canImplicitlyDismiss(options.buttons)) {
+            event.preventDefault();
+            event.stopPropagation();
+            dismissImplicitly();
+            return;
+        }
+
+        if (event.key !== 'Tab') return;
+        const focusable = getFocusableElements(dialog);
+        event.preventDefault();
+        const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+        const nextIndex = getWrappedFocusIndex(currentIndex, focusable.length, event.shiftKey);
+        if (nextIndex >= 0) focusable[nextIndex].focus({ preventScroll: true });
+        else dialog.focus({ preventScroll: true });
+    });
+
+    activeModal = { restoreTarget, close };
+    document.body.style.overflow = 'hidden';
+    document.body.appendChild(overlay);
+    focusInitialElement(dialog, body, secondaryElements);
 }
 
 /**
@@ -116,8 +268,8 @@ export function toggleTheme(callbacks: {
 
     const btn = document.getElementById('btn-theme-toggle');
     if (btn) {
-        const icon = btn.querySelector('.icon');
-        if (icon) icon.textContent = newTheme === 'light' ? '☀️' : '🌙';
+        const icon = btn.querySelector<HTMLElement>('[data-theme-icon]');
+        if (icon) icon.innerHTML = uiIcon(newTheme === 'light' ? 'sun' : 'moon');
     }
 
     callbacks.render();

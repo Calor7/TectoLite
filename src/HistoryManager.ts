@@ -1,5 +1,5 @@
 // History Manager for Undo/Redo functionality
-import { AppState, EntityGroup } from './types';
+import { AppState, EntityGroup, ImageOverlay } from './types';
 
 export class HistoryManager {
     private history: AppState[] = [];
@@ -190,7 +190,8 @@ export class HistoryManager {
                     ...plume,
                     position: cloneCoord(plume.position)
                 })),
-                imageOverlay: world.imageOverlay ? { ...world.imageOverlay } : world.imageOverlay
+                imageOverlay: world.imageOverlay ? { ...world.imageOverlay } : world.imageOverlay,
+                imageOverlays: ((world.imageOverlays ?? []) as ImageOverlay[]).map(overlay => ({ ...overlay }))
             }
         };
     }

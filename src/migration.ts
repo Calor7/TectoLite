@@ -26,7 +26,7 @@ export interface SaveFile {
 }
 
 /** Current save file version. Bump this whenever the on-disk format changes. */
-export const CURRENT_SAVE_VERSION = 9;
+export const CURRENT_SAVE_VERSION = 11;
 
 /**
  * Migrate a parsed save file to {@link CURRENT_SAVE_VERSION}.
@@ -149,6 +149,58 @@ export function migrateSaveFile(data: SaveFile): SaveFile {
         const options = (world.globalOptions ??= {}) as Record<string, any>;
         if (typeof options.expandLabelsOnHover !== 'boolean') options.expandLabelsOnHover = true;
         data.version = 9;
+    }
+
+    // v9 → v10: reference images are a collection instead of one replaceable
+    // image. Preserve the old image as the first layer and normalize any early
+    // multi-image project created during development.
+    if (data.version < 10) {
+        const world = data.world as unknown as Record<string, any>;
+        const rawOverlays = Array.isArray(world.imageOverlays) ? world.imageOverlays : [];
+        if (world.imageOverlay?.imageData && rawOverlays.length === 0) {
+            rawOverlays.push(world.imageOverlay);
+        }
+        world.imageOverlays = rawOverlays
+            .filter((overlay: any) => overlay && typeof overlay.imageData === 'string')
+            .map((overlay: any, index: number) => ({
+                id: typeof overlay.id === 'string' && overlay.id ? overlay.id : `overlay-${index + 1}`,
+                name: typeof overlay.name === 'string' && overlay.name ? overlay.name : `Reference ${index + 1}`,
+                imageData: overlay.imageData,
+                visible: overlay.visible !== false,
+                opacity: Number.isFinite(overlay.opacity) ? Math.min(1, Math.max(0, overlay.opacity)) : 0.5,
+                scale: Number.isFinite(overlay.scale) ? Math.min(10, Math.max(0.05, overlay.scale)) : 1,
+                offsetX: Number.isFinite(overlay.offsetX) ? overlay.offsetX : 0,
+                offsetY: Number.isFinite(overlay.offsetY) ? overlay.offsetY : 0,
+                rotation: Number.isFinite(overlay.rotation) ? overlay.rotation : 0,
+                mode: overlay.mode === 'projection' ? 'projection' : 'fixed'
+            }));
+        const selectedId = world.selectedImageOverlayId;
+        world.selectedImageOverlayId = world.imageOverlays.some((overlay: any) => overlay.id === selectedId)
+            ? selectedId
+            : world.imageOverlays.at(-1)?.id ?? null;
+        delete world.imageOverlay;
+        data.version = 10;
+    }
+
+    // v10 → v11: mantle plumes are manually placed fixed markers. The
+    // unfinished automatic-spawn controls never produced simulation output,
+    // so remove their misleading persisted settings while preserving markers.
+    if (data.version < 11) {
+        const world = data.world as unknown as {
+            globalOptions?: Record<string, unknown>;
+            mantlePlumes?: Array<Record<string, unknown>>;
+        };
+        const options = world.globalOptions;
+        if (options) delete options.hotspotSpawnRate;
+        if (Array.isArray(world.mantlePlumes)) {
+            for (const plume of world.mantlePlumes) {
+                delete plume.spawnRate;
+                delete plume.active;
+                delete plume.radius;
+                delete plume.strength;
+            }
+        }
+        data.version = 11;
     }
 
     return data;

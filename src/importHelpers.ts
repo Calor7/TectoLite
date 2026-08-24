@@ -10,6 +10,7 @@ import {
     RiftAxis,
     TripleJunction,
     MapLabel,
+    ImageOverlay,
     generateId,
     migrateLineType,
 } from './types';
@@ -21,6 +22,7 @@ export interface RemappedImport {
     entityGroups: EntityGroup[];
     riftAxes: RiftAxis[];
     tripleJunctions: TripleJunction[];
+    imageOverlays: ImageOverlay[];
 }
 
 /**
@@ -38,17 +40,21 @@ export interface RemappedImport {
  */
 export function remapImportedWorld(
     importedWorld: Pick<WorldState, 'plates'>
-        & Partial<Pick<WorldState, 'entityGroups' | 'riftAxes' | 'tripleJunctions' | 'labels'>>,
+        & Partial<Pick<WorldState, 'entityGroups' | 'riftAxes' | 'tripleJunctions' | 'labels' | 'imageOverlays'>>,
     timeOffset: number
 ): RemappedImport {
     const idMap = new Map<string, string>(); // old plate id -> new plate id
     const groupIdMap = new Map<string, string>(); // old Explorer group id -> new group id
+    const riftGroupIdMap = new Map<string, string>(); // split/rift lineage id -> new lineage id
     const featureIdMap = new Map<string, string>(); // old feature id -> new feature id
 
     const platesToImport = importedWorld.plates.filter(p => !p.riftAxisId && !p.junctionId);
 
     // Pre-assign plate IDs so cross-references can be remapped below
     platesToImport.forEach(plate => idMap.set(plate.id, generateId()));
+    for (const axis of importedWorld.riftAxes || []) {
+        if (!riftGroupIdMap.has(axis.groupId)) riftGroupIdMap.set(axis.groupId, generateId());
+    }
     const entityGroups = (importedWorld.entityGroups || []).map(group => {
         const id = generateId();
         groupIdMap.set(group.id, id);
@@ -77,7 +83,11 @@ export function remapImportedWorld(
             id: generateId(),
             edgeMeta: poly.edgeMeta?.map(em => ({
                 ...em,
-                sourceId: em.sourceId && idMap.has(em.sourceId) ? idMap.get(em.sourceId)! : em.sourceId,
+                sourceId: em.sourceId && idMap.has(em.sourceId)
+                    ? idMap.get(em.sourceId)!
+                    : em.sourceId && riftGroupIdMap.has(em.sourceId)
+                        ? riftGroupIdMap.get(em.sourceId)!
+                        : em.sourceId,
                 siblings: em.siblings
                     ?.filter(s => idMap.has(s.siblingPlateId))
                     .map(s => ({
@@ -94,6 +104,13 @@ export function remapImportedWorld(
     const plates = platesToImport.map(plate => ({
         ...plate,
         id: idMap.get(plate.id)!,
+        birthTime: plate.birthTime + timeOffset,
+        deathTime: plate.deathTime !== null ? plate.deathTime + timeOffset : null,
+        linkTime: plate.linkTime !== undefined ? plate.linkTime + timeOffset : undefined,
+        unlinkTime: plate.unlinkTime !== undefined ? plate.unlinkTime + timeOffset : undefined,
+        events: plate.events
+            .map(event => ({ ...event, time: event.time + timeOffset }))
+            .sort((a, b) => a.time - b.time),
         groupId: plate.groupId ? groupIdMap.get(plate.groupId) : undefined,
         // Remap cross-plate references; dangling ones are stripped so motion
         // inheritance and parent-chain lookups don't fail on stale IDs.
@@ -114,13 +131,17 @@ export function remapImportedWorld(
         initialPolygons: remapPolygons(plate.initialPolygons),
         initialFeatures: plate.initialFeatures.map(adjustFeatureTime),
         // Keyframe-less model fields (v4 saves). Shift times by the offset.
-        motionSegments: plate.motionSegments?.map(s => ({ ...s, time: s.time + timeOffset })),
-        geometryStages: plate.geometryStages?.map(s => ({
-            ...s,
-            time: s.time + timeOffset,
-            polygons: remapPolygons(s.polygons),
-            features: s.features.map(adjustFeatureTime)
-        }))
+        motionSegments: plate.motionSegments
+            ?.map(s => ({ ...s, time: s.time + timeOffset }))
+            .sort((a, b) => a.time - b.time),
+        geometryStages: plate.geometryStages
+            ?.map(s => ({
+                ...s,
+                time: s.time + timeOffset,
+                polygons: remapPolygons(s.polygons),
+                features: s.features.map(adjustFeatureTime)
+            }))
+            .sort((a, b) => a.time - b.time)
     }));
 
     const labels: MapLabel[] = (importedWorld.labels || [])
@@ -154,12 +175,15 @@ export function remapImportedWorld(
             return {
                 ...a,
                 id: newAxisId,
+                groupId: riftGroupIdMap.get(a.groupId)!,
                 plateIdA: idMap.get(a.plateIdA)!,
                 plateIdB: idMap.get(a.plateIdB)!,
                 birthTime: a.birthTime + timeOffset,
                 frozenTime: a.frozenTime !== undefined ? a.frozenTime + timeOffset : undefined,
                 deathTime: a.deathTime !== undefined ? a.deathTime + timeOffset : undefined,
-                isochrons: a.isochrons.map(iso => ({ ...iso, time: iso.time + timeOffset }))
+                isochrons: a.isochrons
+                    .map(iso => ({ ...iso, time: iso.time + timeOffset }))
+                    .sort((left, right) => left.time - right.time)
             };
         });
 
@@ -174,11 +198,18 @@ export function remapImportedWorld(
                 id: newJunctionId,
                 axisIds: j.axisIds.map(id => axisIdMap.get(id)!),
                 birthTime: j.birthTime + timeOffset,
-                junctionHistory: j.junctionHistory?.map(v => ({ ...v, time: v.time + timeOffset }))
+                junctionHistory: j.junctionHistory
+                    ?.map(v => ({ ...v, time: v.time + timeOffset }))
+                    .sort((left, right) => left.time - right.time)
             };
         });
 
-    return { plates, labels, entityGroups, riftAxes, tripleJunctions };
+    const imageOverlays = (importedWorld.imageOverlays || []).map(overlay => ({
+        ...overlay,
+        id: generateId()
+    }));
+
+    return { plates, labels, entityGroups, riftAxes, tripleJunctions, imageOverlays };
 }
 
 /**

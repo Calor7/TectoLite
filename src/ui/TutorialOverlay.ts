@@ -19,6 +19,97 @@ interface TooltipBox {
     tooltipEl: HTMLElement;
 }
 
+export interface TutorialRect {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+    width: number;
+    height: number;
+}
+
+interface TutorialTooltipPlacementOptions {
+    target: TutorialRect;
+    manual: TutorialRect | null;
+    tooltipWidth: number;
+    tooltipHeight: number;
+    viewportWidth: number;
+    viewportHeight: number;
+    pointerX: number;
+    pointerY: number;
+}
+
+interface TutorialTooltipPlacement {
+    left: number;
+    top: number;
+    group: 'left' | 'right' | 'top' | 'bottom';
+}
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(value, max));
+
+/** Keep sidebar help cards out of the central tutorial manual when space permits. */
+export function placeTutorialTooltip(options: TutorialTooltipPlacementOptions): TutorialTooltipPlacement {
+    const {
+        target,
+        manual,
+        tooltipWidth,
+        tooltipHeight,
+        viewportWidth,
+        viewportHeight,
+        pointerY,
+    } = options;
+    const margin = 10;
+    const targetCenterX = target.left + target.width / 2;
+    const targetCenterY = target.top + target.height / 2;
+    let left: number | null = null;
+    let top: number;
+
+    if (manual) {
+        const fitsRightRail = viewportWidth - manual.right - (margin * 2) >= tooltipWidth;
+        const fitsLeftRail = manual.left - (margin * 2) >= tooltipWidth;
+
+        if (targetCenterX >= manual.right && fitsRightRail) {
+            left = manual.right + margin;
+        } else if (targetCenterX <= manual.left && fitsLeftRail) {
+            left = manual.left - tooltipWidth - margin;
+        }
+
+        if (left !== null) {
+            if (target.bottom <= manual.top) {
+                top = target.bottom + margin;
+            } else if (target.top >= manual.bottom) {
+                top = target.top - tooltipHeight - margin;
+            } else {
+                top = pointerY <= targetCenterY
+                    ? target.bottom - tooltipHeight - margin
+                    : target.top + margin;
+            }
+            top = clamp(top, margin, viewportHeight - tooltipHeight - margin);
+
+            return {
+                left,
+                top,
+                group: top + tooltipHeight / 2 < targetCenterY ? 'bottom' : 'top',
+            };
+        }
+    }
+
+    const padding = 30;
+    if (targetCenterX < viewportWidth / 2) {
+        left = target.right + padding;
+    } else {
+        left = target.left - tooltipWidth - padding;
+    }
+    left = clamp(left, margin, viewportWidth - tooltipWidth - margin);
+    top = clamp(targetCenterY - tooltipHeight / 2, 60, viewportHeight - tooltipHeight - margin);
+
+    return {
+        left,
+        top,
+        group: targetCenterX < viewportWidth / 2 ? 'left' : 'right',
+    };
+}
+
 export class TutorialOverlay {
     private static isActive: boolean = false;
     private static overlayElement: HTMLElement | null = null;
@@ -238,7 +329,7 @@ export class TutorialOverlay {
         }
     }
 
-    private static showDynamicTooltip(targetEl: HTMLElement, entry: any, entryKey: string): void {
+    private static showDynamicTooltip(targetEl: HTMLElement, entry: any, entryKey: string, pointerX: number, pointerY: number): void {
         if (!this.overlayElement) return;
 
         this.hideDynamicTooltip();
@@ -264,26 +355,20 @@ export class TutorialOverlay {
             const w = tRect.width;
             const h = tRect.height;
 
-            const screenCenterX = window.innerWidth / 2;
-            const targetCenterX = targetRect.left + (targetRect.width / 2);
-            const targetCenterY = targetRect.top + (targetRect.height / 2);
-
-            let idealX: number;
-            let group: 'left' | 'right' | 'top' | 'bottom';
-            const padding = 30;
-
-            if (targetCenterX < screenCenterX) {
-                idealX = targetRect.right + padding;
-                group = 'left';
-            } else {
-                idealX = targetRect.left - w - padding;
-                group = 'right';
-            }
-
-            let idealY = targetCenterY - (h / 2);
-
-            idealX = Math.max(10, Math.min(idealX, window.innerWidth - w - 10));
-            idealY = Math.max(60, Math.min(idealY, window.innerHeight - h - 10));
+            const manualRect = this.overlayElement?.querySelector('.tutorial-general-manual')?.getBoundingClientRect() ?? null;
+            const placement = placeTutorialTooltip({
+                target: targetRect,
+                manual: manualRect,
+                tooltipWidth: w,
+                tooltipHeight: h,
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+                pointerX,
+                pointerY,
+            });
+            const idealX = placement.left;
+            const idealY = placement.top;
+            const group = placement.group;
 
             tooltipContainer.style.visibility = 'visible';
             tooltipContainer.style.left = `${idealX}px`;
@@ -393,8 +478,8 @@ export class TutorialOverlay {
         highlightBox.style.height = `${rect.height + 8}px`;
         highlightBox.style.zIndex = '3';
 
-        highlightBox.addEventListener('mouseenter', () => {
-            this.showDynamicTooltip(targetEl, entry, entryKey);
+        highlightBox.addEventListener('mouseenter', (event) => {
+            this.showDynamicTooltip(targetEl, entry, entryKey, event.clientX, event.clientY);
         });
 
         highlightBox.addEventListener('mouseleave', () => {

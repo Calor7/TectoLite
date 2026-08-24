@@ -1,4 +1,4 @@
-import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, ToolType, TectonicPlate, LineType, resolveLineTypeDefaults, MapLabel } from '../types';
+import { AppState, Point, FeatureType, Coordinate, EulerPole, InteractionMode, Boundary, ToolType, TectonicPlate, MapLabel, ImageOverlay } from '../types';
 import { ProjectionManager } from './ProjectionManager';
 import { geoGraticule, geoArea } from 'd3-geo';
 import { toGeoJSON } from '../utils/geoHelpers';
@@ -6,6 +6,11 @@ import { MotionGizmo } from './MotionGizmo';
 import { activeEulerPole, pointPositionAt } from '../motion/RotationModel';
 import { latLonToVector, vectorToLatLon, rotateVector, cross, dot, normalize, Vector3, quatFromAxisAngle, quatMultiply, axisAngleFromQuat, Quaternion, calculateSphericalCentroid } from '../utils/sphericalMath';
 import { perfMonitor } from '../utils/PerfMonitor';
+import { resolveFeatureTimelineOpacity, resolveLineRenderStyle, sortPlatesForRendering } from './renderStyles';
+import { FEATURE_ICON_DRAWERS } from './featureIcons';
+import { isMotionLinkActiveAtTime } from '../motion/LinkModel';
+import { resizeViewportAroundCanvasCenter } from './viewportResize';
+import { constrainViewTranslation, rotateViewport, translateViewport, type NavigationOptions } from './NavigationOptions';
 
 import { InputTool } from './tools/InputTool';
 import { PathInputTool } from './tools/PathInputTool';
@@ -30,6 +35,9 @@ export interface CanvasManagerCallbacks {
     onDrawUpdate?: (count: number) => void;
     onGizmoUpdate?: (rate: number) => void;
     onEditPending?: (active: boolean) => void;
+    isImageOverlayEditing?: () => boolean;
+    onImageOverlaySelect?: (overlayId: string) => void;
+    onImageOverlayTransform?: (overlayId: string, patch: Partial<Pick<ImageOverlay, 'offsetX' | 'offsetY' | 'scale'>>) => void;
 }
 
 export class CanvasManager {
@@ -52,8 +60,9 @@ export class CanvasManager {
     private isDragging = false;
     private lastMousePos: Point = { x: 0, y: 0 };
     // private currentMouseGeo: Coordinate | null = null; // Unused
-    private interactionMode: 'rotate_view' | 'translate_view' | 'modify_velocity' | 'drag_target' | 'spin_ghost' | 'label_offset' | 'none' = 'none';
+    private interactionMode: 'rotate_view' | 'translate_view' | 'modify_velocity' | 'drag_target' | 'spin_ghost' | 'label_offset' | 'image_overlay_move' | 'image_overlay_resize' | 'none' = 'none';
     private labelDrag: { id: string; kind: 'offset' | 'anchor'; start: Point; originalOffset: [number, number]; currentOffset: [number, number]; currentAnchor?: Coordinate; moved: boolean } | null = null;
+    private imageOverlayDrag: { id: string; start: Point; originalOffset: [number, number]; originalScale: number; startDistance: number } | null = null;
 
     // Motion state
     private dragStartGeo: Coordinate | null = null;
@@ -74,6 +83,11 @@ export class CanvasManager {
     private labelHitRegions = new Map<string, { x: number; y: number; width: number; height: number }>();
     private labelAnchorHitRegions = new Map<string, Point>();
     private labelToggleHitRegions = new Map<string, { x: number; y: number; radius: number }>();
+    private navigationOptions: NavigationOptions = {
+        sensitivity: 1,
+        reverseDrag: false,
+        keepMapReachable: true
+    };
 
     constructor(
         canvas: HTMLCanvasElement,
@@ -244,7 +258,9 @@ export class CanvasManager {
         const y2 = Math.max(start.y, end.y);
 
         const selectedFeatures: string[] = [];
+        if (!state.world.showFeatures) return;
         for (const feature of plate.features) {
+            if (resolveFeatureTimelineOpacity(feature, state.world.currentTime, state.world.showFutureFeatures) === null) continue;
             const proj = this.projectionManager.project(feature.position);
             if (proj && proj[0] >= x1 && proj[0] <= x2 && proj[1] >= y1 && proj[1] <= y2) {
                 selectedFeatures.push(feature.id);
@@ -397,19 +413,57 @@ export class CanvasManager {
         this.ctx.scale(dpr, dpr);
         this.setState(s => ({
             ...s,
-            viewport: {
-                ...s.viewport,
-                width: rect.width,
-                height: rect.height,
-                // Preserve the user's screen-space view offset when panels or
-                // the window resize, relative to the old and new canvas centers.
-                translate: [
-                    rect.width / 2 + (s.viewport.translate[0] - s.viewport.width / 2),
-                    rect.height / 2 + (s.viewport.translate[1] - s.viewport.height / 2)
-                ]
-            }
+            // Preserve the user's screen-space view offset when panels or the
+            // window resize, relative to the old and new canvas centers.
+            viewport: resizeViewportAroundCanvasCenter(s.viewport, rect.width, rect.height)
         }));
         this.markDirty();
+    }
+
+    public setNavigationOptions(options: NavigationOptions): void {
+        this.navigationOptions = { ...options };
+    }
+
+    public resetViewOrientation(northUpOnly = false): void {
+        this.setState(state => ({
+            ...state,
+            viewport: {
+                ...state.viewport,
+                rotate: northUpOnly ? [state.viewport.rotate[0], 0, 0] : [0, 0, 0]
+            }
+        }));
+    }
+
+    public centerRenderedView(): void {
+        this.setState(state => ({
+            ...state,
+            viewport: {
+                ...state.viewport,
+                translate: [state.viewport.width / 2, state.viewport.height / 2]
+            }
+        }));
+    }
+
+    public centerRenderedViewOn(position: Coordinate): void {
+        const projected = this.projectionManager.project(position);
+        if (!projected) return;
+        this.setState(state => {
+            const desired: Coordinate = [
+                state.viewport.translate[0] + state.viewport.width / 2 - projected[0],
+                state.viewport.translate[1] + state.viewport.height / 2 - projected[1]
+            ];
+            return {
+                ...state,
+                viewport: {
+                    ...state.viewport,
+                    translate: constrainViewTranslation(
+                        state.viewport,
+                        desired,
+                        this.navigationOptions.keepMapReachable
+                    )
+                }
+            };
+        });
     }
 
     public startRenderLoop(): void {
@@ -472,6 +526,26 @@ export class CanvasManager {
         const geo = this.getGeoFromMouse(e);
         const screen = this.getMousePos(e);
         this.lastMousePos = { x: e.clientX, y: e.clientY };
+
+        if (e.button === 0 && this.callbacks.isImageOverlayEditing?.()) {
+            const hit = this.hitTestImageOverlay(screen);
+            if (hit) {
+                this.callbacks.onImageOverlaySelect?.(hit.overlay.id);
+                const center = this.getImageOverlayGeometry(hit.overlay)?.center ?? screen;
+                this.imageOverlayDrag = {
+                    id: hit.overlay.id,
+                    start: screen,
+                    originalOffset: [hit.overlay.offsetX, hit.overlay.offsetY],
+                    originalScale: hit.overlay.scale,
+                    startDistance: Math.max(1, Math.hypot(screen.x - center.x, screen.y - center.y))
+                };
+                this.isDragging = true;
+                this.interactionMode = hit.handle === 'resize' ? 'image_overlay_resize' : 'image_overlay_move';
+                this.canvas.style.cursor = hit.handle === 'resize' ? 'nwse-resize' : 'move';
+                e.preventDefault();
+                return;
+            }
+        }
 
         if (e.button === 1 || (e.button === 0 && state.activeTool === 'pan')) {
             this.isDragging = true;
@@ -590,7 +664,7 @@ export class CanvasManager {
                 this.hoverTooltipEl = document.createElement('div');
                 this.hoverTooltipEl.style.cssText =
                     'position: absolute; z-index: 50; pointer-events: none; font-size: 11px; ' +
-                    'background: rgba(20,20,32,0.92); color: #cdd6f4; padding: 6px 8px; border-radius: 4px; ' +
+                    'background: color-mix(in srgb, var(--bg-surface) 94%, transparent); color: var(--text-primary); padding: 6px 8px; border-radius: var(--radius-sm); ' +
                     'border: 1px solid rgba(137,180,250,0.3); line-height: 1.5; white-space: nowrap;';
                 this.canvas.parentElement?.appendChild(this.hoverTooltipEl);
             }
@@ -599,10 +673,15 @@ export class CanvasManager {
             const rate = activeEulerPole(plate, state.world.currentTime).rate ?? 0;
             const radiusKm = state.world.globalOptions.planetRadius || 6371;
             const cmYr = (rate * Math.PI / 180 * radiusKm) / 10;
-            this.hoverTooltipEl.innerHTML =
-                `<b>${plate.name}</b><br>` +
-                `${plate.type ?? 'plate'} · born ${plate.birthTime.toFixed(0)} Ma (age ${age.toFixed(0)} Ma)<br>` +
-                `${rate.toFixed(2)} °/Ma · ${cmYr.toFixed(2)} cm/yr`;
+            const name = document.createElement('b');
+            name.textContent = plate.name;
+            this.hoverTooltipEl.replaceChildren(
+                name,
+                document.createElement('br'),
+                document.createTextNode(`${plate.type ?? 'plate'} · born ${plate.birthTime.toFixed(0)} Ma (age ${age.toFixed(0)} Ma)`),
+                document.createElement('br'),
+                document.createTextNode(`${rate.toFixed(2)} °/Ma · ${cmYr.toFixed(2)} cm/yr`),
+            );
             this.hoverTooltipEl.style.left = `${screen.x + 14}px`;
             this.hoverTooltipEl.style.top = `${screen.y + 10}px`;
             this.hoverTooltipEl.style.display = 'block';
@@ -631,6 +710,10 @@ export class CanvasManager {
             this.getState().world.globalOptions.showHoverTooltips === true) {
             this.scheduleHoverTooltip(screen);
         }
+        if (onCanvas && !this.isDragging && this.callbacks.isImageOverlayEditing?.()) {
+            const hit = this.hitTestImageOverlay(screen);
+            this.canvas.style.cursor = hit?.handle === 'resize' ? 'nwse-resize' : hit ? 'move' : 'default';
+        }
 
         if (this.isDragging) {
             const dx = e.clientX - this.lastMousePos.x;
@@ -655,7 +738,27 @@ export class CanvasManager {
                     this.labelDrag.currentOffset = [this.labelDrag.originalOffset[0] + moveX, this.labelDrag.originalOffset[1] + moveY];
                 }
                 this.labelDrag.moved = this.labelDrag.moved || Math.hypot(moveX, moveY) > 3;
+            } else if (this.imageOverlayDrag && this.interactionMode === 'image_overlay_move') {
+                this.callbacks.onImageOverlayTransform?.(this.imageOverlayDrag.id, {
+                    offsetX: this.imageOverlayDrag.originalOffset[0] + screen.x - this.imageOverlayDrag.start.x,
+                    offsetY: this.imageOverlayDrag.originalOffset[1] + screen.y - this.imageOverlayDrag.start.y
+                });
+            } else if (this.imageOverlayDrag && this.interactionMode === 'image_overlay_resize') {
+                const overlay = this.getState().world.imageOverlays.find(candidate => candidate.id === this.imageOverlayDrag?.id);
+                const center = overlay ? this.getImageOverlayGeometry(overlay)?.center : null;
+                if (center) {
+                    const distance = Math.hypot(screen.x - center.x, screen.y - center.y);
+                    this.callbacks.onImageOverlayTransform?.(this.imageOverlayDrag.id, {
+                        scale: Math.min(10, Math.max(0.05, this.imageOverlayDrag.originalScale * distance / this.imageOverlayDrag.startDistance))
+                    });
+                }
             }
+        }
+
+        if (this.imageOverlayDrag) {
+            this.markDirty();
+            this.lastMousePos = { x: e.clientX, y: e.clientY };
+            return;
         }
 
         if (this.activeInputTool) {
@@ -670,6 +773,8 @@ export class CanvasManager {
     private handleMouseUp(e: MouseEvent): void {
         const geo = this.getGeoFromMouse(e);
         const screen = this.getMousePos(e);
+        const finishedImageOverlayDrag = this.interactionMode === 'image_overlay_move'
+            || this.interactionMode === 'image_overlay_resize';
 
         if (this.isDragging) {
             this.isDragging = false;
@@ -690,9 +795,12 @@ export class CanvasManager {
                 this.labelDrag = null;
             }
             this.interactionMode = 'none';
+            this.imageOverlayDrag = null;
             this.canvas.style.cursor = 'default';
             this.markDirty();
         }
+
+        if (finishedImageOverlayDrag) return;
 
         if (this.activeInputTool) {
             this.activeInputTool.onMouseUp(e, geo, screen);
@@ -720,21 +828,21 @@ export class CanvasManager {
     }
 
     private rotateView(dx: number, dy: number) {
-        const state = this.getState();
-        const sens = (180 / Math.PI) / (state.viewport.scale || 250);
-        const newRotate = [...state.viewport.rotate] as [number, number, number];
-        newRotate[0] += dx * sens;
-        newRotate[1] -= dy * sens;
-        newRotate[1] = Math.max(-90, Math.min(90, newRotate[1]));
-        this.setState(s => ({ ...s, viewport: { ...s.viewport, rotate: newRotate } }));
+        this.setState(state => ({
+            ...state,
+            viewport: {
+                ...state.viewport,
+                rotate: rotateViewport(state.viewport, dx, dy, this.navigationOptions)
+            }
+        }));
     }
 
     private translateView(dx: number, dy: number) {
-        this.setState(s => ({
-            ...s,
+        this.setState(state => ({
+            ...state,
             viewport: {
-                ...s.viewport,
-                translate: [s.viewport.translate[0] + dx, s.viewport.translate[1] + dy]
+                ...state.viewport,
+                translate: translateViewport(state.viewport, dx, dy, this.navigationOptions)
             }
         }));
     }
@@ -855,12 +963,11 @@ export class CanvasManager {
                 this.drawGraticule(path, computedStyle);
             }
 
-            if (state.world.imageOverlay?.visible && state.world.imageOverlay.mode === 'fixed') {
-                this.drawImageOverlay(state);
-            }
+            this.drawImageOverlays(state);
 
             this.drawPlates(state, path);
             this.drawDerivedRiftLines(state, path);
+            this.drawFeatures(state);
             this.drawSelectedEdge();
             this.drawPlumes(state);
 
@@ -901,6 +1008,7 @@ export class CanvasManager {
             }
 
             this.drawLabels(state);
+            if (this.callbacks.isImageOverlayEditing?.()) this.drawImageOverlayEditor(state);
         } finally {
             perfMonitor.endPhase(perfSample);
         }
@@ -1031,6 +1139,41 @@ export class CanvasManager {
         }
     }
 
+    private drawFeatures(state: AppState): void {
+        if (!state.world.showFeatures) return;
+
+        const selectedIds = new Set(state.world.selectedFeatureIds ?? []);
+        if (state.world.selectedFeatureId) selectedIds.add(state.world.selectedFeatureId);
+        const groupOpacity = new Map(state.world.entityGroups.map(group => [group.id, group.opacity ?? 1]));
+
+        for (const plate of state.world.plates) {
+            if (!plate.visible && !state.world.globalOptions.showHiddenPlates) continue;
+            if (state.world.currentTime < plate.birthTime) continue;
+            if (plate.deathTime !== null && state.world.currentTime >= plate.deathTime) continue;
+
+            const plateOpacity = plate.groupId ? (groupOpacity.get(plate.groupId) ?? 1) : 1;
+            for (const feature of plate.features) {
+                const timelineOpacity = resolveFeatureTimelineOpacity(
+                    feature,
+                    state.world.currentTime,
+                    state.world.showFutureFeatures
+                );
+                if (timelineOpacity === null) continue;
+
+                const projected = this.projectionManager.project(feature.position);
+                const draw = FEATURE_ICON_DRAWERS[feature.type];
+                if (!projected || !draw) continue;
+
+                this.ctx.save();
+                this.ctx.globalAlpha = timelineOpacity * plateOpacity;
+                this.ctx.translate(projected[0], projected[1]);
+                this.ctx.rotate((feature.rotation ?? 0) * Math.PI / 180);
+                draw(this.ctx, 12 * (feature.scale ?? 1), { isSelected: selectedIds.has(feature.id) });
+                this.ctx.restore();
+            }
+        }
+    }
+
     private drawPlates(state: AppState, path: any) {
         // HELPER: Draw flowlines for a given plate
         const drawFlowlineTrails = (plate: TectonicPlate, isOnTop: boolean) => {
@@ -1087,13 +1230,7 @@ export class CanvasManager {
             this.ctx.restore();
         };
 
-        const sortedPlates = [...state.world.plates].sort((a, b) => {
-            let zA = a.zIndex ?? 0;
-            let zB = b.zIndex ?? 0;
-            if (a.polygonType === 'continental_plate' || a.polygonType === 'continental_crust' || a.polygonType === 'craton') zA += 1;
-            if (b.polygonType === 'continental_plate' || b.polygonType === 'continental_crust' || b.polygonType === 'craton') zB += 1;
-            return zA - zB;
-        });
+        const sortedPlates = sortPlatesForRendering(state.world.plates);
         const groupOpacity = new Map(
             state.world.entityGroups.map(group => [group.id, group.opacity ?? 1])
         );
@@ -1163,16 +1300,17 @@ export class CanvasManager {
                     // globalOptions.lineTypeDefaults (settings-editable).
                     // Dash: respects plate.lineDashCustomized override;
                     // otherwise uses the per-type default.
-                    const lt: LineType = (plate.lineType as LineType) || 'generic';
-                    const defs = resolveLineTypeDefaults(this.getState().world.globalOptions.lineTypeDefaults);
-                    const typeDefault = defs[lt] || defs.generic;
-                    const strokeColor = plate.lineColorCustomized
-                        ? (plate.color || typeDefault.color)
-                        : typeDefault.color;
-                    const dash = typeDefault.dash;
-                    this.ctx.strokeStyle = isSelected ? '#ffffff' : strokeColor;
-                    this.ctx.lineWidth = isSelected ? 4 : 2;
-                    this.ctx.setLineDash(dash);
+                    const style = resolveLineRenderStyle(plate, state.world.globalOptions.lineTypeDefaults);
+                    this.ctx.setLineDash(style.dash);
+                    if (isSelected) {
+                        // Keep a selection halo without hiding the line's actual
+                        // (including custom) color beneath an opaque white stroke.
+                        this.ctx.strokeStyle = '#ffffff';
+                        this.ctx.lineWidth = 5;
+                        this.ctx.stroke();
+                    }
+                    this.ctx.strokeStyle = style.color;
+                    this.ctx.lineWidth = 2;
                 }
                 this.ctx.stroke();
                 this.ctx.globalAlpha = 1.0;
@@ -1349,38 +1487,93 @@ export class CanvasManager {
         this.ctx.setLineDash([]);
     }
 
-    private drawImageOverlay(state: AppState): void {
-        const overlay = state.world.imageOverlay;
-        if (!overlay || !overlay.imageData) return;
-
-        let img = this.cachedOverlayImages.get(overlay.imageData);
-        if (!img) {
-            img = new Image();
-            img.onload = () => { this.markDirty(); };
-            img.src = overlay.imageData;
-            this.cachedOverlayImages.set(overlay.imageData, img);
-            return;
+    private getImageOverlayImage(overlay: ImageOverlay): HTMLImageElement | null {
+        let image = this.cachedOverlayImages.get(overlay.imageData);
+        if (!image) {
+            image = new Image();
+            image.onload = () => this.markDirty();
+            image.src = overlay.imageData;
+            this.cachedOverlayImages.set(overlay.imageData, image);
+            return null;
         }
+        return image.complete && image.naturalWidth > 0 ? image : null;
+    }
 
-        if (!img.complete) return;
+    private getImageOverlayGeometry(overlay: ImageOverlay): {
+        image: HTMLImageElement;
+        center: Point;
+        width: number;
+        height: number;
+        rotation: number;
+    } | null {
+        const image = this.getImageOverlayImage(overlay);
+        if (!image) return null;
+        const cssWidth = this.canvas.width / (window.devicePixelRatio || 1);
+        const cssHeight = this.canvas.height / (window.devicePixelRatio || 1);
+        return {
+            image,
+            center: { x: cssWidth / 2 + overlay.offsetX, y: cssHeight / 2 + overlay.offsetY },
+            width: image.naturalWidth * overlay.scale,
+            height: image.naturalHeight * overlay.scale,
+            rotation: overlay.rotation * Math.PI / 180
+        };
+    }
 
+    private drawImageOverlays(state: AppState): void {
+        for (const overlay of state.world.imageOverlays ?? []) {
+            if (!overlay.visible || overlay.mode !== 'fixed') continue;
+            const geometry = this.getImageOverlayGeometry(overlay);
+            if (!geometry) continue;
+            this.ctx.save();
+            this.ctx.globalAlpha = overlay.opacity;
+            this.ctx.translate(geometry.center.x, geometry.center.y);
+            this.ctx.rotate(geometry.rotation);
+            this.ctx.drawImage(geometry.image, -geometry.width / 2, -geometry.height / 2, geometry.width, geometry.height);
+            this.ctx.restore();
+        }
+    }
+
+    private drawImageOverlayEditor(state: AppState): void {
+        const overlay = state.world.imageOverlays.find(candidate => candidate.id === state.world.selectedImageOverlayId);
+        if (!overlay?.visible) return;
+        const geometry = this.getImageOverlayGeometry(overlay);
+        if (!geometry) return;
         this.ctx.save();
-        this.ctx.globalAlpha = overlay.opacity;
-        const canvasWidth = this.canvas.width;
-        const canvasHeight = this.canvas.height;
-        const scaledWidth = img.width * overlay.scale;
-        const scaledHeight = img.height * overlay.scale;
-        const x = (canvasWidth - scaledWidth) / 2 + overlay.offsetX;
-        const y = (canvasHeight - scaledHeight) / 2 + overlay.offsetY;
-
-        if (overlay.rotation !== 0) {
-            this.ctx.translate(canvasWidth / 2, canvasHeight / 2);
-            this.ctx.rotate((overlay.rotation * Math.PI) / 180);
-            this.ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
-        }
-
-        this.ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+        this.ctx.translate(geometry.center.x, geometry.center.y);
+        this.ctx.rotate(geometry.rotation);
+        this.ctx.strokeStyle = '#f6c344';
+        this.ctx.fillStyle = '#f6c344';
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash([6, 4]);
+        this.ctx.strokeRect(-geometry.width / 2, -geometry.height / 2, geometry.width, geometry.height);
+        this.ctx.setLineDash([]);
+        this.ctx.fillRect(geometry.width / 2 - 6, geometry.height / 2 - 6, 12, 12);
         this.ctx.restore();
+    }
+
+    private hitTestImageOverlay(screen: Point): { overlay: ImageOverlay; handle: 'move' | 'resize' } | null {
+        const overlays = this.getState().world.imageOverlays ?? [];
+        for (let index = overlays.length - 1; index >= 0; index--) {
+            const overlay = overlays[index];
+            if (!overlay.visible) continue;
+            const geometry = this.getImageOverlayGeometry(overlay);
+            if (!geometry) continue;
+            const dx = screen.x - geometry.center.x;
+            const dy = screen.y - geometry.center.y;
+            const cos = Math.cos(-geometry.rotation);
+            const sin = Math.sin(-geometry.rotation);
+            const localX = dx * cos - dy * sin;
+            const localY = dx * sin + dy * cos;
+            const halfWidth = geometry.width / 2;
+            const halfHeight = geometry.height / 2;
+            if (Math.abs(localX - halfWidth) <= 12 && Math.abs(localY - halfHeight) <= 12) {
+                return { overlay, handle: 'resize' };
+            }
+            if (Math.abs(localX) <= halfWidth && Math.abs(localY) <= halfHeight) {
+                return { overlay, handle: 'move' };
+            }
+        }
+        return null;
     }
 
     private drawEulerPole(pole: EulerPole): void {
@@ -1421,16 +1614,10 @@ export class CanvasManager {
             for (const plume of state.world.mantlePlumes) {
                 const proj = this.projectionManager.project(plume.position);
                 if (proj) {
-                    const isSelected = plume.id === state.world.selectedFeatureId; // plumeId check
+                    const isSelected = plume.id === state.world.selectedFeatureId;
                     this.ctx.save();
                     this.ctx.translate(proj[0], proj[1]);
-                    this.ctx.beginPath();
-                    this.ctx.arc(0, 0, 8, 0, Math.PI * 2);
-                    this.ctx.fillStyle = plume.active ? '#ff00aa' : '#888888';
-                    this.ctx.fill();
-                    this.ctx.strokeStyle = isSelected ? '#ffffff' : (plume.active ? '#550033' : '#333333');
-                    this.ctx.lineWidth = isSelected ? 3 : 2;
-                    this.ctx.stroke();
+                    FEATURE_ICON_DRAWERS.hotspot?.(this.ctx, 10, { isSelected });
                     this.ctx.restore();
                 }
             }
@@ -1444,9 +1631,14 @@ export class CanvasManager {
         this.ctx.setLineDash([8, 4]);
 
         for (const plate of state.world.plates) {
-            if (plate.linkedToPlateId && !plate.hideLinkMarker) {
+            if (isMotionLinkActiveAtTime(plate, state.world.currentTime) && !plate.hideLinkMarker) {
                 const parent = state.world.plates.find(p => p.id === plate.linkedToPlateId);
-                if (parent && (!parent.hideLinkMarker || parent.id !== plate.linkedToPlateId)) {
+                if (parent
+                    && state.world.currentTime >= plate.birthTime
+                    && (plate.deathTime === null || state.world.currentTime < plate.deathTime)
+                    && state.world.currentTime >= parent.birthTime
+                    && (parent.deathTime === null || state.world.currentTime < parent.deathTime)
+                    && (!parent.hideLinkMarker || parent.id !== plate.linkedToPlateId)) {
                     this.ctx.beginPath();
                     path({ type: 'LineString', coordinates: [plate.center, parent.center] } as any);
                     this.ctx.stroke();
@@ -1759,9 +1951,27 @@ export class CanvasManager {
     }
 
     private setupEventListeners(): void {
-        this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
-        window.addEventListener('mousemove', this.handleMouseMove.bind(this));
-        window.addEventListener('mouseup', this.handleMouseUp.bind(this));
+        // Pointer events keep the desktop mouse workflow intact while making
+        // canvas selection, drawing and dragging available to touch devices.
+        this.canvas.addEventListener('pointerdown', (event) => {
+            if (!event.isPrimary) return;
+            if (event.pointerType === 'touch') {
+                event.preventDefault();
+                this.canvas.setPointerCapture(event.pointerId);
+            }
+            this.handleMouseDown(event);
+        });
+        window.addEventListener('pointermove', (event) => {
+            if (event.isPrimary) this.handleMouseMove(event);
+        });
+        window.addEventListener('pointerup', (event) => {
+            if (!event.isPrimary) return;
+            this.handleMouseUp(event);
+            if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
+        });
+        window.addEventListener('pointercancel', (event) => {
+            if (event.isPrimary) this.handleMouseUp(event);
+        });
         this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
         window.addEventListener('keydown', this.handleKeyDown.bind(this));
         window.addEventListener('keyup', this.handleKeyUp.bind(this));
@@ -1816,7 +2026,9 @@ export class CanvasManager {
             if (!plate.visible || state.world.currentTime < plate.birthTime || (plate.deathTime !== null && state.world.currentTime >= plate.deathTime)) continue;
             // Locked plates can be selected, but we might want them to be selectable to UNLOCK them. 
             // So we still hit test them for selection, but tools must respect the lock.
+            if (!state.world.showFeatures) continue;
             for (const feature of plate.features) {
+                if (resolveFeatureTimelineOpacity(feature, state.world.currentTime, state.world.showFutureFeatures) === null) continue;
                 const proj = this.projectionManager.project(feature.position);
                 if (proj && Math.hypot(proj[0] - mousePos.x, proj[1] - mousePos.y) < 20) return { plateId: plate.id, featureId: feature.id };
             }

@@ -7,6 +7,7 @@ import {
     pointPositionAt,
     activeStage,
     ensureMotionModel,
+    rewriteBirthGeometryStage,
 } from './RotationModel';
 import {
     quatFromAxisAngle,
@@ -55,6 +56,72 @@ describe('quaternion path matches Rodrigues rotation', () => {
         const viaQuat = rotateCoordByQuat(p, quatFromAxisAngle(latLonToVector(axis), angle));
         const viaRodrigues = rotatePoint(p, axis, angle);
         expectCoord(viaQuat, viaRodrigues, 8);
+    });
+});
+
+describe('future first geometry stage', () => {
+    it('does not back-propagate a future edit into the plate birth position', () => {
+        const parent = makePlate('parent', {
+            birthTime: 263,
+            motionSegments: [seg(263, NORTH, 0), seg(274, [0, 90], 0.55)],
+            geometryStages: [{ time: 263, polygons: [], features: [] }],
+        });
+        const birthPoint: Coordinate = [157.689236233883, -45.516682761972];
+        const birthPolygon = {
+            id: 'orogeny',
+            points: [birthPoint, [160, -45], [159, -42]] as Coordinate[],
+            closed: true,
+        };
+        const orogeny = makePlate('orogeny', {
+            birthTime: 263,
+            linkedToPlateId: parent.id,
+            linkTime: 264,
+            initialPolygons: [birthPolygon],
+            geometryStages: [{ time: 318, polygons: [birthPolygon], features: [] }],
+        });
+
+        const atBirth = derivePlateGeometry(orogeny, [parent, orogeny], orogeny.birthTime);
+        expectCoord(atBirth.polygons[0].points[0], birthPoint, 8);
+
+        const afterLink = derivePlateGeometry(orogeny, [parent, orogeny], 280);
+        const expectedCarriedPosition = pointPositionAt(parent, [parent, orogeny], birthPoint, 264, 280);
+        expectCoord(afterLink.polygons[0].points[0], expectedCarriedPosition, 8);
+    });
+
+    it('retimestamps stage zero when rewriting geometry from birth', () => {
+        const original = { id: 'original', points: [[0, 0], [1, 0], [0, 1]] as Coordinate[], closed: true };
+        const edited = { id: 'edited', points: [[10, 10], [11, 10], [10, 11]] as Coordinate[], closed: true };
+        const orogeny = makePlate('orogeny', {
+            birthTime: 263,
+            initialPolygons: [original],
+            geometryStages: [
+                { time: 318, polygons: [original], features: [] },
+                { time: 350, polygons: [original], features: [] },
+            ],
+        });
+
+        const stages = rewriteBirthGeometryStage(orogeny, [edited]);
+        expect(stages.map(stage => stage.time)).toEqual([263, 350]);
+        expect(stages[0].polygons).toEqual([edited]);
+        expect(stages[1].polygons).toEqual([original]);
+    });
+
+    it('rewrites the chronologically first stage when saved stages are unsorted', () => {
+        const birthShape = { id: 'birth', points: [[0, 0], [1, 0], [0, 1]] as Coordinate[], closed: true };
+        const laterShape = { id: 'later', points: [[20, 20], [21, 20], [20, 21]] as Coordinate[], closed: true };
+        const edited = { id: 'edited', points: [[10, 10], [11, 10], [10, 11]] as Coordinate[], closed: true };
+        const plate = makePlate('unsorted', {
+            birthTime: 263,
+            geometryStages: [
+                { time: 350, polygons: [laterShape], features: [] },
+                { time: 318, polygons: [birthShape], features: [] },
+            ],
+        });
+
+        const stages = rewriteBirthGeometryStage(plate, [edited]);
+        expect(stages.map(stage => stage.time)).toEqual([263, 350]);
+        expect(stages[0].polygons).toEqual([edited]);
+        expect(stages[1].polygons).toEqual([laterShape]);
     });
 });
 
@@ -150,6 +217,79 @@ describe('plateRotation', () => {
         });
         const q = plateRotation(child, [mover, child], 0, 40);
         // Same axis: rates simply add → +60° longitude
+        expectCoord(rotateCoordByQuat([0, 0], q), [60, 0]);
+    });
+
+    it('keeps own motion after an unlink chronologically after inherited motion', () => {
+        const mover = makePlate('mover', {
+            motionSegments: [seg(0, [0, 0], 1)],
+            geometryStages: [{ time: 0, polygons: [], features: [] }],
+        });
+        const child = makePlate('child', {
+            linkedToPlateId: mover.id,
+            linkTime: 10,
+            unlinkTime: 20,
+            motionSegments: [seg(0, NORTH, 1)],
+            geometryStages: [{ time: 0, polygons: [], features: [] }],
+        });
+
+        const qBefore = segmentsRotation(child.motionSegments, undefined, 0, 10);
+        const qDuringOwn = segmentsRotation(child.motionSegments, undefined, 10, 20);
+        const qDuringParent = segmentsRotation(mover.motionSegments, undefined, 10, 20);
+        const qAfter = segmentsRotation(child.motionSegments, undefined, 20, 30);
+        const expected = rotateCoordByQuat(
+            rotateCoordByQuat(
+                rotateCoordByQuat(
+                    rotateCoordByQuat([20, 30], qBefore),
+                    qDuringOwn
+                ),
+                qDuringParent
+            ),
+            qAfter
+        );
+
+        const actual = rotateCoordByQuat(
+            [20, 30],
+            plateRotation(child, [mover, child], 0, 30)
+        );
+        expectCoord(actual, expected, 8);
+    });
+
+    it('delegates retired-parent motion to its fused successor', () => {
+        const retired = makePlate('retired', {
+            deathTime: 20,
+            motionSegments: [seg(0, NORTH, 1), seg(25, SOUTH, 9)],
+        });
+        const fused = makePlate('fused', {
+            birthTime: 20,
+            parentPlateIds: ['retired', 'other'],
+            motionSegments: [seg(20, NORTH, 2), seg(30, NORTH, 3)],
+            geometryStages: [{ time: 20, polygons: [], features: [] }],
+        });
+
+        const q = plateRotation(retired, [retired, fused], 10, 40);
+        // Retired: 10° from 10–20; fused: 20° from 20–30 and 30° from
+        // 30–40. The retired plate's post-death 9°/Ma segment is ignored.
+        expectCoord(rotateCoordByQuat([0, 0], q), [60, 0]);
+    });
+
+    it('follows a chain of later fusion successors', () => {
+        const first = makePlate('first', { deathTime: 10, motionSegments: [seg(0, NORTH, 1)] });
+        const second = makePlate('second', {
+            birthTime: 10,
+            deathTime: 20,
+            parentPlateIds: ['first', 'other-a'],
+            motionSegments: [seg(10, NORTH, 2)],
+            geometryStages: [{ time: 10, polygons: [], features: [] }],
+        });
+        const third = makePlate('third', {
+            birthTime: 20,
+            parentPlateIds: ['second', 'other-b'],
+            motionSegments: [seg(20, NORTH, 3)],
+            geometryStages: [{ time: 20, polygons: [], features: [] }],
+        });
+
+        const q = plateRotation(first, [first, second, third], 0, 30);
         expectCoord(rotateCoordByQuat([0, 0], q), [60, 0]);
     });
 

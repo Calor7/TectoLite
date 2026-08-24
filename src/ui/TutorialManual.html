@@ -108,6 +108,10 @@
     <!-- Top Bar Actions -->
     <div data-selector="#btn-tutorial-help">Click this button again, or press <kbd>Escape</kbd>, to close the tutorial
       overlay.</div>
+    <div data-selector="#btn-file-menu">Open project creation, save, load, and map export actions. Save and Load also
+      use <kbd>Ctrl+S</kbd> and <kbd>Ctrl+O</kbd>.</div>
+    <div data-selector="#autosave-status">Shows whether crash-recovery data is ready, being saved, or needs attention.
+      Desktop recovery uses an atomic application-data file; the browser uses IndexedDB.</div>
     <div data-selector="#btn-planet"
       data-nested='{"planet-radius": "Radius is locked if Custom Planet Radius is unchecked.", "timeline": "Maximum duration of the geological history in Ma (Mega-annum)."}'>
       Opens the <strong style="color:var(--accent-primary);">Settings Menu</strong> to configure simulation rules,
@@ -121,15 +125,19 @@
     <div data-selector="#btn-undo">Undo the last action (Shortcut: <kbd>Ctrl+Z</kbd>).</div>
     <div data-selector="#btn-redo">Redo previously undone action (Shortcut: <kbd>Ctrl+Y</kbd>).</div>
     <div data-selector="#btn-new-project">Start a blank world or choose one of the curated Earth and Pangaea templates.</div>
-    <div data-selector="#btn-export">Exports the current view as PNG or heightmap.</div>
-    <div data-selector="#btn-export-json">Save the current simulation state to a JSON file on your computer.</div>
+    <div data-selector="#btn-export">Exports the current view as PNG or heightmap. A different output aspect ratio
+      crops the current view symmetrically instead of revealing extra map area.</div>
+    <div data-selector="#btn-export-json">Save either the entire editable timeline or a new project beginning at the
+      current time. The latter removes earlier history and shifts retained future events to the new time zero.</div>
     <div data-selector="#btn-import-json">Load a previously saved JSON simulation state.</div>
     <div data-selector="#btn-report-bug">Prepare a bug report with reproduction steps and optional diagnostic data.</div>
+    <div data-selector="#btn-help-menu">Open the tutorial, keyboard guide, bug report, project links, and version information.</div>
+    <div data-selector="#btn-hotkey-help">Show the complete keyboard shortcut guide. Shortcut: <kbd>?</kbd>.</div>
     <div data-selector=".app-title a:first-child">TectoLite Official GitHub Repository. Open source and available for
       your contributions!</div>
     <div data-selector=".app-subtitle a">Refractured Games Website. Check out our other educational games and tools!
     </div>
-    <div data-selector=".app-title a[href*='ko-fi']">Support the solo developer of TectoLite by buying a Ko-fi ✨</div>
+    <div data-selector="#link-kofi-header">Support the solo developer of TectoLite on Ko-fi.</div>
     <div data-selector="#link-subscribe">Subscribe to the newsletter to get development updates and beta access.</div>
 
     <!-- Settings Menu Inputs -->
@@ -157,11 +165,11 @@
     <div data-selector="#check-view-timeline">Toggle the bottom timeline event log.</div>
     <div data-selector="#projection-select">Change the map projection. Note: some features (like spherical rotation) are
       locked to Orthographic (Globe) mode.</div>
-    <div data-selector="#check-show-overlay">Toggle the visibility of a custom image map overlay, useful for tracing
-      real-world geology.</div>
-    <div data-selector="#btn-upload-overlay">Upload any image file to drape over the globe/map as a reference.</div>
-    <div data-selector="#overlay-opacity-slider">Adjust how transparent the reference image overlay is.</div>
-    <div data-selector="#btn-clear-overlay">Remove the currently loaded reference image.</div>
+    <div data-selector="#check-show-overlay">Toggle the selected reference image, useful for tracing real-world geology.</div>
+    <div data-selector="#btn-upload-overlay">Add one or more reference images. Large files are resized and compressed automatically; each image keeps its own position, size, rotation, opacity, and layer order.</div>
+    <div data-selector="#check-edit-overlay">Move the selected image on the canvas, or drag its lower-right handle to resize it.</div>
+    <div data-selector="#overlay-opacity-slider">Adjust how transparent the selected reference image is.</div>
+    <div data-selector="#btn-clear-overlay">Remove the selected reference image.</div>
     <div data-selector="#check-grid">Toggle the visual longitude and latitude grid lines.</div>
     <div data-selector="#grid-thickness-select">Change the line weight of the grid.</div>
     <div data-selector="#check-features">Toggle standard terrain features like mountains, rifts, and collision zones.
@@ -170,8 +178,8 @@
       boundaries at the current time.</div>
     <div data-selector="#check-euler-poles">Toggle the display of the rotational axis anchors (Euler Poles) for all
       moving plates.</div>
-    <div data-selector="#check-future-features">If enabled, shows features that will appear in the future as faint
-      outlines based on birth time.</div>
+    <div data-selector="#check-future-features">If enabled, shows plate-bound features outside their active lifetime
+      as faint previews, including both future and expired features.</div>
     <div data-selector="#check-show-links">Visualize parent-child kinematic dependencies directly on the map.</div>
     <div data-selector="#check-prediction-flowlines">Show amber travel arcs while previewing a drag-to-target motion change.</div>
     <div data-selector="#check-velocity-arrows">Show a direction and relative-rate arrow at each visible entity.</div>
@@ -207,8 +215,13 @@
     <div data-selector="#check-vertex-snap">Automatically snap to existing vertices from nearby plates when drawing to
       create perfect boundaries without gaps.</div>
 
+    <div data-selector="[data-tool='feature']">The <strong style="color:var(--accent-primary);">Feature Tool</strong>
+      adds geological symbols. Select a plate first, choose a feature type, then click its location on the map.
+      Hotspots are manually placed fixed markers; other features move with their selected plate.</div>
+
     <div data-selector="[data-tool='edit']">The <strong style="color:var(--accent-primary);">Edit Tool</strong> alters
-      existing plate geometries by modifying their vertices.</div>
+      existing plate geometries by modifying their vertices. Right-click deletes vertices. If a disconnected component
+      is down to three vertices, deleting again removes that component automatically when the plate has another polygon.</div>
     <div data-selector="#btn-edit-apply">Confirm and apply the newly edited plate geometry.</div>
     <div data-selector="#btn-edit-cancel">Discard custom geometry edits and revert shape.</div>
 
@@ -218,12 +231,15 @@
     <div data-selector="#btn-split-cancel">Cancel the current split operation.</div>
 
     <div data-selector="[data-tool='link']"
-      data-nested='{"kinematics": "Child plates will inherit the rotation (Euler pole) of their parent."}'>
+      data-nested='{"kinematics": "The child inherits the parent rotation only during the link window."}'>
       The <strong style="color:var(--accent-primary);">Link Tool</strong> creates a parent/child hierarchical <span
-        class="help-link" data-target="kinematics">kinematic relationship</span> between two plates.
+        class="help-link" data-target="kinematics">kinematic relationship</span> between two plates. Select the parent
+      first and the child second. The link begins at the current time, zeroes the child's independent motion at that
+      point, and leaves its earlier history unchanged.
     </div>
     <div data-selector="[data-tool='fuse']">The <strong style="color:var(--accent-primary);">Fuse Tool</strong> merges
-      two adjacent plates into a single continuous polygon.</div>
+      two adjacent plates at the current time. The first selected plate supplies the fused plate's initial motion.
+      Overlays linked to either parent continue following the fused plate, including later motion changes.</div>
 
     <div data-selector="#motion-mode-select">Change how you interact with plate movement: via classic absolute poles,
       dynamic pointing, or screen dragging.</div>
@@ -323,11 +339,8 @@
     <div data-selector="#btn-delete-plate">Permanently delete this plate and immediately remove it from the simulation.
     </div>
 
-    <!-- Plume Options -->
-    <div data-selector="#prop-plume-active">Toggles whether the mantle plume is actively erupting over time.</div>
-    <div data-selector="#prop-plume-rate-main">Overrides the global hotspot spawn rate and specifies how often this
-      specific plume generates new land.</div>
-    <div data-selector="#btn-delete-plume">Permanently remove this mantle plume.</div>
+    <!-- Fixed Hotspot Options -->
+    <div data-selector="#btn-delete-plume">Permanently remove this fixed hotspot marker.</div>
 
     <div data-selector="#timeline-panel"><strong style="color:var(--accent-primary);">Timeline Box:</strong> View recent
       significant geological events like continent splits and collisions.</div>

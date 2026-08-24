@@ -39,13 +39,13 @@ export function getSpeedPresetData(): SpeedPreset[] {
 export function generateRealWorldPresetList(): string {
     const presets = getSpeedPresetData();
     return presets.map((preset, idx) => `
-            <div style="display:grid; grid-template-columns: 1fr auto; gap:4px; align-items:center; background:#1e1e2e; border-radius:4px; padding:4px;">
+            <div style="display:grid; grid-template-columns: 1fr auto; gap:4px; align-items:center; background:var(--bg-surface); border-radius:var(--radius-sm); padding:4px;">
                 <div style="display:flex; align-items:center; gap:4px; overflow:hidden; cursor:pointer;" class="speed-preset-info" data-idx="${idx}" title="Click for details">
-                    <span style="font-size:11px; color:#89b4fa; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:underline; text-decoration-color: #45475a;">${preset.name}</span>
+                    <span style="font-size:11px; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:underline; text-decoration-color: var(--border-default);">${preset.name}</span>
                 </div>
                 <button class="speed-preset-apply" data-idx="${idx}" style="
-                    background:#313244; border:1px solid #45475a; border-radius:3px;
-                    padding:2px 8px; cursor:pointer; color:#89b4fa; font-size:11px;
+                    background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:3px;
+                    padding:2px 8px; cursor:pointer; color:var(--text-primary); font-size:11px;
                     transition:all 0.2s; min-width:60px;
                 " title="Apply speed">${preset.speed}</button>
             </div>
@@ -62,11 +62,11 @@ export function generateCustomPresetList(ratePresets: number[] | undefined): str
 
     return slots.map((val, idx) => `
                 <div style="display:flex; align-items:center; gap:6px;">
-                     <label style="font-size:10px; color:#a6adc8; width:15px;">#${idx + 1}</label>
+                     <label style="font-size:10px; color:var(--text-secondary); width:15px;">#${idx + 1}</label>
                      <input type="number" class="custom-preset-input property-input" data-idx="${idx}" value="${val}" step="0.1" style="flex:1;">
                      <button class="custom-preset-apply" data-idx="${idx}" style="
-                        background:#313244; border:1px solid #45475a; border-radius:4px;
-                        padding:4px 8px; cursor:pointer; color:#89b4fa; font-size:10px;
+                        background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-sm);
+                        padding:4px 8px; cursor:pointer; color:var(--text-primary); font-size:10px;
                      ">Apply</button>
                 </div>
             `).join('');
@@ -116,20 +116,20 @@ export function showPresetInfoDialog(
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;';
 
     const dialog = document.createElement('div');
-    dialog.style.cssText = 'background:#1e1e2e;border:1px solid #45475a;border-radius:8px;padding:20px;max-width:400px;width:90%;color:#cdd6f4;';
+    dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-lg);padding:20px;max-width:400px;width:90%;color:var(--text-primary);';
     dialog.innerHTML = `
-        <h3 style="margin:0 0 8px 0; color:#89b4fa;">${preset.name}</h3>
-        <div style="font-size:11px; color:#a6adc8; margin-bottom:10px;">${preset.type}</div>
+        <h3 style="margin:0 0 8px 0; color:var(--text-primary);">${preset.name}</h3>
+        <div style="font-size:11px; color:var(--text-secondary); margin-bottom:10px;">${preset.type}</div>
         <div style="font-size:13px; margin-bottom:12px;">${preset.details}</div>
-        <div style="background:#313244; padding:8px; border-radius:4px; margin-bottom:16px;">
+        <div style="background:var(--bg-elevated); padding:8px; border-radius:var(--radius-sm); margin-bottom:16px;">
             <div style="display:flex; justify-content:space-between; font-size:12px;">
                 <span>Speed:</span>
-                <span style="color:#a6e3a1;">${preset.speed} cm/yr (${rateDeg.toFixed(2)}°/Ma)</span>
+                <span style="color:var(--accent-success);">${preset.speed} cm/yr (${rateDeg.toFixed(2)}°/Ma)</span>
             </div>
         </div>
         <div style="display:flex; gap:8px; justify-content:flex-end;">
-            <button id="preset-info-close" style="background:#313244; border:1px solid #45475a; border-radius:4px; padding:6px 16px; cursor:pointer; color:#cdd6f4;">Close</button>
-            <button id="preset-info-apply" style="background:#89b4fa; border:none; border-radius:4px; padding:6px 16px; cursor:pointer; color:#1e1e2e; font-weight:bold;">Apply Speed</button>
+            <button id="preset-info-close" style="background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-sm); padding:6px 16px; cursor:pointer; color:var(--text-primary);">Close</button>
+            <button id="preset-info-apply" style="background:var(--accent-primary); border:none; border-radius:var(--radius-sm); padding:6px 16px; cursor:pointer; color:var(--accent-contrast); font-weight:bold;">Apply speed</button>
         </div>
     `;
 

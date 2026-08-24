@@ -4,8 +4,24 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('electron', {
+/**
+ * @typedef {Object} TectoLiteElectronApi
+ * @property {NodeJS.ProcessVersions} versions
+ * @property {(url: string) => Promise<void>} openExternal
+ * @property {(reportId: string, reportText: string, screenshotDataUrl: string | null) => Promise<string>} saveBugReport
+ * @property {(json: string) => Promise<void>} writeAutosave
+ * @property {() => Promise<string | null>} readAutosave
+ * @property {() => Promise<void>} clearAutosave
+ */
+
+/** @type {TectoLiteElectronApi} */
+const electronApi = Object.freeze({
   versions: process.versions,
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
-  saveBugReport: (reportId, reportText, screenshotDataUrl) => ipcRenderer.invoke('save-bug-report', reportId, reportText, screenshotDataUrl)
+  saveBugReport: (reportId, reportText, screenshotDataUrl) => ipcRenderer.invoke('save-bug-report', reportId, reportText, screenshotDataUrl),
+  writeAutosave: (json) => ipcRenderer.invoke('autosave:write', json),
+  readAutosave: () => ipcRenderer.invoke('autosave:read'),
+  clearAutosave: () => ipcRenderer.invoke('autosave:clear')
 });
+
+contextBridge.exposeInMainWorld('electron', electronApi);

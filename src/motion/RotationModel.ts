@@ -75,10 +75,34 @@ export function activeEulerPole(plate: TectonicPlate, t: number = plate.birthTim
  * ensureMotionModel / fromLegacyKeyframes — never here.)
  */
 export function getMotionModel(plate: TectonicPlate): MotionModel {
+    const sortedStages = [...plate.geometryStages].sort((a, b) => a.time - b.time);
+    // A geometry stage is an absolute snapshot at its own timestamp and must
+    // never be projected backward before it exists. Older rewrite-history code
+    // could leave stage 0 stamped with the edit time while initialPolygons were
+    // already unrotated to birth, causing the link transform to be inverted a
+    // second time. Synthesize the missing birth stage defensively.
+    const stages = sortedStages.length > 0 && sortedStages[0].time > plate.birthTime + EPS
+        ? [{
+            time: plate.birthTime,
+            polygons: plate.initialPolygons ?? plate.polygons,
+            features: plate.initialFeatures ?? [],
+        }, ...sortedStages]
+        : sortedStages;
     return {
         segments: plate.motionSegments,
-        stages: plate.geometryStages,
+        stages,
     };
+}
+
+/** Replace the authoritative stage-0 geometry for a rewrite-from-birth edit. */
+export function rewriteBirthGeometryStage(plate: TectonicPlate, polygons: Polygon[]): GeometryStage[] {
+    const [first, ...later] = [...plate.geometryStages].sort((a, b) => a.time - b.time);
+    const birthStage: GeometryStage = {
+        ...(first ?? { features: plate.initialFeatures ?? [] }),
+        time: plate.birthTime,
+        polygons,
+    };
+    return [birthStage, ...later].sort((a, b) => a.time - b.time);
 }
 
 /**
@@ -253,24 +277,61 @@ export function plateRotation(
             }
         }
 
-        // 2. Own motion
-        const { segments } = getMotionModel(plate);
-        const qOwn = segmentsRotation(segments, undefined, t0, t1);
+        // A fused plate is the motion successor of each retired parent. Keep
+        // the retired plate as the historical link target, but delegate any
+        // post-fusion interval to the live successor discovered from the
+        // persisted fusion lineage. This preserves the child's pre-fusion
+        // relationship while making later motion edits on the fused plate
+        // authoritative instead of relying on a one-time pole snapshot.
+        if (plate.deathTime !== null && t1 > plate.deathTime + EPS) {
+            const successor = allPlates.find(candidate =>
+                candidate.id !== plate.id
+                && candidate.parentPlateIds?.includes(plate.id)
+                && Math.abs(candidate.birthTime - plate.deathTime!) < EPS
+            );
+            if (successor) {
+                const handoff = Math.max(t0, plate.deathTime);
+                const qAfter = plateRotation(successor, allPlates, handoff, t1, visited);
+                if (t0 >= plate.deathTime - EPS) return qAfter;
 
-        // 3. Inherited motion via link chain, clamped to the link window
-        if (plate.linkedToPlateId) {
-            const linkParent = allPlates.find(p => p.id === plate.linkedToPlateId);
-            if (linkParent) {
-                const from = Math.max(t0, plate.linkTime ?? -Infinity);
-                const to = Math.min(t1, plate.unlinkTime ?? Infinity);
-                if (to - from > EPS) {
-                    const qParent = plateRotation(linkParent, allPlates, from, to, visited);
-                    return quatMultiply(qParent, qOwn);
-                }
+                const preVisited = new Set(visited);
+                preVisited.delete(plate.id);
+                const qBefore = plateRotation(plate, allPlates, t0, plate.deathTime, preVisited);
+                return quatMultiply(qAfter, qBefore);
             }
         }
 
-        return qOwn;
+        const { segments } = getMotionModel(plate);
+        const linkParent = plate.linkedToPlateId
+            ? allPlates.find(p => p.id === plate.linkedToPlateId)
+            : undefined;
+        if (!linkParent) return segmentsRotation(segments, undefined, t0, t1);
+
+        // Own and inherited rotations generally do not commute. When a link
+        // begins or ends inside the requested span, composing one parent
+        // rotation after the child's entire own rotation reorders the child's
+        // post-unlink motion. Split at link boundaries and compose the chunks
+        // chronologically instead.
+        const linkStart = plate.linkTime ?? -Infinity;
+        const linkEnd = plate.unlinkTime ?? Infinity;
+        const boundaries = [t0, t1];
+        if (linkStart > t0 + EPS && linkStart < t1 - EPS) boundaries.push(linkStart);
+        if (linkEnd > t0 + EPS && linkEnd < t1 - EPS) boundaries.push(linkEnd);
+        boundaries.sort((a, b) => a - b);
+
+        let q = QUAT_IDENTITY;
+        for (let i = 1; i < boundaries.length; i++) {
+            const from = boundaries[i - 1];
+            const to = boundaries[i];
+            const qOwn = segmentsRotation(segments, undefined, from, to);
+            const midpoint = from + (to - from) / 2;
+            const inherits = midpoint + EPS >= linkStart && midpoint < linkEnd - EPS;
+            const qChunk = inherits
+                ? quatMultiply(plateRotation(linkParent, allPlates, from, to, visited), qOwn)
+                : qOwn;
+            q = quatMultiply(qChunk, q);
+        }
+        return q;
     } finally {
         visited.delete(plate.id);
     }

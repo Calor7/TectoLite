@@ -1,6 +1,7 @@
 import { AppState, ProjectionType } from '../types';
 import { geoPath, geoOrthographic, geoEquirectangular, geoMercator, geoArea } from 'd3-geo';
 import * as geoProjection from 'd3-geo-projection';
+import { isFeatureActiveAtTime, isPlateActiveAtTime } from '../utils/timeline';
 
 export interface HeightmapOptions {
     width: number;
@@ -51,7 +52,7 @@ export class HeightmapGenerator {
 
         // 2. Render Plates (Base Elevation)
         const currentTime = state.world.currentTime;
-        const activePlates = state.world.plates.filter(p => !p.deathTime && p.birthTime <= currentTime);
+        const activePlates = state.world.plates.filter(p => p.visible && isPlateActiveAtTime(p, currentTime));
         const baseVal = 120;
         const color = `rgb(${baseVal}, ${baseVal}, ${baseVal})`;
         const radiusScale = (width / 360) * 1.5;
@@ -88,7 +89,7 @@ export class HeightmapGenerator {
         for (const plate of activePlates) {
             for (const feature of plate.features) {
                 // Skip inactive
-                if (feature.generatedAt && feature.generatedAt > currentTime) continue;
+                if (!isFeatureActiveAtTime(feature, currentTime)) continue;
 
                 const pt = projection(feature.position);
                 if (!pt) continue;

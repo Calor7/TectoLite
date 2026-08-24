@@ -21,7 +21,8 @@ import {
     DASH_PRESETS,
     resolveLineTypeDefaults,
     defaultLineTypeDefaults,
-    MapLabel
+    MapLabel,
+    ImageOverlay
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
 import { SimulationEngine } from './SimulationEngine';
@@ -32,8 +33,10 @@ import { vectorToLatLon, Vector3 } from './utils/sphericalMath';
 import { toGeoJSON } from './utils/geoHelpers';
 import { HistoryManager } from './HistoryManager';
 import { remapImportedWorld } from './importHelpers';
-import { migrateSaveFile, CURRENT_SAVE_VERSION, type SaveFile } from './migration';
-import { pointPositionAt, ensureMotionModel, getMotionModel, activeEulerPole } from './motion/RotationModel';
+import { CURRENT_SAVE_VERSION } from './migration';
+import { parseProjectText } from './ProjectIO';
+import { pointPositionAt, ensureMotionModel, getMotionModel, activeEulerPole, rewriteBirthGeometryStage } from './motion/RotationModel';
+import { isMotionLinkActiveAtTime, linkPlateAtTime, wouldCreateMotionLinkCycle } from './motion/LinkModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
 import { geoArea, geoCentroid } from 'd3-geo';
@@ -61,12 +64,26 @@ import {
     type ModalOptions
 } from './ui/ModalSystem';
 import { getAppHTML } from './ui/AppTemplate';
+import {
+    FUSION_PROXY_HELP,
+    LAYER_ORDER_HELP,
+    LINE_COLOR_HELP,
+    LINK_WINDOW_HELP,
+} from './ui/workflowGuidance';
 import { TutorialOverlay } from './ui/TutorialOverlay';
 import { makeBenchmarkWorld } from './utils/benchmarkWorld';
 import { perfMonitor } from './utils/PerfMonitor';
 import { PROJECT_TEMPLATES, type ProjectTemplate } from './projectTemplates';
 import { bindProjectSettings, syncProjectSettings, type ProjectSettingEffect } from './ui/SettingsBindings';
 import { selectExplorerRange } from './ui/ExplorerSelection';
+import { escapeHtml } from './ui/safeHtml';
+import { createAutosaveStore, type AutosaveStore } from './persistence/AutosaveStore';
+import { renderHotkeyGuide } from './ui/hotkeys';
+import { uiIcon } from './ui/icons';
+import { bindKofiHoverAnimation } from './ui/kofiAnimation';
+import { bindProgressivePropertyPanels } from './ui/ProgressiveDisclosure';
+import { bindDockController, type DockController } from './ui/DockController';
+import { loadToolPreferences, saveToolPreferences, type ToolPreferences } from './ui/ToolPreferences';
 
 type UnifiedExportOptions = NonNullable<Awaited<ReturnType<typeof showUnifiedExportDialog>>>;
 
@@ -78,13 +95,6 @@ declare global {
     }
 }
 
-function escapeHtml(value: string): string {
-    return value.replace(/[&<>"']/g, character => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
-    })[character]!);
-}
-
-
 class TectoLiteApp {
     private state: AppState;
     private canvasManager: CanvasManager | null = null;
@@ -93,12 +103,21 @@ class TectoLiteApp {
     private activeToolText: string = "INFO LOADING...";
     private timelineSystem: TimelineSystem | null = null;
     private fusionFirstPlateId: string | null = null; // Track first plate for fusion
+    private fusionSecondPlateId: string | null = null;
     private activeLinkSourceId: string | null = null; // Track first plate for linking
+    private activeLinkTargetId: string | null = null;
+    private splitPreviewActive = false;
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
     private hasUnsavedChanges: boolean = false; // Tracks edits since last save/load for the close guard
     private explorerFilter: string = ''; // Plate-name filter for the Explorer sidebar
     private explorerSelectionAnchorId: string | null = null;
     private cameraBookmarks: CameraView[] = [];
+    private imageOverlayEditMode = false;
+    private dockController: DockController | null = null;
+    private toolPreferences: ToolPreferences = loadToolPreferences();
+    private readonly autosaveStore: AutosaveStore;
+    private autosaveWritePending = false;
+    private autosaveGeneration = 0;
     // timeMode removed
 
 
@@ -119,6 +138,7 @@ class TectoLiteApp {
         };
 
     constructor() {
+        this.autosaveStore = createAutosaveStore();
         this.state = createDefaultAppState();
         const benchmarkScale = perfMonitor.getBenchmarkScale();
         if (benchmarkScale !== null) {
@@ -137,6 +157,8 @@ class TectoLiteApp {
 
     private init(): void {
         document.querySelector<HTMLDivElement>('#app')!.innerHTML = this.getHTML();
+        const runningInElectron = navigator.userAgent.toLowerCase().includes('electron');
+        document.getElementById('link-download-windows')?.toggleAttribute('hidden', runningInElectron);
         this.setupResizers();
 
         // Initialize canvas
@@ -175,9 +197,29 @@ class TectoLiteApp {
                 onEditPending: (active) => {
                     const el = document.getElementById('edit-controls');
                     if (el) el.style.display = active ? 'block' : 'none';
+                },
+                isImageOverlayEditing: () => this.imageOverlayEditMode,
+                onImageOverlaySelect: (overlayId) => {
+                    this.state.world.selectedImageOverlayId = overlayId;
+                    this.syncImageOverlayControls();
+                    this.canvasManager?.markDirty();
+                },
+                onImageOverlayTransform: (overlayId, patch) => {
+                    const overlay = this.state.world.imageOverlays.find(candidate => candidate.id === overlayId);
+                    if (!overlay) return;
+                    Object.assign(overlay, patch);
+                    this.setUnsaved(true);
+                    this.syncImageOverlayControls(false);
+                    this.canvasManager?.markDirty();
                 }
             }
         );
+
+        bindProgressivePropertyPanels(document);
+        this.dockController = bindDockController(document, () => this.canvasManager?.resizeCanvas());
+        this.canvasManager.setNavigationOptions(this.toolPreferences.navigation);
+        this.bindToolOptionControls();
+        this.syncToolOptionControls();
 
         // Initialize simulation
         this.simulation = new SimulationEngine(
@@ -210,50 +252,78 @@ class TectoLiteApp {
         this.updateUI();
 
         this.setupAutosave();
-        this.offerAutosaveRestore();
+        void this.offerAutosaveRestore().then(offered => {
+            if (!offered) this.showWelcomeIfNeeded();
+        });
     }
 
     // --- Session autosave (crash / accidental-close recovery) ---
 
-    private static readonly AUTOSAVE_KEY = 'tectolite_autosave_v1';
-    private autosaveFailed = false;
+    private updateAutosaveStatus(message: string, failed = false): void {
+        const status = document.getElementById('autosave-status');
+        if (!status) return;
+        status.textContent = message;
+        status.classList.toggle('is-error', failed);
+        status.title = failed
+            ? 'Automatic recovery failed. Save the project manually to avoid losing work.'
+            : `Crash recovery uses ${this.autosaveStore.kind === 'electron-file' ? 'an atomic application-data file' : this.autosaveStore.kind === 'indexeddb' ? 'browser IndexedDB' : 'limited browser storage'}.`;
+    }
 
-    private autosaveNow(): void {
-        if (!this.hasUnsavedChanges || this.autosaveFailed) return;
-        if (this.state.world.plates.length === 0 && this.state.world.labels.length === 0) return;
+    private async autosaveNow(): Promise<void> {
+        if (!this.hasUnsavedChanges || this.autosaveWritePending) return;
+        if (this.state.world.plates.length === 0 && this.state.world.labels.length === 0
+            && this.state.world.imageOverlays.length === 0) return;
+        this.autosaveWritePending = true;
+        const generation = this.autosaveGeneration;
+        this.updateAutosaveStatus('Saving recovery…');
         try {
-            localStorage.setItem(TectoLiteApp.AUTOSAVE_KEY, JSON.stringify({
+            await this.autosaveStore.write(JSON.stringify({
                 version: CURRENT_SAVE_VERSION,
                 savedAt: new Date().toISOString(),
                 world: this.state.world,
                 viewport: this.state.viewport,
                 cameraViews: this.cameraBookmarks
             }));
-        } catch {
-            // Quota exceeded (very large world) — stop trying for this session
-            this.autosaveFailed = true;
+            if (generation !== this.autosaveGeneration) {
+                await this.autosaveStore.clear();
+                return;
+            }
+            this.updateAutosaveStatus(`Recovery saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+        } catch (error) {
+            console.error('Autosave failed', error);
+            this.updateAutosaveStatus('Recovery failed — save manually', true);
+        } finally {
+            this.autosaveWritePending = false;
         }
     }
 
     private clearAutosave(): void {
-        try { localStorage.removeItem(TectoLiteApp.AUTOSAVE_KEY); } catch { /* ignore */ }
+        this.autosaveGeneration += 1;
+        void this.autosaveStore.clear()
+            .then(() => this.updateAutosaveStatus('No unsaved recovery'))
+            .catch(error => {
+                console.error('Could not clear autosave', error);
+                this.updateAutosaveStatus('Could not clear recovery', true);
+            });
     }
 
     private setupAutosave(): void {
-        window.setInterval(() => this.autosaveNow(), 120000); // every 2 minutes
+        this.updateAutosaveStatus(`Recovery ready (${this.autosaveStore.kind === 'electron-file' ? 'app file' : this.autosaveStore.kind === 'indexeddb' ? 'browser database' : 'limited storage'})`);
+        window.setInterval(() => { void this.autosaveNow(); }, 120000); // every 2 minutes
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'hidden') this.autosaveNow();
+            if (document.visibilityState === 'hidden') void this.autosaveNow();
         });
     }
 
-    private offerAutosaveRestore(): void {
+    private async offerAutosaveRestore(): Promise<boolean> {
         try {
-            const raw = localStorage.getItem(TectoLiteApp.AUTOSAVE_KEY);
-            if (!raw) return;
-            const data = JSON.parse(raw) as SaveFile;
-            if (!data?.world || !Array.isArray(data.world.plates)) return;
-            const autosaveEntityCount = data.world.plates.length + (Array.isArray(data.world.labels) ? data.world.labels.length : 0);
-            if (autosaveEntityCount === 0) return;
+            const raw = await this.autosaveStore.read();
+            if (!raw) return false;
+            const data = parseProjectText(raw, 'Autosaved session');
+            const autosaveEntityCount = data.world.plates.length
+                + data.world.labels.length
+                + data.world.imageOverlays.length;
+            if (autosaveEntityCount === 0) return false;
             const when = data.savedAt ? new Date(data.savedAt).toLocaleString() : 'an earlier session';
 
             this.showModal({
@@ -264,10 +334,6 @@ class TectoLiteApp {
                         text: 'Restore Autosave',
                         subtext: 'Continue where you left off',
                         onClick: () => {
-                            // Autosave bypasses parseImportFile, so run the
-                            // full migration pipeline here (line-type rename
-                            // + motion-model migration, gated by version).
-                            migrateSaveFile(data);
                             this.state = {
                                 ...this.state,
                                 world: data.world,
@@ -293,14 +359,55 @@ class TectoLiteApp {
                     }
                 ]
             });
-        } catch {
-            // Corrupt autosave — ignore it
+            return true;
+        } catch (error) {
+            console.error('Could not restore autosave', error);
+            this.updateAutosaveStatus('Recovery file needs attention', true);
+            return false;
         }
+    }
+
+    private showWelcomeIfNeeded(): void {
+        if (perfMonitor.getBenchmarkScale() !== null) return;
+        if (this.state.world.plates.length || this.state.world.labels.length || this.state.world.imageOverlays.length) return;
+        if (localStorage.getItem('tectolite-show-welcome') === 'false') return;
+
+        const rememberPreference = () => {
+            const checkbox = document.getElementById('welcome-show-startup') as HTMLInputElement | null;
+            localStorage.setItem('tectolite-show-welcome', checkbox?.checked === false ? 'false' : 'true');
+        };
+        this.showModal({
+            title: 'Welcome to TectoLite',
+            content: `Choose a starting point. You can reopen these choices from <strong>File → New Project</strong>.
+                <label class="welcome-preference"><input id="welcome-show-startup" type="checkbox" checked> Show this welcome screen on startup</label>`,
+            buttons: [
+                {
+                    text: 'Create Blank World',
+                    subtext: 'Start drawing on an empty sphere.',
+                    onClick: () => { rememberPreference(); this.createNewProject(); }
+                },
+                ...PROJECT_TEMPLATES.filter(template => template.id !== 'blank').map(template => ({
+                    text: template.name,
+                    subtext: template.description,
+                    onClick: () => { rememberPreference(); void this.createProjectFromTemplate(template); }
+                })),
+                {
+                    text: 'Load Existing Project',
+                    subtext: 'Open a TectoLite JSON save from your computer.',
+                    onClick: () => {
+                        rememberPreference();
+                        window.setTimeout(() => document.getElementById('file-import')?.click(), 0);
+                    }
+                },
+                { text: 'Not now', isSecondary: true, onClick: rememberPreference }
+            ]
+        });
     }
 
 
     private setupResizers(): void {
         this.setupResizer('resizer-left', 'toolbar', 'width', false);
+        this.setupResizer('resizer-tool-options', 'tool-options-sidebar', 'width', false);
         this.setupResizer('resizer-left-inner', 'plate-sidebar', 'width', false);
         this.setupResizer('resizer-right', 'right-sidebar', 'width', true); // Inverse for right sidebar
         this.setupResizer('resizer-bottom', 'timeline-bar', 'height', true); // Inverse for bottom
@@ -366,10 +473,12 @@ class TectoLiteApp {
     }
 
     private setupHeaderMenus(): void {
-        const viewBtn = document.getElementById('btn-view-panels');
-        const viewMenu = document.getElementById('view-dropdown-menu');
-        const settingsBtn = document.getElementById('btn-planet');
-        const settingsMenu = document.getElementById('planet-dropdown-menu');
+        const menus = [
+            { button: document.getElementById('btn-file-menu'), menu: document.getElementById('file-dropdown-menu') },
+            { button: document.getElementById('btn-planet'), menu: document.getElementById('planet-dropdown-menu') },
+            { button: document.getElementById('btn-view-panels'), menu: document.getElementById('view-dropdown-menu') },
+            { button: document.getElementById('btn-help-menu'), menu: document.getElementById('help-dropdown-menu') },
+        ];
         const headerActions = document.querySelector<HTMLElement>('.header-actions');
 
         const positionMenu = (button: HTMLElement | null, menu: HTMLElement | null) => {
@@ -385,38 +494,28 @@ class TectoLiteApp {
         };
 
         const positionOpenMenus = () => {
-            positionMenu(viewBtn, viewMenu);
-            positionMenu(settingsBtn, settingsMenu);
+            for (const entry of menus) positionMenu(entry.button, entry.menu);
         };
 
         const closeMenus = () => {
-            viewMenu?.classList.remove('show');
-            settingsMenu?.classList.remove('show');
-            viewBtn?.setAttribute('aria-expanded', 'false');
-            settingsBtn?.setAttribute('aria-expanded', 'false');
+            for (const entry of menus) {
+                entry.menu?.classList.remove('show');
+                entry.button?.setAttribute('aria-expanded', 'false');
+            }
         };
 
-        viewBtn?.addEventListener('click', event => {
-            event.stopPropagation();
-            const willOpen = !viewMenu?.classList.contains('show');
-            closeMenus();
-            if (willOpen) {
-                viewMenu?.classList.add('show');
-                positionMenu(viewBtn, viewMenu);
-            }
-            viewBtn.setAttribute('aria-expanded', String(willOpen));
-        });
-
-        settingsBtn?.addEventListener('click', event => {
-            event.stopPropagation();
-            const willOpen = !settingsMenu?.classList.contains('show');
-            closeMenus();
-            if (willOpen) {
-                settingsMenu?.classList.add('show');
-                positionMenu(settingsBtn, settingsMenu);
-            }
-            settingsBtn.setAttribute('aria-expanded', String(willOpen));
-        });
+        for (const entry of menus) {
+            entry.button?.addEventListener('click', event => {
+                event.stopPropagation();
+                const willOpen = !entry.menu?.classList.contains('show');
+                closeMenus();
+                if (willOpen) {
+                    entry.menu?.classList.add('show');
+                    positionMenu(entry.button, entry.menu);
+                }
+                entry.button?.setAttribute('aria-expanded', String(willOpen));
+            });
+        }
 
         window.addEventListener('resize', positionOpenMenus);
         headerActions?.addEventListener('scroll', positionOpenMenus);
@@ -424,7 +523,8 @@ class TectoLiteApp {
         document.addEventListener('click', event => {
             const target = event.target;
             if (!(target instanceof Element)) return;
-            if (viewMenu?.contains(target) || settingsMenu?.contains(target)) return;
+            const containingMenu = menus.find(entry => entry.menu?.contains(target));
+            if (containingMenu && !target.closest('.header-menu-action')) return;
             closeMenus();
         });
         document.addEventListener('keydown', event => {
@@ -435,6 +535,15 @@ class TectoLiteApp {
 
     public showModal(options: ModalOptions): void {
         _showModal(options);
+    }
+
+    private showHotkeyGuide(): void {
+        this.showModal({
+            title: 'Keyboard Shortcuts',
+            content: `<div class="hotkey-guide">${renderHotkeyGuide()}</div>`,
+            width: '620px',
+            buttons: [{ text: 'Close', isSecondary: true, onClick: () => { } }]
+        });
     }
 
 
@@ -514,7 +623,173 @@ class TectoLiteApp {
         await exporter.export();
     }
 
+    private getSelectedImageOverlay(): ImageOverlay | undefined {
+        const overlays = this.state.world.imageOverlays ?? [];
+        const selected = overlays.find(overlay => overlay.id === this.state.world.selectedImageOverlayId);
+        return selected ?? overlays.at(-1);
+    }
+
+    private async addImageOverlayFile(file: File): Promise<{ optimized: boolean }> {
+        // Decoding still needs the original file in memory. Keep a generous
+        // emergency ceiling for pathological inputs, but optimize ordinary
+        // large images instead of rejecting them at the old 5 MB boundary.
+        const maxDecodeSize = 100 * 1024 * 1024;
+        if (file.size > maxDecodeSize) throw new Error(`${file.name} exceeds the 100 MB safety limit`);
+
+        const imageData = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = event => resolve(event.target?.result as string);
+            reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+            reader.readAsDataURL(file);
+        });
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const candidate = new Image();
+            candidate.onload = () => resolve(candidate);
+            candidate.onerror = () => reject(new Error(`${file.name} is not a readable image`));
+            candidate.src = imageData;
+        });
+
+        const optimizationThreshold = 5 * 1024 * 1024;
+        const targetStoredBytes = 3 * 1024 * 1024;
+        const maxDimension = 2048;
+        let finalImageData = imageData;
+        const shouldOptimize = file.size > optimizationThreshold
+            || image.width > maxDimension
+            || image.height > maxDimension;
+        if (shouldOptimize) {
+            const canvas = document.createElement('canvas');
+            const scale = Math.min(maxDimension / image.width, maxDimension / image.height);
+            let width = Math.max(1, Math.round(image.width * Math.min(1, scale)));
+            let height = Math.max(1, Math.round(image.height * Math.min(1, scale)));
+            const context = canvas.getContext('2d');
+            if (!context) throw new Error(`Could not optimize ${file.name}`);
+
+            let smallestData = imageData;
+            let smallestBytes = file.size;
+            for (let attempt = 0; attempt < 5; attempt++) {
+                canvas.width = width;
+                canvas.height = height;
+                context.clearRect(0, 0, width, height);
+                context.drawImage(image, 0, 0, width, height);
+
+                for (const quality of [0.9, 0.8, 0.7, 0.6]) {
+                    const candidate = canvas.toDataURL('image/webp', quality);
+                    const payloadLength = candidate.length - candidate.indexOf(',') - 1;
+                    const candidateBytes = Math.ceil(payloadLength * 3 / 4);
+                    if (candidateBytes < smallestBytes) {
+                        smallestData = candidate;
+                        smallestBytes = candidateBytes;
+                    }
+                    if (candidateBytes <= targetStoredBytes) break;
+                }
+
+                if (smallestBytes <= targetStoredBytes || (width <= 256 && height <= 256)) break;
+                const shrink = Math.min(0.85, Math.sqrt(targetStoredBytes / smallestBytes) * 0.92);
+                const longestSide = Math.max(width, height);
+                const nextLongestSide = Math.max(256, Math.round(longestSide * shrink));
+                const dimensionScale = nextLongestSide / longestSide;
+                width = Math.max(1, Math.round(width * dimensionScale));
+                height = Math.max(1, Math.round(height * dimensionScale));
+            }
+            finalImageData = smallestData;
+        }
+
+        const overlay: ImageOverlay = {
+            id: generateId(),
+            name: file.name,
+            imageData: finalImageData,
+            visible: true,
+            opacity: 0.5,
+            scale: 1,
+            offsetX: 0,
+            offsetY: 0,
+            rotation: 0,
+            mode: 'fixed'
+        };
+        this.state.world.imageOverlays.push(overlay);
+        this.state.world.selectedImageOverlayId = overlay.id;
+        this.setUnsaved(true);
+        this.syncImageOverlayControls();
+        this.canvasManager?.markDirty();
+        return { optimized: shouldOptimize };
+    }
+
+    private updateSelectedImageOverlay(patch: Partial<ImageOverlay>): void {
+        const overlay = this.getSelectedImageOverlay();
+        if (!overlay) return;
+        Object.assign(overlay, patch);
+        this.state.world.selectedImageOverlayId = overlay.id;
+        this.setUnsaved(true);
+        this.syncImageOverlayControls(false);
+        this.canvasManager?.markDirty();
+    }
+
+    private syncImageOverlayControls(rebuildSelect = true): void {
+        const overlays = this.state.world.imageOverlays ?? [];
+        const overlay = this.getSelectedImageOverlay();
+        if (overlay && this.state.world.selectedImageOverlayId !== overlay.id) {
+            this.state.world.selectedImageOverlayId = overlay.id;
+        }
+
+        const select = document.getElementById('overlay-select') as HTMLSelectElement | null;
+        if (select && rebuildSelect) {
+            select.replaceChildren();
+            if (overlays.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No reference images';
+                select.appendChild(option);
+            } else {
+                overlays.forEach((candidate, index) => {
+                    const option = document.createElement('option');
+                    option.value = candidate.id;
+                    option.textContent = `${index + 1}. ${candidate.name}`;
+                    select.appendChild(option);
+                });
+                select.value = overlay?.id ?? '';
+            }
+        }
+
+        const count = document.getElementById('overlay-count');
+        if (count) count.textContent = `(${overlays.length})`;
+        const visible = document.getElementById('check-show-overlay') as HTMLInputElement | null;
+        if (visible) visible.checked = overlay?.visible === true;
+        const opacity = document.getElementById('overlay-opacity-slider') as HTMLInputElement | null;
+        const opacityValue = document.getElementById('overlay-opacity-value');
+        const opacityPct = Math.round((overlay?.opacity ?? 0.5) * 100);
+        if (opacity) opacity.value = String(opacityPct);
+        if (opacityValue) opacityValue.textContent = `${opacityPct}%`;
+        const size = document.getElementById('overlay-size-slider') as HTMLInputElement | null;
+        const sizeValue = document.getElementById('overlay-size-value');
+        const sizePct = Math.round((overlay?.scale ?? 1) * 100);
+        if (size) size.value = String(Math.min(1000, Math.max(5, sizePct)));
+        if (sizeValue) sizeValue.textContent = `${sizePct}%`;
+        const x = document.getElementById('overlay-x-input') as HTMLInputElement | null;
+        const y = document.getElementById('overlay-y-input') as HTMLInputElement | null;
+        const rotation = document.getElementById('overlay-rotation-input') as HTMLInputElement | null;
+        if (x) x.value = String(Math.round(overlay?.offsetX ?? 0));
+        if (y) y.value = String(Math.round(overlay?.offsetY ?? 0));
+        if (rotation) rotation.value = String(Math.round(overlay?.rotation ?? 0));
+
+        const controlIds = [
+            'check-show-overlay', 'check-edit-overlay', 'overlay-opacity-slider', 'overlay-size-slider',
+            'overlay-x-input', 'overlay-y-input', 'overlay-rotation-input', 'btn-overlay-back',
+            'btn-overlay-front', 'btn-reset-overlay', 'btn-clear-overlay'
+        ];
+        controlIds.forEach(id => {
+            const control = document.getElementById(id) as HTMLInputElement | HTMLButtonElement | null;
+            if (control) control.disabled = !overlay;
+        });
+        if (!overlay) {
+            this.imageOverlayEditMode = false;
+            const edit = document.getElementById('check-edit-overlay') as HTMLInputElement | null;
+            if (edit) edit.checked = false;
+        }
+    }
+
     private setupEventListeners(): void {
+        bindKofiHoverAnimation(document.getElementById('link-kofi-header') as HTMLAnchorElement | null);
+
         const getTooltipText = (el: Element): string | null => {
             const childIcon = el.querySelector('.info-icon');
             return childIcon?.getAttribute('data-tooltip') || el.getAttribute('data-tooltip');
@@ -531,6 +806,10 @@ class TectoLiteApp {
                     document.exitFullscreen();
                 }
             }
+        });
+
+        document.getElementById('btn-fullscreen-menu')?.addEventListener('click', () => {
+            document.getElementById('btn-fullscreen')?.click();
         });
 
         // Warn about unsaved changes when closing the page.
@@ -556,29 +835,8 @@ class TectoLiteApp {
             this.canvasManager?.resizeCanvas();
         });
 
-        // Checkbox Logic
-        interface PanelMap {
-            id: string; // Checkbox ID
-            target: string; // Target Selector
-            toggleClass: string; // Class to toggle
-            inverse: boolean; // True if 'checked' means remove class (e.g. collapsed)
-        }
-
-        const panels: PanelMap[] = [
-            { id: 'check-view-tools', target: '.toolbar', toggleClass: 'collapsed', inverse: true },
-            { id: 'check-view-plates', target: '.plate-sidebar', toggleClass: 'collapsed', inverse: true },
-            { id: 'check-view-props', target: '.right-sidebar', toggleClass: 'collapsed', inverse: true },
-            { id: 'check-view-timeline', target: '.timeline-bar', toggleClass: 'collapsed', inverse: true }
-        ];
-
-        panels.forEach(p => {
-            document.getElementById(p.id)?.addEventListener('change', (e) => {
-                const checked = (e.target as HTMLInputElement).checked;
-                const el = document.querySelector(p.target);
-                if (el) {
-                    el.classList.toggle(p.toggleClass, p.inverse ? !checked : checked);
-                }
-            });
+        document.getElementById('btn-reset-camera-menu')?.addEventListener('click', () => {
+            document.getElementById('btn-reset-camera')?.click();
         });
 
         bindProjectSettings({
@@ -696,7 +954,7 @@ class TectoLiteApp {
 
             if (text && tooltip) {
                 activeTooltipElement = element as HTMLElement;
-                tooltip.innerHTML = text;
+                tooltip.textContent = text;
                 tooltip.style.display = 'block';
                 // Small delay before fading in to prevent flashing
                 setTimeout(() => {
@@ -1053,11 +1311,10 @@ class TectoLiteApp {
                             }));
 
                             copy.initialPolygons = newInitialPolys;
-                            // Keep a materialized stage 0 (if any) in sync — same source of truth
-                            if (copy.geometryStages && copy.geometryStages.length > 0) {
-                                copy.geometryStages = copy.geometryStages.map((s, i) =>
-                                    i === 0 ? { ...s, polygons: newInitialPolys } : s);
-                            }
+                            // Stage 0 is anchored at birth. Keeping its old edit-time
+                            // timestamp would make the already-unrotated geometry get
+                            // inverse-rotated a second time before that timestamp.
+                            copy.geometryStages = rewriteBirthGeometryStage(copy, newInitialPolys);
                             // NOTE: later 'Edit' stages are deliberately untouched — rewriting
                             // history before an explicit shape edit must not destroy that edit
                             // (the legacy snapshot rebake used to do exactly that).
@@ -1161,99 +1418,105 @@ class TectoLiteApp {
         // Image Overlay Controls
         document.getElementById('check-show-overlay')?.addEventListener('change', (e) => {
             const checkbox = e.target as HTMLInputElement;
-            if (this.state.world.imageOverlay) {
-                this.state.world.imageOverlay.visible = checkbox.checked;
-                this.setUnsaved(true);
-                this.canvasManager?.render();
-            } else if (checkbox.checked) {
+            const overlay = this.getSelectedImageOverlay();
+            if (!overlay) {
                 // Was a silent no-op — explain why nothing appeared
                 checkbox.checked = false;
-                this.showToast('Upload a reference map first ("Upload Map" below)');
+                this.showToast('Add a reference image first');
+                return;
             }
+            this.updateSelectedImageOverlay({ visible: checkbox.checked });
+        });
+
+        document.getElementById('overlay-select')?.addEventListener('change', (e) => {
+            this.state.world.selectedImageOverlayId = (e.target as HTMLSelectElement).value || null;
+            this.syncImageOverlayControls(false);
+            this.canvasManager?.markDirty();
+        });
+
+        document.getElementById('check-edit-overlay')?.addEventListener('change', (e) => {
+            this.imageOverlayEditMode = (e.target as HTMLInputElement).checked;
+            this.canvasManager?.markDirty();
         });
 
         document.getElementById('btn-upload-overlay')?.addEventListener('click', () => {
             document.getElementById('file-overlay-upload')?.click();
         });
 
-        document.getElementById('file-overlay-upload')?.addEventListener('change', (e) => {
+        document.getElementById('file-overlay-upload')?.addEventListener('change', async (e) => {
             const input = e.target as HTMLInputElement;
-            const file = input.files?.[0];
-            if (file) {
-                // Check file size (max 5MB)
-                const maxSize = 5 * 1024 * 1024; // 5MB
-                if (file.size > maxSize) {
-                    alert('Image file is too large. Maximum size is 5MB.');
-                    input.value = '';
-                    return;
+            const files = Array.from(input.files ?? []);
+            input.value = '';
+            let added = 0;
+            let optimized = 0;
+            for (const file of files) {
+                try {
+                    const result = await this.addImageOverlayFile(file);
+                    added++;
+                    if (result.optimized) optimized++;
+                } catch (error) {
+                    this.showToast(error instanceof Error ? error.message : `Could not add ${file.name}`);
                 }
-
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    const imageData = event.target?.result as string;
-
-                    // Load image to check dimensions and potentially resize
-                    const img = new Image();
-                    img.onload = () => {
-                        // Max dimension to balance quality with performance
-                        const maxDimension = 2048;
-                        let finalImageData = imageData;
-
-                        // Scale down if image is too large
-                        if (img.width > maxDimension || img.height > maxDimension) {
-                            const canvas = document.createElement('canvas');
-                            const ctx = canvas.getContext('2d');
-
-                            const scale = Math.min(maxDimension / img.width, maxDimension / img.height);
-                            canvas.width = img.width * scale;
-                            canvas.height = img.height * scale;
-
-                            ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-                            finalImageData = canvas.toDataURL('image/jpeg', 0.9);
-
-                            console.log(`Image scaled down from ${img.width}x${img.height} to ${canvas.width}x${canvas.height}`);
-                        }
-
-                        // Create overlay with fixed screen mode (as requested)
-                        this.state.world.imageOverlay = {
-                            imageData: finalImageData,
-                            visible: true,
-                            opacity: 0.5,
-                            scale: 1.0,
-                            offsetX: 0,
-                            offsetY: 0,
-                            rotation: 0,
-                            mode: 'fixed'
-                        };
-                        this.setUnsaved(true);
-                        const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
-                        if (checkbox) checkbox.checked = true;
-                        this.canvasManager?.render();
-                    };
-                    img.src = imageData;
-                };
-                reader.readAsDataURL(file);
             }
-            input.value = ''; // Reset input to allow same file re-upload
+            if (added > 0) {
+                const optimizedText = optimized > 0 ? `; optimized ${optimized} large image${optimized === 1 ? '' : 's'}` : '';
+                this.showToast(`Added ${added} reference image${added === 1 ? '' : 's'}${optimizedText}`);
+            }
         });
 
         document.getElementById('overlay-opacity-slider')?.addEventListener('input', (e) => {
             const value = parseInt((e.target as HTMLInputElement).value);
-            const valueLabel = document.getElementById('overlay-opacity-value');
-            if (valueLabel) valueLabel.textContent = `${value}%`;
-            if (this.state.world.imageOverlay) {
-                this.state.world.imageOverlay.opacity = value / 100;
-                this.setUnsaved(true);
-                this.canvasManager?.render();
-            }
+            this.updateSelectedImageOverlay({ opacity: value / 100 });
         });
 
-        document.getElementById('btn-clear-overlay')?.addEventListener('click', () => {
-            this.state.world.imageOverlay = undefined;
+        document.getElementById('overlay-size-slider')?.addEventListener('input', (e) => {
+            const value = parseInt((e.target as HTMLInputElement).value);
+            this.updateSelectedImageOverlay({ scale: value / 100 });
+        });
+
+        document.getElementById('overlay-x-input')?.addEventListener('change', (e) => {
+            const value = Number((e.target as HTMLInputElement).value);
+            if (Number.isFinite(value)) this.updateSelectedImageOverlay({ offsetX: value });
+        });
+
+        document.getElementById('overlay-y-input')?.addEventListener('change', (e) => {
+            const value = Number((e.target as HTMLInputElement).value);
+            if (Number.isFinite(value)) this.updateSelectedImageOverlay({ offsetY: value });
+        });
+
+        document.getElementById('overlay-rotation-input')?.addEventListener('change', (e) => {
+            const value = Number((e.target as HTMLInputElement).value);
+            if (Number.isFinite(value)) this.updateSelectedImageOverlay({ rotation: value });
+        });
+
+        document.getElementById('btn-reset-overlay')?.addEventListener('click', () => {
+            this.updateSelectedImageOverlay({ scale: 1, offsetX: 0, offsetY: 0, rotation: 0 });
+        });
+
+        const moveOverlayLayer = (toFront: boolean) => {
+            const overlays = this.state.world.imageOverlays;
+            const selectedId = this.state.world.selectedImageOverlayId;
+            const index = overlays.findIndex(overlay => overlay.id === selectedId);
+            if (index < 0 || overlays.length < 2) return;
+            const [overlay] = overlays.splice(index, 1);
+            if (toFront) overlays.push(overlay);
+            else overlays.unshift(overlay);
             this.setUnsaved(true);
-            const checkbox = document.getElementById('check-show-overlay') as HTMLInputElement;
-            if (checkbox) checkbox.checked = false;
-            this.canvasManager?.render();
+            this.syncImageOverlayControls();
+            this.canvasManager?.markDirty();
+        };
+        document.getElementById('btn-overlay-back')?.addEventListener('click', () => moveOverlayLayer(false));
+        document.getElementById('btn-overlay-front')?.addEventListener('click', () => moveOverlayLayer(true));
+
+        document.getElementById('btn-clear-overlay')?.addEventListener('click', () => {
+            const overlays = this.state.world.imageOverlays;
+            const index = overlays.findIndex(overlay => overlay.id === this.state.world.selectedImageOverlayId);
+            if (index < 0) return;
+            overlays.splice(index, 1);
+            this.state.world.selectedImageOverlayId = overlays[Math.min(index, overlays.length - 1)]?.id ?? null;
+            this.setUnsaved(true);
+            this.syncImageOverlayControls();
+            this.canvasManager?.markDirty();
         });
 
         // NEW: Timeline max-time control in footer
@@ -1339,6 +1602,16 @@ class TectoLiteApp {
                 this.redo();
                 return;
             }
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                document.getElementById('btn-export-json')?.click();
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+                e.preventDefault();
+                document.getElementById('btn-import-json')?.click();
+                return;
+            }
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
                 e.preventDefault();
                 this.duplicateSelectedPlate();
@@ -1361,6 +1634,7 @@ class TectoLiteApp {
 
 
             switch (e.key.toLowerCase()) {
+                case '?': this.showHotkeyGuide(); break;
                 case 'v': this.setActiveTool('select'); break;
                 case 'h': this.setActiveTool('pan'); break;
                 case 'p': this.setActiveTool('view_pan'); break;
@@ -1391,8 +1665,10 @@ class TectoLiteApp {
                     this.canvasManager?.cancelSplit();
                     this.canvasManager?.cancelMotion();
                     // Also dismiss open dropdown menus and the time-input modal
+                    document.getElementById('file-dropdown-menu')?.classList.remove('show');
                     document.getElementById('view-dropdown-menu')?.classList.remove('show');
                     document.getElementById('planet-dropdown-menu')?.classList.remove('show');
+                    document.getElementById('help-dropdown-menu')?.classList.remove('show');
                     const timeModal = document.getElementById('time-input-modal');
                     if (timeModal) timeModal.style.display = 'none';
                     break;
@@ -1612,7 +1888,10 @@ class TectoLiteApp {
                             labels: [...this.state.world.labels, ...remapped.labels],
                             entityGroups: [...this.state.world.entityGroups, ...remapped.entityGroups],
                             riftAxes: [...(this.state.world.riftAxes || []), ...remapped.riftAxes],
-                            tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions]
+                            tripleJunctions: [...(this.state.world.tripleJunctions || []), ...remapped.tripleJunctions],
+                            imageOverlays: [...this.state.world.imageOverlays, ...remapped.imageOverlays],
+                            selectedImageOverlayId: remapped.imageOverlays.at(-1)?.id
+                                ?? this.state.world.selectedImageOverlayId
                         }
                     };
 
@@ -1661,9 +1940,16 @@ class TectoLiteApp {
         document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
             this.toggleTheme();
         });
+        document.getElementById('btn-theme-toggle-menu')?.addEventListener('click', () => {
+            document.getElementById('btn-theme-toggle')?.click();
+        });
 
         document.getElementById('btn-tutorial-help')?.addEventListener('click', () => {
             TutorialOverlay.toggle();
+        });
+
+        document.getElementById('btn-hotkey-help')?.addEventListener('click', () => {
+            this.showHotkeyGuide();
         });
 
         document.getElementById('btn-report-bug')?.addEventListener('click', () => {
@@ -1835,7 +2121,7 @@ class TectoLiteApp {
                     }
                 },
                 {
-                    text: '💬 Open Discord Bug Channel',
+                    text: 'Open Discord bug channel',
                     subtext: 'Paste your report into the channel',
                     onClick: () => {
                         this.openExternalUrl(discordUrl);
@@ -1976,17 +2262,7 @@ class TectoLiteApp {
         const speedSelect = document.getElementById('speed-select') as HTMLSelectElement | null;
         if (speedSelect && w.timeScale) speedSelect.value = String(w.timeScale);
 
-        // Reference overlay controls (was never synced from loaded state)
-        const overlayCheck = document.getElementById('check-show-overlay') as HTMLInputElement | null;
-        if (overlayCheck) overlayCheck.checked = w.imageOverlay?.visible === true;
-        const overlaySlider = document.getElementById('overlay-opacity-slider') as HTMLInputElement | null;
-        const overlayLabel = document.getElementById('overlay-opacity-value');
-        if (overlaySlider && w.imageOverlay) {
-            const pct = Math.round((w.imageOverlay.opacity ?? 0.5) * 100);
-            overlaySlider.value = String(pct);
-            if (overlayLabel) overlayLabel.textContent = `${pct}%`;
-        }
-        // For now, assume it's not state-persisted or I need to add it.
+        this.syncImageOverlayControls();
 
         const radiusInput = document.getElementById('global-planet-radius') as HTMLInputElement;
         const radiusCheck = document.getElementById('check-custom-radius') as HTMLInputElement;
@@ -2026,14 +2302,176 @@ class TectoLiteApp {
         this.updateToolbarState();
         this.updateExplorer();
         this.updatePropertiesPanel();
+        this.syncToolOptionControls();
+        this.syncImageOverlayControls();
         this.updateSpeedInputsFromSelected();
         this.updatePlayButton();
         this.updateTimeDisplay();
     }
 
+    private bindToolOptionControls(): void {
+        const persist = () => saveToolPreferences(this.toolPreferences);
+        const syncNavigation = () => {
+            this.canvasManager?.setNavigationOptions(this.toolPreferences.navigation);
+            persist();
+        };
+
+        document.getElementById('navigation-sensitivity')?.addEventListener('change', event => {
+            this.toolPreferences.navigation.sensitivity = Number((event.target as HTMLSelectElement).value) || 1;
+            syncNavigation();
+        });
+        document.getElementById('check-navigation-reverse')?.addEventListener('change', event => {
+            this.toolPreferences.navigation.reverseDrag = (event.target as HTMLInputElement).checked;
+            syncNavigation();
+        });
+        document.getElementById('check-navigation-reachable')?.addEventListener('change', event => {
+            this.toolPreferences.navigation.keepMapReachable = (event.target as HTMLInputElement).checked;
+            syncNavigation();
+        });
+        document.getElementById('btn-reset-orientation')?.addEventListener('click', () => this.canvasManager?.resetViewOrientation());
+        document.getElementById('btn-north-up')?.addEventListener('click', () => this.canvasManager?.resetViewOrientation(true));
+        document.getElementById('btn-center-view')?.addEventListener('click', () => this.canvasManager?.centerRenderedView());
+        document.getElementById('btn-center-selection')?.addEventListener('click', () => {
+            const plate = this.state.world.plates.find(candidate => candidate.id === this.state.world.selectedPlateId);
+            if (plate) this.canvasManager?.centerRenderedViewOn(plate.center);
+        });
+
+        document.getElementById('label-default-attachment')?.addEventListener('change', event => {
+            this.toolPreferences.label.attachment = (event.target as HTMLSelectElement).value as ToolPreferences['label']['attachment'];
+            persist();
+        });
+        document.getElementById('label-default-color')?.addEventListener('input', event => {
+            this.toolPreferences.label.color = (event.target as HTMLInputElement).value;
+            persist();
+        });
+        document.getElementById('check-label-default-expanded')?.addEventListener('change', event => {
+            this.toolPreferences.label.expanded = (event.target as HTMLInputElement).checked;
+            persist();
+        });
+
+        document.querySelectorAll<HTMLInputElement>('input[name="split-momentum"]').forEach(input => {
+            input.addEventListener('change', () => {
+                this.toolPreferences.split.inheritMomentum = input.value === 'inherit';
+                persist();
+            });
+        });
+        document.getElementById('check-split-selected-only')?.addEventListener('change', event => {
+            this.toolPreferences.split.onlySelected = (event.target as HTMLInputElement).checked;
+            persist();
+        });
+
+        document.getElementById('btn-clear-link-workflow')?.addEventListener('click', () => {
+            const workflowIds = new Set([this.activeLinkSourceId, this.activeLinkTargetId].filter(Boolean));
+            this.activeLinkSourceId = null;
+            this.activeLinkTargetId = null;
+            if (this.state.world.selectedPlateId && workflowIds.has(this.state.world.selectedPlateId)) {
+                this.state.world.selectedPlateId = null;
+                this.state.world.selectedPlateIds = [];
+            }
+            this.updateHint('Select parent (anchor) plate');
+            this.updateUI();
+            this.canvasManager?.markDirty();
+        });
+        document.getElementById('btn-clear-fuse-workflow')?.addEventListener('click', () => {
+            this.fusionFirstPlateId = null;
+            this.fusionSecondPlateId = null;
+            const resultName = document.getElementById('fuse-result-name') as HTMLInputElement | null;
+            if (resultName) resultName.value = '';
+            this.updateHint('Select the plate whose motion should be inherited');
+            this.syncToolOptionControls();
+            this.canvasManager?.markDirty();
+        });
+    }
+
+    private syncToolOptionControls(): void {
+        const setText = (id: string, value: string) => {
+            const element = document.getElementById(id);
+            if (element) element.textContent = value;
+        };
+        const setDisplay = (id: string, visible: boolean) => {
+            const element = document.getElementById(id);
+            if (element) element.style.display = visible ? 'flex' : 'none';
+        };
+        const plateName = (id: string | null) => id
+            ? this.state.world.plates.find(plate => plate.id === id)?.name ?? 'Unavailable plate'
+            : null;
+
+        const sensitivity = document.getElementById('navigation-sensitivity') as HTMLSelectElement | null;
+        if (sensitivity) sensitivity.value = String(this.toolPreferences.navigation.sensitivity);
+        const reverse = document.getElementById('check-navigation-reverse') as HTMLInputElement | null;
+        if (reverse) reverse.checked = this.toolPreferences.navigation.reverseDrag;
+        const reachable = document.getElementById('check-navigation-reachable') as HTMLInputElement | null;
+        if (reachable) reachable.checked = this.toolPreferences.navigation.keepMapReachable;
+        const labelAttachment = document.getElementById('label-default-attachment') as HTMLSelectElement | null;
+        if (labelAttachment) labelAttachment.value = this.toolPreferences.label.attachment;
+        const labelColor = document.getElementById('label-default-color') as HTMLInputElement | null;
+        if (labelColor && document.activeElement !== labelColor) labelColor.value = this.toolPreferences.label.color;
+        const labelExpanded = document.getElementById('check-label-default-expanded') as HTMLInputElement | null;
+        if (labelExpanded) labelExpanded.checked = this.toolPreferences.label.expanded;
+        const inherit = document.getElementById('split-inherit-momentum') as HTMLInputElement | null;
+        const reset = document.getElementById('split-reset-momentum') as HTMLInputElement | null;
+        if (inherit) inherit.checked = this.toolPreferences.split.inheritMomentum;
+        if (reset) reset.checked = !this.toolPreferences.split.inheritMomentum;
+        const onlySelected = document.getElementById('check-split-selected-only') as HTMLInputElement | null;
+        if (onlySelected) onlySelected.checked = this.toolPreferences.split.onlySelected;
+
+        const selectedPlate = this.state.world.plates.find(plate => plate.id === this.state.world.selectedPlateId);
+        const centerSelection = document.getElementById('btn-center-selection') as HTMLButtonElement | null;
+        if (centerSelection) centerSelection.disabled = !selectedPlate;
+        const splitNameA = document.getElementById('split-name-a') as HTMLInputElement | null;
+        const splitNameB = document.getElementById('split-name-b') as HTMLInputElement | null;
+        if (splitNameA) splitNameA.placeholder = selectedPlate ? `${selectedPlate.name} (A)` : 'Automatic (A)';
+        if (splitNameB) splitNameB.placeholder = selectedPlate ? `${selectedPlate.name} (B)` : 'Automatic (B)';
+        setText('split-workflow-status', this.splitPreviewActive
+            ? `Boundary ready at ${this.state.world.currentTime.toFixed(1)} Ma. Review the options and apply.`
+            : selectedPlate
+                ? `Splitting ${selectedPlate.name} at ${this.state.world.currentTime.toFixed(1)} Ma. Draw a boundary across it.`
+                : 'Select a plate, then draw the split boundary.');
+        const splitApply = document.getElementById('btn-split-apply') as HTMLButtonElement | null;
+        if (splitApply) splitApply.disabled = !this.splitPreviewActive;
+
+        const linkSource = plateName(this.activeLinkSourceId);
+        const linkTarget = plateName(this.activeLinkTargetId);
+        setText('link-workflow-time', `${this.state.world.currentTime.toFixed(1)} Ma`);
+        setText('link-workflow-source', linkSource ?? 'Choose on map');
+        setText('link-workflow-target', linkTarget ?? (linkSource ? 'Choose child on map' : 'Waiting for parent'));
+        const sourcePlate = this.state.world.plates.find(plate => plate.id === this.activeLinkSourceId);
+        const targetPlate = this.state.world.plates.find(plate => plate.id === this.activeLinkTargetId);
+        setText('link-workflow-result', sourcePlate?.type === 'rift' || targetPlate?.type === 'rift'
+            ? 'This creates or removes a rift-generation connection; it does not inherit motion.'
+            : `The child follows the parent exactly from ${this.state.world.currentTime.toFixed(1)} Ma.`);
+
+        const fuseSource = plateName(this.fusionFirstPlateId);
+        const fuseTarget = plateName(this.fusionSecondPlateId);
+        setText('fuse-workflow-time', `${this.state.world.currentTime.toFixed(1)} Ma`);
+        setText('fuse-workflow-source', fuseSource ?? 'Choose on map');
+        setText('fuse-workflow-target', fuseTarget ?? (fuseSource ? 'Choose other plate on map' : 'Waiting for source'));
+        const fuseName = document.getElementById('fuse-result-name') as HTMLInputElement | null;
+        if (fuseName) fuseName.placeholder = fuseSource && fuseTarget
+            ? `${fuseSource}-${fuseTarget} (Fused)`
+            : 'Automatic fused name';
+
+        setDisplay('navigation-controls', this.state.activeTool === 'pan' || this.state.activeTool === 'view_pan');
+        setDisplay('rotate-navigation-actions', this.state.activeTool === 'pan');
+        setDisplay('move-view-navigation-actions', this.state.activeTool === 'view_pan');
+        setDisplay('label-tool-controls', this.state.activeTool === 'label');
+        setDisplay('split-controls', this.state.activeTool === 'split');
+        setDisplay('link-controls', this.state.activeTool === 'link');
+        setDisplay('fuse-controls', this.state.activeTool === 'fuse');
+    }
+
     private setActiveTool(tool: ToolType): void {
+        if (tool !== 'fuse') {
+            this.fusionFirstPlateId = null;
+            this.fusionSecondPlateId = null;
+        }
+        if (tool !== 'link') {
+            this.activeLinkSourceId = null;
+            this.activeLinkTargetId = null;
+        }
         this.state.activeTool = tool;
         this.updateToolbarState();
+        this.dockController?.setTool(tool);
 
         const featureSelector = document.getElementById('feature-selector');
         if (featureSelector) {
@@ -2078,7 +2516,7 @@ class TectoLiteApp {
                 hintText = "Drag to move the rendered view on screen without rotating the globe or changing geometry.";
                 break;
             case 'edit':
-                hintText = "Select a plate, then drag edges to add points or drag vertices to move. Ctrl/Shift+drag moves the whole shape (drag the yellow ring to rotate).";
+                hintText = "Select a plate, then drag edges to add points or drag vertices to move. Right-click deletes vertices; deleting from a 3-vertex component removes that whole component when the plate has others. Ctrl/Shift+drag moves the whole shape (drag the yellow ring to rotate).";
                 break;
             case 'draw':
                 hintText = this.state.drawMode === 'line'
@@ -2086,7 +2524,7 @@ class TectoLiteApp {
                     : "[Polygon Mode] Click to place points. Double-click/Enter to finish. Press D to switch to Line.";
                 break;
             case 'feature':
-                hintText = "Pick a feature type from Tool Options.";
+                hintText = "Pick a feature type, then click the selected plate. Hotspots are manually placed fixed markers and do not need a selected plate.";
                 break;
             case 'label':
                 hintText = "Click a map point to place a label. Clicking a plate attaches the label to its motion by default.";
@@ -2098,10 +2536,10 @@ class TectoLiteApp {
                 hintText = "Click a plate to start splitting.";
                 break;
             case 'fuse':
-                hintText = "Select first plate to fuse.";
+                hintText = "Select the plate whose motion should be inherited, then select the other plate to fuse at the current time.";
                 break;
             case 'link':
-                hintText = "Select a plate or landmass to link it with another.";
+                hintText = "Select the parent/anchor first, then the child. The child inherits parent motion from the current time.";
                 break;
             case 'paint':
                 hintText = "Select a plate, then draw on it with the brush. Adjust size and color in Tool Options.";
@@ -2109,6 +2547,7 @@ class TectoLiteApp {
         }
 
         this.updateHint(hintText);
+        this.syncToolOptionControls();
         this.canvasManager?.markDirty();
     }
 
@@ -2118,8 +2557,10 @@ class TectoLiteApp {
         this.state.activeFeatureType = feature;
         this.updateToolbarState();
 
-        const typeLabel = feature.charAt(0).toUpperCase() + feature.slice(1);
-        this.updateHint(`Click on a plate to place a ${typeLabel}.`);
+        const typeLabel = this.getFeatureTypeName(feature);
+        this.updateHint(feature === 'hotspot'
+            ? `Click the map to place a fixed ${typeLabel} marker.`
+            : `Select a plate, then click it to place a ${typeLabel}.`);
         document.querySelectorAll('.feature-btn').forEach(btn => {
             btn.classList.toggle('active', btn.getAttribute('data-feature') === feature);
         });
@@ -2284,16 +2725,11 @@ class TectoLiteApp {
 
 
     private handleFeaturePlace(position: Coordinate, type: FeatureType): void {
-        // Special case: Hotspots are effectively Mantle Plumes (Global Features)
-        // If the user selects "Hotspot", they likely want to create a Mantle Plume Source.
+        // Hotspots are fixed global markers rather than plate-bound features.
         if (type === 'hotspot') {
             const plume: MantlePlume = {
                 id: generateId(),
-                position: position,
-                radius: 50, // Default radius
-                strength: 1.0,
-                active: true,
-                spawnRate: this.state.world.globalOptions.hotspotSpawnRate || 1.0
+                position
             };
 
             // Add to World State
@@ -2303,17 +2739,16 @@ class TectoLiteApp {
                 world: {
                     ...this.state.world,
                     mantlePlumes: [...(this.state.world.mantlePlumes || []), plume],
-                    // Auto-select the new plume?
-                    selectedPlateId: null
+                    selectedPlateId: null,
+                    selectedPlateIds: [],
+                    selectedFeatureId: plume.id,
+                    selectedFeatureIds: [plume.id]
                 }
             };
 
-            // Note: We need a way to SELECT the plume.
-            // Currently selection only supports "selectedPlateId" and "selectedFeatureId".
-            // We should add "selectedPlumeId" to state or handle it via UI.
-            // For now, let's just render.
+            this.updatePropertiesPanel();
             this.canvasManager?.render();
-            // alert(`Created Mantle Plume at [${position[0].toFixed(1)}, ${position[1].toFixed(1)}].`);
+            this.updateHint(`Placed a fixed hotspot marker at ${this.state.world.currentTime.toFixed(1)} Ma.`);
 
             return;
         }
@@ -2347,12 +2782,16 @@ class TectoLiteApp {
                     plate.id === plateId
                         ? { ...plate, features: [...plate.features, feature] }
                         : plate
-                )
+                ),
+                selectedFeatureId: feature.id,
+                selectedFeatureIds: [feature.id]
             }
         };
 
         this.simulation?.setTime(this.state.world.currentTime);
         this.canvasManager?.render();
+        this.updatePropertiesPanel();
+        this.updateHint(`Placed ${this.getFeatureTypeName(type)} on the selected plate at ${this.state.world.currentTime.toFixed(1)} Ma.`);
     }
 
     private handleLabelPlace(position: Coordinate, suggestedPlateId?: string): void {
@@ -2360,8 +2799,16 @@ class TectoLiteApp {
             plate.birthTime <= this.state.world.currentTime
             && (plate.deathTime === null || plate.deathTime > this.state.world.currentTime)
         );
+        const selectedActivePlateId = activePlates.some(plate => plate.id === this.state.world.selectedPlateId)
+            ? this.state.world.selectedPlateId ?? undefined
+            : undefined;
+        const defaultAttachedPlateId = this.toolPreferences.label.attachment === 'fixed'
+            ? undefined
+            : this.toolPreferences.label.attachment === 'selected'
+                ? selectedActivePlateId
+                : suggestedPlateId;
         const attachmentOptions = activePlates.map(plate =>
-            `<option value="${plate.id}" ${plate.id === suggestedPlateId ? 'selected' : ''}>${escapeHtml(plate.name)}</option>`
+            `<option value="${plate.id}" ${plate.id === defaultAttachedPlateId ? 'selected' : ''}>${escapeHtml(plate.name)}</option>`
         ).join('');
         this.showModal({
             title: 'Add Label',
@@ -2373,11 +2820,11 @@ class TectoLiteApp {
                 <textarea id="label-content-input" class="property-input" rows="5" maxlength="2000" placeholder="Optional detail shown on click or hover" style="width:100%; margin:5px 0 12px;"></textarea>
                 <label class="property-label" for="label-attachment-input">Moves with</label>
                 <select id="label-attachment-input" class="property-input" style="width:100%; margin:5px 0 12px;">
-                    <option value="" ${suggestedPlateId ? '' : 'selected'}>Nothing (fixed geographic point)</option>
+                    <option value="" ${defaultAttachedPlateId ? '' : 'selected'}>Nothing (fixed geographic point)</option>
                     ${attachmentOptions}
                 </select>
                 <label class="property-label" for="label-color-input">Color</label>
-                <input id="label-color-input" type="color" value="#fbbf24" style="width:100%; height:38px; margin-top:5px;">
+                <input id="label-color-input" type="color" value="${this.toolPreferences.label.color}" style="width:100%; height:38px; margin-top:5px;">
             `,
             buttons: [
                 {
@@ -2388,15 +2835,17 @@ class TectoLiteApp {
                         if (!title) { this.showToast('Enter a label title'); return false; }
                         const content = (document.getElementById('label-content-input') as HTMLTextAreaElement | null)?.value.trim() ?? '';
                         const attachedPlateId = (document.getElementById('label-attachment-input') as HTMLSelectElement | null)?.value || undefined;
-                        const color = (document.getElementById('label-color-input') as HTMLInputElement | null)?.value || '#fbbf24';
+                        const color = (document.getElementById('label-color-input') as HTMLInputElement | null)?.value || this.toolPreferences.label.color;
                         const label: MapLabel = {
                             id: generateId(), title, content, color,
                             anchor: [...position] as Coordinate,
                             anchorTime: this.state.world.currentTime,
                             offset: [18, -30],
-                            visible: true, locked: false, expanded: false,
+                            visible: true, locked: false, expanded: this.toolPreferences.label.expanded,
                             attachedPlateId
                         };
+                        this.toolPreferences.label.color = color;
+                        saveToolPreferences(this.toolPreferences);
                         this.pushState();
                         this.state.world.labels = [...this.state.world.labels, label];
                         this.state.world.selectedLabelId = label.id;
@@ -2466,9 +2915,13 @@ class TectoLiteApp {
 
     private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null): void {
         // Reset fusion/link state if switching away
-        if (this.state.activeTool !== 'fuse') this.fusionFirstPlateId = null;
+        if (this.state.activeTool !== 'fuse') {
+            this.fusionFirstPlateId = null;
+            this.fusionSecondPlateId = null;
+        }
         if (this.state.activeTool !== 'link') {
             this.activeLinkSourceId = null;
+            this.activeLinkTargetId = null;
         }
 
         // Tool Logic Interception
@@ -2488,7 +2941,7 @@ class TectoLiteApp {
                 const plate = this.state.world.plates.find(p => p.id === plateId);
                 this.updateHint(`Selected ${plate?.name || 'Plate'}.`);
             } else if (plumeId) {
-                this.updateHint("Selected Mantle Plume.");
+                this.updateHint("Selected fixed hotspot marker.");
             } else {
                 this.updateHint(null);
             }
@@ -2527,29 +2980,40 @@ class TectoLiteApp {
 
         if (!this.fusionFirstPlateId) {
             this.fusionFirstPlateId = plateId;
-            this.updateHint(`Selected Plate ${plate.name} select another plate to fuse it with`);
+            this.fusionSecondPlateId = null;
+            this.updateHint(`Selected motion source ${plate.name}. Now select the other plate to fuse at ${this.state.world.currentTime.toFixed(1)} Ma.`);
+            this.syncToolOptionControls();
         } else if (this.fusionFirstPlateId !== plateId) {
             // Stage 3 - Confirmation
             const firstPlate = this.state.world.plates.find(p => p.id === this.fusionFirstPlateId);
             if (!firstPlate) {
                 this.fusionFirstPlateId = null;
+                this.fusionSecondPlateId = null;
                 return;
             }
+            this.fusionSecondPlateId = plateId;
+            this.syncToolOptionControls();
 
             this.showModal({
                 title: 'Confirm Fusion',
-                content: `Do you want to fuse plate <strong>${firstPlate.name}</strong> and <strong>${plate.name}</strong> into a single plate?`,
+                content: `Do you want to fuse plate <strong>${escapeHtml(firstPlate.name)}</strong> and <strong>${escapeHtml(plate.name)}</strong> into a single plate at <strong>${this.state.world.currentTime.toFixed(1)} Ma</strong>?<br><br>
+                    <small><strong>${escapeHtml(firstPlate.name)}</strong> was selected first, so it supplies the new plate's initial motion.</small><br>
+                    <small>${FUSION_PROXY_HELP}</small>`,
                 buttons: [
                     {
                         text: 'Fuse Plates',
-                        subtext: 'Combine geometries and features. The new plate will inherit motion from the larger parent.',
+                        subtext: `Combine geometries and features. Initial motion comes from ${escapeHtml(firstPlate.name)}.`,
                         onClick: () => {
+                            const resultName = (document.getElementById('fuse-result-name') as HTMLInputElement | null)?.value.trim();
                             this.pushState();
-                            const result = fusePlates(this.state, this.fusionFirstPlateId!, plateId);
+                            const result = fusePlates(this.state, this.fusionFirstPlateId!, plateId, { resultName });
 
                             if (result.success && result.newState) {
                                 this.state = result.newState;
                                 this.fusionFirstPlateId = null;
+                                this.fusionSecondPlateId = null;
+                                const nameInput = document.getElementById('fuse-result-name') as HTMLInputElement | null;
+                                if (nameInput) nameInput.value = '';
                                 this.updatePropertiesPanel();
                                 this.updateUI();
                                 this.canvasManager?.render();
@@ -2561,11 +3025,25 @@ class TectoLiteApp {
                         }
                     },
                     {
+                        text: 'Swap Motion Source',
+                        subtext: `${escapeHtml(plate.name)} will supply the fused plate's initial motion instead.`,
+                        isSecondary: true,
+                        onClick: () => {
+                            const previousSourceId = firstPlate.id;
+                            this.fusionFirstPlateId = plate.id;
+                            this.fusionSecondPlateId = null;
+                            this.syncToolOptionControls();
+                            window.setTimeout(() => this.handleFuseTool(previousSourceId), 0);
+                        }
+                    },
+                    {
                         text: 'Cancel',
                         isSecondary: true,
                         onClick: () => {
                             this.fusionFirstPlateId = null;
+                            this.fusionSecondPlateId = null;
                             this.updateHint("Select first plate to fuse");
+                            this.syncToolOptionControls();
                         }
                     }
                 ]
@@ -2581,6 +3059,7 @@ class TectoLiteApp {
         // Step 1: Select parent/anchor plate
         if (!this.activeLinkSourceId) {
             this.activeLinkSourceId = plateId;
+            this.activeLinkTargetId = null;
             this.state.world.selectedPlateId = plateId;
 
             this.updateHint(`Selected PARENT (Anchor) ${plate.name} - now select child plate to link to it`);
@@ -2594,6 +3073,7 @@ class TectoLiteApp {
         if (this.activeLinkSourceId === plateId) {
             // Deselect if clicking same plate
             this.activeLinkSourceId = null;
+            this.activeLinkTargetId = null;
             this.state.world.selectedPlateId = null;
             this.updateHint("Select parent (anchor) plate");
             this.updateUI();
@@ -2608,8 +3088,11 @@ class TectoLiteApp {
 
         if (!parentPlate) {
             this.activeLinkSourceId = null;
+            this.activeLinkTargetId = null;
             return;
         }
+        this.activeLinkTargetId = childId;
+        this.syncToolOptionControls();
 
         // --- NEW: Rift Connection Logic ---
         // Check if either the "Parent" (Source) or "Child" (Target) is a Rift
@@ -2624,7 +3107,9 @@ class TectoLiteApp {
             if (isParentRift && isChildRift) {
                 this.showToast("Cannot link two Rifts directly.");
                 this.activeLinkSourceId = null;
+                this.activeLinkTargetId = null;
                 this.updateHint("Select parent (anchor) plate");
+                this.syncToolOptionControls();
                 return;
             }
 
@@ -2640,7 +3125,7 @@ class TectoLiteApp {
                 // Disconnect
                 this.showModal({
                     title: `Disconnect Rift`,
-                    content: `Disconnect <strong>${tectonicPlate.name}</strong> from Rift <strong>${rift.name}</strong>?<br><br>
+                    content: `Disconnect <strong>${escapeHtml(tectonicPlate.name)}</strong> from Rift <strong>${escapeHtml(rift.name)}</strong>?<br><br>
                     <small>Oceanic crust generation will stop for this plate at this rift.</small>`,
                     buttons: [
                         {
@@ -2656,6 +3141,7 @@ class TectoLiteApp {
                                 this.updateHint(`Disconnected ${tectonicPlate.name} from ${rift.name}`);
                                 setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
                                 this.activeLinkSourceId = null;
+                                this.activeLinkTargetId = null;
                                 this.state.world.selectedPlateId = tectonicPlate.id; // Select the plate
                                 this.updateUI();
                                 this.canvasManager?.render();
@@ -2666,7 +3152,9 @@ class TectoLiteApp {
                             isSecondary: true,
                             onClick: () => {
                                 this.activeLinkSourceId = null;
+                                this.activeLinkTargetId = null;
                                 this.updateHint("Select first plate/rift");
+                                this.syncToolOptionControls();
                             }
                         }
                     ]
@@ -2675,7 +3163,7 @@ class TectoLiteApp {
                 // Connect
                 this.showModal({
                     title: `Connect to Rift`,
-                    content: `Connect <strong>${tectonicPlate.name}</strong> to Rift <strong>${rift.name}</strong>?<br><br>
+                    content: `Connect <strong>${escapeHtml(tectonicPlate.name)}</strong> to Rift <strong>${escapeHtml(rift.name)}</strong>?<br><br>
                     <small>This enables <strong>Oceanic Crust Generation</strong> between them. Motion is NOT inherited.</small>`,
                     buttons: [
                         {
@@ -2691,6 +3179,7 @@ class TectoLiteApp {
                                 this.updateHint(`Connected ${tectonicPlate.name} to ${rift.name}`);
                                 setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
                                 this.activeLinkSourceId = null;
+                                this.activeLinkTargetId = null;
                                 this.state.world.selectedPlateId = tectonicPlate.id;
                                 this.updateUI();
                                 this.canvasManager?.render();
@@ -2701,7 +3190,9 @@ class TectoLiteApp {
                             isSecondary: true,
                             onClick: () => {
                                 this.activeLinkSourceId = null;
+                                this.activeLinkTargetId = null;
                                 this.updateHint("Select first plate/rift");
+                                this.syncToolOptionControls();
                             }
                         }
                     ]
@@ -2713,12 +3204,14 @@ class TectoLiteApp {
         // --- END NEW LOGIC (Standard Plate Linking continues below) ---
 
         // Check if already linked
-        const isLinked = plate.linkedToPlateId === parentId;
+        const isLinked = isMotionLinkActiveAtTime(plate, this.state.world.currentTime, parentId);
 
-        // Check for circular link
-        if (!isLinked && parentPlate.linkedToPlateId === childId) {
-            this.showToast("Cannot create circular link! Parent is already linked to child.");
+        // Reject direct and multi-hop cycles whose link windows overlap the new
+        // relationship. Expired historical links do not block a valid relink.
+        if (!isLinked && wouldCreateMotionLinkCycle(this.state.world.plates, childId, parentId, this.state.world.currentTime)) {
+            this.showToast("Cannot create link: it would form a circular motion chain during an overlapping timeline window.");
             this.activeLinkSourceId = null;
+            this.activeLinkTargetId = null;
             this.updateHint("Select parent (anchor) plate");
             this.updateUI();
             this.canvasManager?.render();
@@ -2729,8 +3222,8 @@ class TectoLiteApp {
             // Unlink
             this.showModal({
                 title: `Unlink Plates`,
-                content: `Do you want to <strong>unlink</strong> child plate <strong>${plate.name}</strong> from parent <strong>${parentPlate.name}</strong>?<br><br>
-                    <small>${plate.name} will move independently with the combined motion it currently has.</small>`,
+                content: `Do you want to <strong>unlink</strong> child plate <strong>${escapeHtml(plate.name)}</strong> from parent <strong>${escapeHtml(parentPlate.name)}</strong>?<br><br>
+                    <small>${escapeHtml(plate.name)} will move independently with the combined motion it currently has.</small>`,
                 buttons: [
                     {
                         text: "Unlink",
@@ -2765,6 +3258,7 @@ class TectoLiteApp {
                             setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
 
                             this.activeLinkSourceId = null;
+                            this.activeLinkTargetId = null;
                             this.state.world.selectedPlateId = childId;
                             this.updateUI();
                             this.canvasManager?.render();
@@ -2775,6 +3269,7 @@ class TectoLiteApp {
                         isSecondary: true,
                         onClick: () => {
                             this.activeLinkSourceId = null;
+                            this.activeLinkTargetId = null;
                             this.updateHint("Select parent (anchor) plate");
                             this.updateUI();
                             this.canvasManager?.render();
@@ -2783,122 +3278,58 @@ class TectoLiteApp {
                 ]
             });
         } else {
-            // Check if this exact pair is already linked
-            const isAlreadyLinked = plate.linkedToPlateId === parentId;
+            // A saved relationship may begin later on the timeline. It is not
+            // active yet, so using Link here reschedules its start instead of
+            // creating an impossible unlinkTime < linkTime window.
+            this.showModal({
+                title: `Link Plates`,
+                content: `Link <strong>${escapeHtml(plate.name)}</strong> (child) to <strong>${escapeHtml(parentPlate.name)}</strong> (parent/anchor) starting at <strong>${this.state.world.currentTime.toFixed(1)} Ma</strong>?<br><br>
+                    <small>The child's independent motion becomes zero at the link time so it follows the parent without retaining old momentum. Earlier history is unchanged.</small>`,
+                buttons: [
+                    {
+                        text: "Link",
+                        onClick: () => {
+                            this.pushState();
+                            const currentTime = this.state.world.currentTime;
 
-            if (isAlreadyLinked) {
-                // Auto-unlink: if you try to link an already-linked pair, unlink them instead
-                this.showModal({
-                    title: `Unlink Plates`,
-                    content: `<strong>${plate.name}</strong> is already linked to <strong>${parentPlate.name}</strong>.<br><br>
-                        Do you want to <strong>unlink</strong> them? Motion will be baked in.`,
-                    buttons: [
-                        {
-                            text: "Unlink",
-                            onClick: () => {
-                                this.pushState();
+                            this.state.world.plates = this.state.world.plates.map(p =>
+                                p.id === childId ? linkPlateAtTime(p, parentId, currentTime) : p
+                            );
 
-                                const currentTime = this.state.world.currentTime;
+                            this.updateHint(`Linked ${plate.name} to ${parentPlate.name} starting at ${currentTime.toFixed(1)} Ma`);
+                            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
 
-                                // Get parent's current Euler pole (from the motion model)
-                                const parentActiveSegment = [...getMotionModel(parentPlate).segments]
-                                    .filter(s => s.time <= currentTime)
-                                    .sort((a, b) => b.time - a.time)[0];
-                                const parentPole = parentActiveSegment?.eulerPole || { position: [0, 90] as Coordinate, rate: 0, visible: false };
-
-                                this.state.world.plates = this.state.world.plates.map(p => {
-                                    if (p.id === childId) {
-                                        // Bake in the parent's motion as the child's new base motion segment
-                                        const updated = { ...p };
-                                        ensureMotionModel(updated);
-                                        const segments = [...updated.motionSegments!]
-                                            .filter(s => Math.abs(s.time - currentTime) > 0.001);
-                                        segments.push({ time: currentTime, eulerPole: parentPole });
-                                        updated.motionSegments = segments.sort((a, b) => a.time - b.time);
-                                        updated.linkedToPlateId = undefined;
-                                        return updated;
-                                    }
-                                    return p;
-                                });
-
-                                this.updateHint(`Unlinked ${plate.name} from ${parentPlate.name} - motion baked in`);
-                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-
-                                this.activeLinkSourceId = null;
-                                this.state.world.selectedPlateId = childId;
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
-                        },
-                        {
-                            text: 'Cancel',
-                            isSecondary: true,
-                            onClick: () => {
-                                this.activeLinkSourceId = null;
-                                this.updateHint("Select parent (anchor) plate");
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
+                            this.activeLinkSourceId = null;
+                            this.activeLinkTargetId = null;
+                            this.state.world.selectedPlateId = childId;
+                            this.updateUI();
+                            this.canvasManager?.render();
                         }
-                    ]
-                });
-            } else {
-                // Link child to parent
-                this.showModal({
-                    title: `Link Plates`,
-                    content: `Link <strong>${plate.name}</strong> (child) to <strong>${parentPlate.name}</strong> (parent/anchor).<br><br>
-                        <small>Child inherits parent motion. Add relative rotation in properties panel later if needed (e.g., Somalia relative to Africa).</small>`,
-                    buttons: [
-                        {
-                            text: "Link",
-                            onClick: () => {
-                                this.pushState();
-                                const currentTime = this.state.world.currentTime;
-
-                                this.state.world.plates = this.state.world.plates.map(p => {
-                                    if (p.id === childId) {
-                                        // Add a zero-rate motion segment at link time so the child
-                                        // stops moving on its own while linked (no "teleporting")
-                                        const updated = { ...p };
-                                        ensureMotionModel(updated);
-                                        const segments = [...updated.motionSegments!];
-                                        if (!segments.some(s => Math.abs(s.time - currentTime) < 0.001)) {
-                                            segments.push({
-                                                time: currentTime,
-                                                eulerPole: { position: [0, 90], rate: 0, visible: false }
-                                            });
-                                            updated.motionSegments = segments.sort((a, b) => a.time - b.time);
-                                        }
-                                        updated.linkedToPlateId = parentId;
-                                        updated.linkTime = currentTime;
-                                        updated.unlinkTime = undefined; // Clear any previous unlink time
-                                        return updated;
-                                    }
-                                    return p;
-                                });
-
-                                this.updateHint(`Linked ${plate.name} to ${parentPlate.name} starting at ${currentTime.toFixed(1)} Ma`);
-                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-
-                                this.activeLinkSourceId = null;
-                                this.state.world.selectedPlateId = childId;
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
-                        },
-                        {
-                            text: 'Cancel',
-                            isSecondary: true,
-                            onClick: () => {
-                                this.activeLinkSourceId = null;
-                                this.updateHint("Select parent (anchor) plate");
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
+                    },
+                    {
+                        text: 'Swap Parent and Child',
+                        subtext: `${escapeHtml(plate.name)} becomes the parent/anchor instead.`,
+                        isSecondary: true,
+                        onClick: () => {
+                            this.activeLinkSourceId = childId;
+                            this.activeLinkTargetId = null;
+                            this.syncToolOptionControls();
+                            window.setTimeout(() => this.handleLinkTool(parentId), 0);
                         }
-                    ]
-                });
-            }
+                    },
+                    {
+                        text: 'Cancel',
+                        isSecondary: true,
+                        onClick: () => {
+                            this.activeLinkSourceId = null;
+                            this.activeLinkTargetId = null;
+                            this.updateHint("Select parent (anchor) plate");
+                            this.updateUI();
+                            this.canvasManager?.render();
+                        }
+                    }
+                ]
+            });
         }
     }
 
@@ -2908,60 +3339,38 @@ class TectoLiteApp {
         if (points.length < 2) return;
 
         const plateToSplit = this.state.world.plates.find(p => p.id === this.state.world.selectedPlateId);
-
-        if (plateToSplit) {
-            this.showModal({
-                title: 'Split Plate Configuration',
-                content: `
-                    <p>You are about to split <strong>${plateToSplit.name}</strong> along the drawn boundary. How should the new plates behave?</p>
-                    <div style="margin-top:15px; padding:10px; background:var(--bg-elevated); border-radius:4px;">
-                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                            <input type="checkbox" id="chk-split-selected-only"> 
-                            <span><strong>Split Only Selected Plate</strong><br><span style="font-size:0.9em; opacity:0.8;">Do not split intersecting features or children</span></span>
-                        </label>
-                    </div>
-                `,
-                buttons: [
-                    {
-                        text: 'Inherit Momentum',
-                        subtext: 'New plates will keep the parent\'s current velocity and rotation.',
-                        onClick: () => {
-                            const onlySelected = (document.getElementById('chk-split-selected-only') as HTMLInputElement)?.checked || false;
-                            this.pushState();
-                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, true, onlySelected);
-                            this.updateUI();
-                            this.simulation?.setTime(this.state.world.currentTime);
-                            this.canvasManager?.render();
-                        }
-                    },
-                    {
-                        text: 'Reset Momentum',
-                        subtext: 'New plates will start stationary (0 velocity).',
-                        onClick: () => {
-                            const onlySelected = (document.getElementById('chk-split-selected-only') as HTMLInputElement)?.checked || false;
-                            this.pushState();
-                            this.state = splitPlate(this.state, plateToSplit!.id, { points }, false, onlySelected);
-                            this.updateUI();
-                            this.simulation?.setTime(this.state.world.currentTime);
-                            this.canvasManager?.render();
-                        }
-                    },
-                    {
-                        text: 'Cancel',
-                        isSecondary: true,
-                        onClick: () => { /* Do nothing */ }
-                    }
-                ]
-            });
+        if (!plateToSplit) {
+            this.showToast('Select a plate before applying the split.');
+            return;
         }
+
+        const nameA = (document.getElementById('split-name-a') as HTMLInputElement | null)?.value.trim() || undefined;
+        const nameB = (document.getElementById('split-name-b') as HTMLInputElement | null)?.value.trim() || undefined;
+        const nextState = splitPlate(this.state, plateToSplit.id, { points }, {
+            inheritMomentum: this.toolPreferences.split.inheritMomentum,
+            onlySelected: this.toolPreferences.split.onlySelected,
+            resultNames: [nameA, nameB]
+        });
+        if (nextState === this.state) {
+            this.showToast('The boundary did not produce two valid plate regions.');
+            return;
+        }
+        this.pushState();
+        this.state = nextState;
+        this.splitPreviewActive = false;
+        const inputA = document.getElementById('split-name-a') as HTMLInputElement | null;
+        const inputB = document.getElementById('split-name-b') as HTMLInputElement | null;
+        if (inputA) inputA.value = '';
+        if (inputB) inputB.value = '';
+        this.updateUI();
+        this.simulation?.setTime(this.state.world.currentTime);
+        this.canvasManager?.render();
+        this.updateHint(`Split ${plateToSplit.name} at ${this.state.world.currentTime.toFixed(1)} Ma.`);
     }
 
     private handleSplitPreviewChange(active: boolean): void {
-        // Update UI to show/hide split apply/cancel buttons
-        const splitControls = document.getElementById('split-controls');
-        if (splitControls) {
-            splitControls.style.display = active ? 'flex' : 'none';
-        }
+        this.splitPreviewActive = active;
+        this.syncToolOptionControls();
     }
 
     private deleteSelected(): void {
@@ -2978,7 +3387,7 @@ class TectoLiteApp {
             if (selectedFeatureId) idsToDelete.add(selectedFeatureId);
             if (selectedFeatureIds) selectedFeatureIds.forEach(id => idsToDelete.add(id));
 
-            // Remove from Mantle Plumes if present
+            // Remove from fixed hotspot markers if present
             if (this.state.world.mantlePlumes) {
                 this.state.world.mantlePlumes = this.state.world.mantlePlumes.filter(p => !idsToDelete.has(p.id));
             }
@@ -3262,13 +3671,13 @@ class TectoLiteApp {
               <span class="plate-color" style="background: ${plate.color}"></span>
               <span class="plate-name">${escapeHtml(plate.name)}</span>
               <button class="plate-visibility" data-visible="${plate.visible}" title="Toggle visibility">
-                ${plate.visible ? '👁️' : '🚫'}
+                ${uiIcon(plate.visible ? 'eye' : 'eye-off')}
               </button>
             </div>
         `).join('');
         container.querySelectorAll<HTMLElement>('.plate-item').forEach(item => {
             item.addEventListener('click', event => {
-                if ((event.target as HTMLElement).classList.contains('plate-visibility')) return;
+                if ((event.target as HTMLElement).closest('.plate-visibility')) return;
                 const plateId = item.dataset.plateId;
                 if (!plateId) return;
                 if (event.shiftKey) this.selectExplorerPlateRange(plateId);
@@ -3298,13 +3707,13 @@ class TectoLiteApp {
         wrapper.innerHTML = labels.map(label => `
             <div class="plate-item ${this.state.world.selectedLabelId === label.id ? 'selected' : ''}" draggable="true" data-label-id="${label.id}" title="Label; drag to another group">
               <span class="plate-color" style="background:${label.color}"></span>
-              <span class="plate-name">⚑ ${escapeHtml(label.title)}</span>
-              <button class="plate-visibility" data-visible="${label.visible}" title="Toggle visibility">${label.visible ? '👁️' : '🚫'}</button>
+              <span class="plate-name">${uiIcon('flag')} ${escapeHtml(label.title)}</span>
+              <button class="plate-visibility" data-visible="${label.visible}" title="Toggle visibility">${uiIcon(label.visible ? 'eye' : 'eye-off')}</button>
             </div>
         `).join('');
         wrapper.querySelectorAll<HTMLElement>('[data-label-id]').forEach(item => {
             item.addEventListener('click', event => {
-                if ((event.target as HTMLElement).classList.contains('plate-visibility')) return;
+                if ((event.target as HTMLElement).closest('.plate-visibility')) return;
                 if (item.dataset.labelId) this.handleLabelSelect(item.dataset.labelId, false);
             });
             item.addEventListener('dragstart', event => {
@@ -3368,17 +3777,17 @@ class TectoLiteApp {
             const opacity = groupId ? (groups.find(group => group.id === groupId)?.opacity ?? 1) : 1;
             let opacityPopover: HTMLElement | null = null;
             header.innerHTML = `
-                <span class="entity-group-chevron">${collapsed && !filterText ? '▶' : '▼'}</span>
+                <span class="entity-group-chevron">${uiIcon(collapsed && !filterText ? 'chevron-right' : 'chevron-down')}</span>
                 <span class="entity-group-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
                 <span class="entity-group-count">${allMembers.length}</span>
                 ${editable ? `<span class="entity-group-actions">
-                    <button data-action="visibility" title="Show/hide every entity in this group">${allVisible ? '👁️' : '🚫'}</button>
-                    <button data-action="lock" title="Lock/unlock every entity in this group">${allLocked ? '🔒' : '🔓'}</button>
+                    <button data-action="visibility" title="Show/hide every entity in this group">${uiIcon(allVisible ? 'eye' : 'eye-off')}</button>
+                    <button data-action="lock" title="Lock/unlock every entity in this group">${uiIcon(allLocked ? 'lock' : 'unlock')}</button>
                     <button data-action="opacity" title="Group transparency (${Math.round((1 - opacity) * 100)}%)">◐</button>
-                    <button data-action="color" title="Set one color for every entity in this group">🎨</button>
-                    <button data-action="rename" title="Rename group">✎</button>
+                    <button data-action="color" title="Set one color for every entity in this group">${uiIcon('palette')}</button>
+                    <button data-action="rename" title="Rename group">${uiIcon('edit')}</button>
                     <button data-action="ungroup" title="Delete group but keep its entities">×</button>
-                    <button data-action="delete" title="Delete every entity in this group">🗑</button>
+                    <button data-action="delete" title="Delete every entity in this group">${uiIcon('trash')}</button>
                 </span>` : ''}
             `;
             header.addEventListener('click', event => {
@@ -3652,7 +4061,7 @@ class TectoLiteApp {
         header.className = 'explorer-header';
         header.style.marginBottom = '2px';
         const isOpen = this.explorerState.sections[key];
-        header.innerHTML = `<span>${title} (${count})</span> <span>${isOpen ? '▼' : '▶'}</span>`;
+        header.innerHTML = `<span>${title} (${count})</span> <span>${uiIcon(isOpen ? 'chevron-down' : 'chevron-right')}</span>`;
         header.onclick = () => {
             this.explorerState.sections[key] = !isOpen;
             this.updateExplorer();
@@ -3692,15 +4101,26 @@ class TectoLiteApp {
     private updatePropertiesPanel(): void {
         const content = document.getElementById('properties-content');
         if (!content) return;
+        const panel = document.getElementById('properties-panel');
+        const timelinePanel = document.getElementById('timeline-panel');
+        const titleEl = document.getElementById('properties-panel-title');
+        if (panel) {
+            panel.style.display = 'flex';
+            panel.style.flexDirection = 'column';
+            panel.style.flex = '2';
+        }
+        if (timelinePanel) timelinePanel.style.flex = '1';
 
         const selectedLabel = this.state.world.labels.find(label => label.id === this.state.world.selectedLabelId);
+        this.dockController?.syncInspectorSelection(Boolean(
+            selectedLabel
+            || this.state.world.selectedPlateId
+            || this.state.world.selectedEdge
+            || this.state.world.selectedFeatureId
+            || this.state.world.selectedFeatureIds.length
+        ));
         if (selectedLabel) {
-            const panel = document.getElementById('properties-panel');
-            const timelinePanel = document.getElementById('timeline-panel');
-            const titleEl = document.getElementById('properties-panel-title');
             if (titleEl) titleEl.textContent = 'Label Properties';
-            if (panel) { panel.style.display = 'flex'; panel.style.flexDirection = 'column'; panel.style.flex = '2'; }
-            if (timelinePanel) timelinePanel.style.flex = '1';
             const plateOptions = this.state.world.plates.map(plate =>
                 `<option value="${plate.id}" ${selectedLabel.attachedPlateId === plate.id ? 'selected' : ''}>${escapeHtml(plate.name)}</option>`
             ).join('');
@@ -3774,18 +4194,15 @@ class TectoLiteApp {
         // Check for Mesh Vertex Selection
 
 
-        // Check for Mantle Plume Selection (No Plate, but Feature ID set)
+        // Check for fixed hotspot selection (no plate, but feature ID set)
         if (!this.state.world.selectedPlateId && this.state.world.selectedFeatureId && this.state.world.mantlePlumes) {
             const plumeId = this.state.world.selectedFeatureId;
             const plume = this.state.world.mantlePlumes.find(p => p.id === plumeId);
 
             if (plume) {
-                const globalRate = this.state.world.globalOptions.hotspotSpawnRate || 1.0;
-                const isGlobal = plume.spawnRate === undefined;
-                const displayRate = isGlobal ? globalRate : plume.spawnRate;
-
+                if (titleEl) titleEl.textContent = 'Fixed Hotspot';
                 content.innerHTML = `
-                    <h3 class="panel-section-title">Mantle Plume</h3>
+                    <h3 class="panel-section-title">Fixed Hotspot</h3>
                     
                     <div class="property-group">
                         <label class="property-label">ID</label>
@@ -3798,39 +4215,16 @@ class TectoLiteApp {
                     </div>
 
                     <div class="property-group">
-                        <label class="property-label">Active</label>
-                         <input type="checkbox" id="prop-plume-active" ${plume.active ? 'checked' : ''}>
-                    </div>
-                    
-                    <div class="property-group">
-                         <label class="property-label">Spawn Rate (Ma)</label>
-                         <input type="number" id="prop-plume-rate-main" class="property-input" value="${displayRate}" step="0.1" min="0.1">
+                        <span class="property-hint">This marker stays fixed while plates move beneath it. It does not create features automatically.</span>
                     </div>
 
                     <div class="property-group" style="margin-top:20px;">
-                        <button id="btn-delete-plume" class="btn btn-danger" style="width:100%">Delete Plume</button>
+                        <button id="btn-delete-plume" class="btn btn-danger" style="width:100%">Delete Hotspot</button>
                     </div>
                 `;
 
-                // Bind events for Plume
-                document.getElementById('prop-plume-active')?.addEventListener('change', (e) => {
-                    plume.active = (e.target as HTMLInputElement).checked;
-                    this.canvasManager?.markDirty();
-                });
-
-                const propPlumeRate = document.getElementById('prop-plume-rate-main') as HTMLInputElement;
-
-                if (propPlumeRate) {
-                    propPlumeRate.addEventListener('change', (e) => {
-                        const val = parseFloat((e.target as HTMLInputElement).value);
-                        if (!isNaN(val) && val > 0) {
-                            plume.spawnRate = val;
-                            this.canvasManager?.markDirty();
-                        }
-                    });
-                }
-
                 document.getElementById('btn-delete-plume')?.addEventListener('click', () => {
+                    this.pushState();
                     this.state.world.mantlePlumes = this.state.world.mantlePlumes?.filter(p => p.id !== plumeId);
                     this.state.world.selectedFeatureId = null;
                     this.state.world.selectedFeatureIds = [];
@@ -3846,7 +4240,6 @@ class TectoLiteApp {
         const selectedPlateCount = this.getSelectedPlateIds().length;
 
         // Update Panel Title
-        const titleEl = document.getElementById('properties-panel-title');
         if (titleEl) {
             if (!plate) titleEl.textContent = 'Properties';
             else if (selectedPlateCount > 1) titleEl.textContent = `Plate Properties (${selectedPlateCount} selected)`;
@@ -3854,18 +4247,11 @@ class TectoLiteApp {
             else titleEl.textContent = 'Plate Properties';
         }
 
-        const panel = document.getElementById('properties-panel');
-        const timelinePanel = document.getElementById('timeline-panel');
-
         if (panel && timelinePanel) {
             if (!plate) {
-                panel.style.display = 'none';
                 timelinePanel.style.flex = '1';
-                content.innerHTML = '';
+                content.innerHTML = '<p class="empty-message">Select a plate, feature, label, or edge to edit properties.</p>';
             } else {
-                panel.style.display = 'flex';
-                panel.style.flexDirection = 'column';
-                panel.style.flex = '2';
                 timelinePanel.style.flex = '1';
             }
         }
@@ -3883,11 +4269,11 @@ class TectoLiteApp {
         content.innerHTML = `
       <div class="property-group">
         <label class="property-label">${isRift ? 'Axis Name' : 'Name'}</label>
-        <input type="text" id="prop-name" class="property-input" value="${plate.name}">
+        <input type="text" id="prop-name" class="property-input" value="${escapeHtml(plate.name)}">
       </div>
       <div class="property-group">
         <label class="property-label">ID</label>
-        <input type="text" class="property-input" value="${plate.id}" readonly style="background: var(--bg-canvas-base); cursor: text;">
+        <input type="text" class="property-input" value="${escapeHtml(plate.id)}" readonly style="background: var(--bg-canvas-base); cursor: text;">
       </div>
       
       <div class="property-group">
@@ -3903,12 +4289,13 @@ class TectoLiteApp {
       </div>
       <div class="property-group">
         <label class="property-label">Description</label>
-        <textarea id="prop-description" class="property-input" rows="3" placeholder="${isRift ? 'Rift description...' : 'Plate description...'}">${description}</textarea>
+        <textarea id="prop-description" class="property-input" rows="3" placeholder="${isRift ? 'Rift description...' : 'Plate description...'}">${escapeHtml(description)}</textarea>
       </div>
       
       <div class="property-group">
         <label class="property-label">Color</label>
         <input type="color" id="prop-color" class="property-color" value="${plate.color}">
+        ${isRift ? `<div style="font-size: 9px; line-height: 1.35; color: var(--text-secondary); margin-top: 4px;">${LINE_COLOR_HELP}</div>` : ''}
       </div>
       
       ${isRift ? `
@@ -3961,7 +4348,7 @@ class TectoLiteApp {
 
       
       <div class="property-group">
-        <label class="property-label">Layer (Z-Index) <span class="info-icon" data-tooltip="Visual stacking order. Continental plates get an automatic +1 bonus.">(i)</span></label>
+        <label class="property-label">Layer (Z-Index) <span class="info-icon" data-tooltip="${LAYER_ORDER_HELP}">(i)</span></label>
         <input type="number" id="prop-z-index" class="property-input" value="${plate.zIndex || 0}" step="1" style="width: 60px;">
       </div>
 
@@ -3972,8 +4359,8 @@ class TectoLiteApp {
       <div class="property-group">
          <label class="property-label">Origins</label>
          <div style="font-size: 11px; color: var(--text-secondary); padding-left: 5px;">
-            ${plate.parentPlateId ? `Split from: <b>${this.state.world.plates.find(p => p.id === plate.parentPlateId)?.name || 'Unknown'}</b><br/>` : ''}
-            ${plate.generatedBy ? `Generated by: <b>${this.state.world.plates.find(p => p.id === plate.generatedBy)?.name || 'Unknown'}</b> at ${plate.age} Ma<br/>` : ''}
+            ${plate.parentPlateId ? `Split from: <b>${escapeHtml(this.state.world.plates.find(p => p.id === plate.parentPlateId)?.name || 'Unknown')}</b><br/>` : ''}
+            ${plate.generatedBy ? `Generated by: <b>${escapeHtml(this.state.world.plates.find(p => p.id === plate.generatedBy)?.name || 'Unknown')}</b> at ${plate.age} Ma<br/>` : ''}
          </div>
       </div>
       ` : ''}
@@ -3984,7 +4371,7 @@ class TectoLiteApp {
                     const parent = this.state.world.plates.find(p => p.id === plate.linkedToPlateId);
                     linkHtml += `
                  <div style="margin-bottom: 8px; padding: 6px; background: rgba(0,0,0,0.1); border-radius: 4px;">
-                     <div style="font-size: 11px; margin-bottom: 4px;">Parent Link: <b>${parent?.name || 'Unknown'}</b></div>
+                     <div style="font-size: 11px; margin-bottom: 4px;">Parent Link: <b>${escapeHtml(parent?.name || 'Unknown')}</b></div>
                      <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; margin-bottom: 4px;">
                         <input type="checkbox" id="prop-hide-link" ${plate.hideLinkMarker ? 'checked' : ''}> Hide Link Line
                      </label>
@@ -3993,6 +4380,7 @@ class TectoLiteApp {
                         <span style="font-size:10px; align-self:center;">-</span>
                         <input type="number" id="prop-unlink-time" class="property-input" title="Unlink Time" value="${this.getDisplayTimeValue(plate.unlinkTime) ?? ''}" placeholder="Active" step="5" style="flex:1">
                      </div>
+                     <div style="font-size: 9px; line-height: 1.35; color: var(--text-secondary); margin-top: 4px;">${LINK_WINDOW_HELP}</div>
                  </div>
               `;
                 }
@@ -4006,7 +4394,7 @@ class TectoLiteApp {
                     childLinks.forEach(child => {
                         linkHtml += `
                      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 4px; background: rgba(0,0,0,0.1); border-radius: 2px;">
-                        <span>${child.name}</span>
+                        <span>${escapeHtml(child.name)}</span>
                         <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
                             <input type="checkbox" class="child-link-hide" data-id="${child.id}" ${child.hideLinkMarker ? 'checked' : ''}> Hide
                         </label>
@@ -4019,23 +4407,25 @@ class TectoLiteApp {
             })()}
 
       <hr class="property-divider">
-      <h4 class="property-section-title" style="display: flex; justify-content: space-between;">Flowlines <span class="info-icon" style="opacity: ${plate.showFlowlines ? '1' : '0.3'};">➜</span></h4>
+      <h4 class="property-section-title" style="display: flex; justify-content: space-between;">Flowlines <span class="info-icon" style="opacity: ${plate.showFlowlines ? '1' : '0.3'};">${uiIcon('move')}</span></h4>
       
       <div class="property-group">
         <label class="property-label">Enable Trails</label>
         <input type="checkbox" id="prop-flowlines-enable" ${plate.showFlowlines ? 'checked' : ''}>
       </div>
-      <div class="property-group">
-        <label class="property-label">Render Above</label>
-        <input type="checkbox" id="prop-flowlines-top" ${plate.flowlinesOnTop ? 'checked' : ''}>
-      </div>
-      <div class="property-group">
-        <label class="property-label">Fade Over Time</label>
-        <input type="checkbox" id="prop-flowlines-fade" ${plate.flowlinesFade ? 'checked' : ''}>
-      </div>
-      <div class="property-group">
-        <label class="property-label">Duration (Ma)</label>
-        <input type="number" id="prop-flowlines-duration" class="property-input" value="${plate.flowlinesDuration || 50}" step="5" min="5" style="width: 60px;">
+      <div id="flowline-options" class="conditional-property-options" ${plate.showFlowlines ? '' : 'hidden'}>
+        <div class="property-group">
+          <label class="property-label">Render Above</label>
+          <input type="checkbox" id="prop-flowlines-top" ${plate.flowlinesOnTop ? 'checked' : ''}>
+        </div>
+        <div class="property-group">
+          <label class="property-label">Fade Over Time</label>
+          <input type="checkbox" id="prop-flowlines-fade" ${plate.flowlinesFade ? 'checked' : ''}>
+        </div>
+        <div class="property-group">
+          <label class="property-label">Duration (Ma)</label>
+          <input type="number" id="prop-flowlines-duration" class="property-input" value="${plate.flowlinesDuration || 50}" step="5" min="5" style="width: 60px;">
+        </div>
       </div>
 
       <hr class="property-divider">
@@ -4128,8 +4518,8 @@ class TectoLiteApp {
       </div>
 
       <div class="property-group" style="flex-direction: row; gap: 8px;">
-          <button id="btn-copy-momentum" class="btn btn-secondary" style="flex:1" title="Copy speed, direction, and pole">📋 Copy</button>
-          <button id="btn-paste-momentum" class="btn btn-secondary" style="flex:1" title="Paste motion settings" ${this.momentumClipboard ? '' : 'disabled'}>📋 Paste</button>
+          <button id="btn-copy-momentum" class="btn btn-secondary" style="flex:1" title="Copy speed, direction, and pole">${uiIcon('clipboard')} Copy</button>
+          <button id="btn-paste-momentum" class="btn btn-secondary" style="flex:1" title="Paste motion settings" ${this.momentumClipboard ? '' : 'disabled'}>${uiIcon('clipboard')} Paste</button>
       </div>
       
       <button id="btn-delete-plate" class="btn btn-danger">Delete Plate</button>
@@ -4268,6 +4658,8 @@ class TectoLiteApp {
 
         document.getElementById('prop-flowlines-enable')?.addEventListener('change', (e) => {
             plate.showFlowlines = (e.target as HTMLInputElement).checked;
+            const flowlineOptions = document.getElementById('flowline-options');
+            if (flowlineOptions) flowlineOptions.hidden = !plate.showFlowlines;
             this.canvasManager?.render();
         });
         document.getElementById('prop-flowlines-top')?.addEventListener('change', (e) => {
@@ -4414,7 +4806,7 @@ class TectoLiteApp {
         let html = `
             <div class="property-group">
                 <label class="property-label">Plate</label>
-                <div class="property-value" style="font-size: 11px;">${plate.name}</div>
+                <div class="property-value" style="font-size: 11px;">${escapeHtml(plate.name)}</div>
             </div>
             <div class="property-group">
                 <label class="property-label">Edge Index</label>
@@ -4450,7 +4842,7 @@ class TectoLiteApp {
                                 <span style="font-weight: bold; color: ${sib.frozen ? 'var(--accent-warning)' : 'var(--accent-success)'};">${sib.frozen ? 'FROZEN' : 'ACTIVE'}</span>
                             </div>
                             <div style="font-size: 11px; color: var(--text-primary);">
-                                Plate: <b>${sibName}</b><br/>
+                                Plate: <b>${escapeHtml(sibName)}</b><br/>
                                 Edge: ${sib.siblingEdgeIndex}
                             </div>
                             <button class="btn btn-danger btn-delete-sibling" data-meta-index="${meta.edgeIndex}" data-sib-index="${i}" style="width: 100%; margin-top: 6px; padding: 2px; font-size: 10px;">Remove</button>
@@ -4525,7 +4917,7 @@ class TectoLiteApp {
                 features.forEach(f => {
                     const name = f.name || this.getFeatureTypeName(f.type);
                     html += `<div class="feature-list-item" data-id="${f.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size:11px; display:flex; justify-content:space-between;">
-                        <span>${name}</span>
+                        <span>${escapeHtml(name)}</span>
                         <span style="color:var(--text-secondary);">${this.getFeatureTypeName(f.type)}</span>
                     </div>`;
                 });
@@ -4534,15 +4926,14 @@ class TectoLiteApp {
                 html += '<div style="font-size:10px; color:var(--text-secondary); padding:4px;">None</div>';
             }
 
-            // Independent (Mantle Plumes)
+            // Independent fixed hotspots
             const plumes = this.state.world.mantlePlumes || [];
             if (plumes.length > 0) {
                 html += '<h5 style="margin:8px 0 4px 0; font-size: 11px; color:var(--text-secondary);">Independent</h5>';
                 html += '<div style="max-height:100px; overflow-y:auto; display:flex; flex-direction:column; gap:2px;">';
                 plumes.forEach(p => {
-                    const activeColor = p.active ? '#ff00aa' : '#888888';
-                    html += `<div class="plume-list-item" data-id="${p.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size:11px; border-left: 2px solid ${activeColor}; display:flex; justify-content:space-between;">
-                        <span>Mantle Plume</span>
+                    html += `<div class="plume-list-item" data-id="${p.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size:11px; border-left: 2px solid #f97316; display:flex; justify-content:space-between;">
+                        <span>Fixed Hotspot</span>
                         <span style="color:var(--text-secondary);">${p.id.substring(0, 6)}</span>
                     </div>`;
                 });
@@ -4581,41 +4972,12 @@ class TectoLiteApp {
       </div>
       <div class="property-group">
         <label class="property-label">Name</label>
-        <input type="text" id="feature-name" class="property-input" value="${displayName}" placeholder="Feature name...">
+        <input type="text" id="feature-name" class="property-input" value="${escapeHtml(displayName)}" placeholder="Feature name...">
       </div>
       <div class="property-group">
         <label class="property-label">Description</label>
-        <textarea id="feature-description" class="property-input" rows="2" placeholder="Description...">${description}</textarea>
+        <textarea id="feature-description" class="property-input" rows="2" placeholder="Description...">${escapeHtml(description)}</textarea>
       </div>
-      ${(() => {
-                if (feature.type === 'hotspot' && feature.properties?.source === 'plume' && feature.properties?.plumeId) {
-                    const plumeId = feature.properties.plumeId as string;
-                    const plume = this.state.world.mantlePlumes?.find(p => p.id === plumeId);
-                    if (plume) {
-                        const currentRate = plume.spawnRate;
-                        const globalRate = this.state.world.globalOptions.hotspotSpawnRate || 1.0;
-                        // If define, use it. If undefined, it uses global.
-                        const isGlobal = currentRate === undefined;
-                        const displayRate = isGlobal ? globalRate : currentRate;
-
-                        return `
-                   <hr class="property-divider">
-                   <h4 class="property-section-title">Mantle Plume Source</h4>
-                   <div style="background:var(--bg-elevated); padding:8px; border-radius:4px;">
-                       <div class="property-group">
-                         <label class="property-label">Spawn Rate (Ma)</label>
-                         <input type="number" id="prop-plume-rate" class="property-input" value="${displayRate}" step="0.1" min="0.1" ${isGlobal ? 'disabled' : ''}>
-                       </div>
-                       <div class="property-group" style="justify-content:flex-start">
-                         <input type="checkbox" id="prop-plume-use-global" style="margin-right:8px;" ${isGlobal ? 'checked' : ''}>
-                         <label for="prop-plume-use-global" class="property-label" style="width:auto;">Use Global Rate</label>
-                       </div>
-                   </div>
-                 `;
-                    }
-                }
-                return '';
-            })()}
     `;
     }
 
@@ -4686,46 +5048,6 @@ class TectoLiteApp {
             }
         });
 
-        // Plume Override Logic
-        const propPlumeRate = document.getElementById('prop-plume-rate') as HTMLInputElement;
-        const propPlumeUseGlobal = document.getElementById('prop-plume-use-global') as HTMLInputElement;
-
-        if (propPlumeRate && propPlumeUseGlobal) {
-            // Find plume ID
-            // We need to look up the feature again
-            const plates = this.state.world.plates;
-            let feature;
-            for (const p of plates) {
-                feature = p.features.find(f => f.id === singleFeatureId);
-                if (feature) break;
-            }
-
-            if (feature && feature.type === 'hotspot' && feature.properties?.plumeId) {
-                const plumeId = feature.properties.plumeId;
-                const plume = this.state.world.mantlePlumes?.find(p => p.id === plumeId);
-
-                if (plume) {
-                    propPlumeUseGlobal.addEventListener('change', (e) => {
-                        const useGlobal = (e.target as HTMLInputElement).checked;
-                        propPlumeRate.disabled = useGlobal;
-
-                        if (useGlobal) {
-                            delete plume.spawnRate;
-                            propPlumeRate.value = (this.state.world.globalOptions.hotspotSpawnRate || 1.0).toString();
-                        } else {
-                            plume.spawnRate = parseFloat(propPlumeRate.value) || 1.0;
-                        }
-                    });
-
-                    propPlumeRate.addEventListener('change', (e) => {
-                        const val = parseFloat((e.target as HTMLInputElement).value);
-                        if (!isNaN(val) && val > 0) {
-                            plume.spawnRate = val;
-                        }
-                    });
-                }
-            }
-        }
     }
 
     private getFeatureTypeName(type: FeatureType): string {
@@ -4756,6 +5078,7 @@ class TectoLiteApp {
 
     private updateTimeDisplay(): void {
         _updateTimeDisplay(this.state.world.currentTime);
+        this.syncToolOptionControls();
     }
 
 
@@ -5137,7 +5460,7 @@ class TectoLiteApp {
             delBtn.className = 'btn btn-secondary';
             delBtn.style.cssText = 'font-size: 10px; padding: 2px 6px;';
             delBtn.title = `Delete "${bm.name}"`;
-            delBtn.textContent = '✕';
+            delBtn.innerHTML = uiIcon('x');
             delBtn.addEventListener('click', () => this.deleteCameraBookmark(index));
 
             row.appendChild(hotkey);
@@ -5259,7 +5582,7 @@ class TectoLiteApp {
                     subtext: 'Start from an empty sphere.',
                     onClick: () => this.createNewProject()
                 },
-                ...PROJECT_TEMPLATES.map(template => ({
+                ...PROJECT_TEMPLATES.filter(template => template.id !== 'blank').map(template => ({
                     text: template.name,
                     subtext: template.description,
                     onClick: () => this.createProjectFromTemplate(template)
@@ -5292,6 +5615,8 @@ class TectoLiteApp {
         this.cameraBookmarks = cameraBookmarks;
         this.fusionFirstPlateId = null;
         this.activeLinkSourceId = null;
+        this.fusionSecondPlateId = null;
+        this.activeLinkTargetId = null;
         this.momentumClipboard = null;
         this.setUnsaved(unsaved);
 

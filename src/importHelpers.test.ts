@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { remapImportedWorld } from './importHelpers';
-import { TectonicPlate, WorldState, Feature, RiftAxis, GeometryStage } from './types';
+import { TectonicPlate, WorldState, Feature, RiftAxis, GeometryStage, Polygon } from './types';
 
 function makeFeature(id: string, generatedAt?: number): Feature {
     return { id, type: 'mountain', position: [0, 0], generatedAt } as unknown as Feature;
@@ -35,6 +35,34 @@ function makeWorld(plates: TectonicPlate[], overrides: Partial<WorldState> = {})
 }
 
 describe('remapImportedWorld', () => {
+    it('copies reference image overlays with collision-safe IDs', () => {
+        const world = makeWorld([makePlate('a')], {
+            imageOverlays: [{
+                id: 'source-overlay',
+                name: 'Reference',
+                imageData: 'data:image/png;base64,test',
+                visible: true,
+                opacity: 0.5,
+                scale: 1,
+                offsetX: 10,
+                offsetY: 20,
+                rotation: 0,
+                mode: 'fixed'
+            }]
+        });
+
+        const result = remapImportedWorld(world, 0);
+
+        expect(result.imageOverlays).toHaveLength(1);
+        expect(result.imageOverlays[0]).toEqual(expect.objectContaining({
+            name: 'Reference',
+            imageData: 'data:image/png;base64,test',
+            offsetX: 10,
+            offsetY: 20
+        }));
+        expect(result.imageOverlays[0].id).not.toBe('source-overlay');
+    });
+
     it('assigns fresh plate IDs', () => {
         const result = remapImportedWorld(makeWorld([makePlate('a'), makePlate('b')]), 0);
         expect(result.plates).toHaveLength(2);
@@ -137,6 +165,50 @@ describe('remapImportedWorld', () => {
         expect(result.plates[0].features[0].generatedAt).toBe(105);
     });
 
+    it('normalizes imported motion and geometry history into chronological order', () => {
+        const world = makeWorld([
+            makePlate('a', {
+                motionSegments: [
+                    { time: 20, eulerPole: { position: [0, 90], rate: 2, visible: false } },
+                    { time: 5, eulerPole: { position: [0, 90], rate: 1, visible: false } },
+                ],
+                geometryStages: [
+                    { time: 20, polygons: [], features: [] },
+                    { time: 5, polygons: [], features: [] },
+                ],
+            }),
+        ]);
+
+        const result = remapImportedWorld(world, 100).plates[0];
+
+        expect(result.motionSegments.map(segment => segment.time)).toEqual([105, 120]);
+        expect(result.geometryStages.map(stage => stage.time)).toEqual([105, 120]);
+    });
+
+    it('shifts plate lifecycle, link window, and event times by the offset', () => {
+        const world = makeWorld([
+            makePlate('parent', { birthTime: 5 }),
+            makePlate('child', {
+                birthTime: 10,
+                deathTime: 80,
+                linkedToPlateId: 'parent',
+                linkTime: 20,
+                unlinkTime: 70,
+                events: [{ id: 'event-1', time: 35, type: 'motion_change', data: {} }],
+            }),
+        ]);
+
+        const result = remapImportedWorld(world, 100);
+        const child = result.plates[1];
+
+        expect(result.plates[0].birthTime).toBe(105);
+        expect(child.birthTime).toBe(110);
+        expect(child.deathTime).toBe(180);
+        expect(child.linkTime).toBe(120);
+        expect(child.unlinkTime).toBe(170);
+        expect(child.events[0].time).toBe(135);
+    });
+
     it('remaps sibling edge metadata and drops dangling sibling refs', () => {
         const world = makeWorld([
             makePlate('a', {
@@ -187,6 +259,24 @@ describe('remapImportedWorld', () => {
         expect(newAxis.plateIdB).toBe(result.plates[1].id);
         expect(newAxis.birthTime).toBe(110);
         expect(newAxis.isochrons[0].time).toBe(135);
+    });
+
+    it('remaps rift lineage IDs consistently on axes and owned edges', () => {
+        const axis: RiftAxis = {
+            id: 'axis-1', groupId: 'rift-lineage', plateIdA: 'a', plateIdB: 'b',
+            birthPolyline: [], birthTime: 0, state: 'active', isochrons: [],
+        } as unknown as RiftAxis;
+        const edge: Polygon = {
+            id: 'a-poly', points: [[0, 0], [1, 0]], closed: true,
+            edgeMeta: [{ edgeIndex: 0, type: 'rift' as const, sourceId: 'rift-lineage' }],
+        };
+        const world = makeWorld([makePlate('a', { polygons: [edge] }), makePlate('b')], { riftAxes: [axis] });
+
+        const result = remapImportedWorld(world, 0);
+        const remappedLineage = result.riftAxes[0].groupId;
+
+        expect(remappedLineage).not.toBe('rift-lineage');
+        expect(result.plates[0].polygons[0].edgeMeta![0].sourceId).toBe(remappedLineage);
     });
 
     it('drops axes whose flanking plates are missing, and junctions follow their axes', () => {

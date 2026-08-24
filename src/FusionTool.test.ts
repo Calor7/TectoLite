@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fusePlates } from './FusionTool';
 import { createDefaultWorldState, type AppState, type Coordinate, type Feature, type TectonicPlate } from './types';
+import { pointPositionAt } from './motion/RotationModel';
 
 function makePlate(id: string, points: Coordinate[], overrides: Partial<TectonicPlate> = {}): TectonicPlate {
     const polygons = [{ id: `${id}-polygon`, points, closed: true }];
@@ -87,6 +88,15 @@ describe('fusePlates', () => {
         expect(fused.groupId).toBeUndefined();
     });
 
+    it('uses an explicit result name when supplied', () => {
+        const a = makePlate('a', [[0, 0], [10, 0], [10, 10], [0, 10]]);
+        const b = makePlate('b', [[5, 0], [15, 0], [15, 10], [5, 10]]);
+
+        const result = fusePlates(makeState([a, b]), 'a', 'b', { resultName: 'Supercontinent' });
+
+        expect(result.newState!.world.plates.at(-1)!.name).toBe('Supercontinent');
+    });
+
     it('keeps an oceanic result only when both parents are oceanic', () => {
         const pointsA: Coordinate[] = [[0, 0], [10, 0], [10, 10], [0, 10]];
         const pointsB: Coordinate[] = [[5, 0], [15, 0], [15, 10], [5, 10]];
@@ -96,5 +106,41 @@ describe('fusePlates', () => {
 
         expect(fusePlates(makeState([oceanA, oceanB]), 'a', 'b').newState!.world.plates.at(-1)!.polygonType).toBe('oceanic_plate');
         expect(fusePlates(makeState([oceanA, continent]), 'a', 'c').newState!.world.plates.at(-1)!.polygonType).toBe('continental_plate');
+    });
+
+    it('keeps overlays linked to either retired parent moving with later fused-plate motion edits', () => {
+        const pointsA: Coordinate[] = [[0, 0], [10, 0], [10, 10], [0, 10]];
+        const pointsB: Coordinate[] = [[5, 0], [15, 0], [15, 10], [5, 10]];
+        const a = makePlate('a', pointsA, {
+            motionSegments: [{ time: 0, eulerPole: { position: [0, 90], rate: 1, visible: false } }],
+        });
+        const b = makePlate('b', pointsB, {
+            motionSegments: [
+                { time: 0, eulerPole: { position: [0, 90], rate: 4, visible: false } },
+                // A pre-authored future segment on the retired parent must not
+                // reactivate and make its linked overlay drift after fusion.
+                { time: 30, eulerPole: { position: [0, 90], rate: 7, visible: false } },
+            ],
+        });
+        const orogeny = makePlate('orogeny', [[7, 2], [8, 2], [8, 3]], {
+            linkedToPlateId: 'b', linkTime: 0,
+            motionSegments: [{ time: 0, eulerPole: { position: [0, 90], rate: 0, visible: false } }],
+        });
+
+        const world = fusePlates(makeState([a, b, orogeny]), 'a', 'b').newState!.world;
+        const fused = world.plates.find(candidate => candidate.id === world.selectedPlateId)!;
+        const linked = world.plates.find(candidate => candidate.id === 'orogeny')!;
+        const anchor: Coordinate = [7, 2];
+
+        // Editing the fused plate after fusion must remain authoritative for
+        // children that still reference either retired parent. Capturing only
+        // the fusion-time pole on those parents makes the orogeny drift.
+        fused.motionSegments.push({
+            time: 30,
+            eulerPole: { position: [0, 90], rate: 3, visible: false },
+        });
+
+        expect(pointPositionAt(linked, world.plates, anchor, 25, 40))
+            .toEqual(pointPositionAt(fused, world.plates, anchor, 25, 40));
     });
 });
