@@ -4,6 +4,13 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.7 - 2026-08-24
+
+### Fixed
+
+- Updated the release verification fixture for the new default-on motion-speed
+  coloring so Windows downloads can be published by CI.
+
 ## 1.0.6 - 2026-08-24
 
 ### Changed

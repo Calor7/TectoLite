@@ -69,7 +69,7 @@ describe('MotionGizmo velocity labels', () => {
         } as unknown as ProjectionManager;
         const gizmo = new MotionGizmo();
         gizmo.setMode('drag_target');
-        gizmo.setPlate('plate', { position: [90, 0], rate: 1.9 });
+        gizmo.setPlate('plate', { position: [90, 0], rate: 0.2 });
         expect(gizmo.isActive()).toBe(true);
         expect(gizmo.getPlateId()).toBe('plate');
         expect(gizmo.isDragging()).toBe(false);
@@ -95,6 +95,7 @@ describe('MotionGizmo velocity labels', () => {
             outlineStartSpeedCmYr: 20,
             outlineFullSpeedCmYr: 25,
         });
+        gizmo.setPlate('plate', { position: [90, 0], rate: 1.9 });
         gizmo.render(context, projection, [0, 0], 6371);
         expect(textCalls.find(call => call.kind === 'fill' && call.text.includes('cm/yr'))?.color).toBe('#ff0000');
         expect(textCalls.some(call => call.kind === 'stroke'
