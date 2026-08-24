@@ -100,9 +100,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             </label>
                             <fieldset id="canvas-motion-gradient-fields" class="canvas-motion-gradient-fields" disabled>
                                 <label class="ui-color-row" for="canvas-motion-high-speed-color"><span>Limit color</span><input type="color" id="canvas-motion-high-speed-color" value="#ff3b30"></label>
-                                <label class="ui-color-row" for="canvas-motion-normal-speed-max"><span>Highlight from</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-normal-speed-max" value="18" min="0" max="999" step="1"> cm/yr</span></label>
-                                <label class="ui-color-row" for="canvas-motion-high-speed"><span>Realistic maximum</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-high-speed" value="20" min="1" max="1000" step="1"> cm/yr</span></label>
-                                <label class="ui-color-row" for="canvas-motion-outline-full-speed"><span>Full outline at</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-outline-full-speed" value="25" min="2" max="1000" step="1"> cm/yr</span></label>
+                                <label class="ui-color-row" for="canvas-motion-normal-speed-max"><span>Highlight from</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-normal-speed-max" value="6" min="0" max="999" step="1"> cm/yr</span></label>
+                                <label class="ui-color-row" for="canvas-motion-high-speed"><span>Fast-speed maximum</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-high-speed" value="15" min="1" max="1000" step="1"> cm/yr</span></label>
+                                <label class="ui-color-row" for="canvas-motion-outline-full-speed"><span>Full outline at</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-outline-full-speed" value="20" min="2" max="1000" step="1"> cm/yr</span></label>
                             </fieldset>
                             <p class="appearance-settings-note canvas-motion-note">Near the maximum, the fill becomes light red. Above it, the limit-colored outer outline fades in across the configured range.</p>
                         </div>

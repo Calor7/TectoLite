@@ -31,9 +31,9 @@ export const DEFAULT_MOTION_LABEL_OPTIONS: MotionLabelOptions = {
     normalColor: '#ffffff',
     useSpeedGradient: false,
     highSpeedColor: '#ff3b30',
-    normalSpeedMaxCmYr: 18,
-    highSpeedCmYr: 20,
-    outlineFullSpeedCmYr: 25,
+    normalSpeedMaxCmYr: 6,
+    highSpeedCmYr: 15,
+    outlineFullSpeedCmYr: 20,
 };
 
 export interface MotionLabelStyle {

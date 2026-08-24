@@ -4,6 +4,14 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.5 - 2026-08-24
+
+### Changed
+
+- Speed-limit highlighting now starts at the 6 cm/yr base speed, reaches its
+  light-red maximum at 15 cm/yr, and gains its outer outline from 15 to 20
+  cm/yr. The three thresholds remain customizable in Appearance settings.
+
 ## 1.0.4 - 2026-08-24
 
 ### Added
