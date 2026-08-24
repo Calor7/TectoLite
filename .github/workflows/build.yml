@@ -48,7 +48,7 @@ jobs:
 
       - name: Smoke-test packaged Electron export
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" ./release/linux-unpacked/tectolite --smoke-export
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" ./release/linux-unpacked/tectolite --smoke-export --no-sandbox --disable-gpu
       
       - name: Package Windows release targets
         if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows'
