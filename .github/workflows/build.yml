@@ -57,35 +57,17 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: npx electron-builder --publish=never
 
-      - name: Package macOS release targets
-        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS'
-        env:
-          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx electron-builder --publish=never
-
-      - name: Package Linux release targets
-        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Linux'
-        run: npx electron-builder --publish=never
-
       - name: Verify artifacts and write SHA-256 checksums
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows'
         run: node scripts/write-release-checksums.cjs release
 
-      - name: Upload artifacts (per OS)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload Windows release artifacts
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: TectoLite-${{ matrix.os }}
+          name: TectoLite-windows
           path: |
             release/*.exe
-            release/*.dmg
-            release/*.zip
-            release/*.AppImage
-            release/*.deb
             release/SHA256SUMS-*.txt
           if-no-files-found: error
 
@@ -106,10 +88,6 @@ jobs:
         with:
           files: |
             release-artifacts/**/*.exe
-            release-artifacts/**/*.dmg
-            release-artifacts/**/*.zip
-            release-artifacts/**/*.AppImage
-            release-artifacts/**/*.deb
             release-artifacts/**/SHA256SUMS-*.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
