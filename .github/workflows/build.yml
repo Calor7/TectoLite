@@ -67,7 +67,8 @@ jobs:
         with:
           name: TectoLite-windows
           path: |
-            release/*.exe
+            release/TectoLite-Portable-*-x64.exe
+            release/TectoLite-Setup-*-x64.exe
             release/SHA256SUMS-*.txt
           if-no-files-found: error
 
