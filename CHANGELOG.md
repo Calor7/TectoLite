@@ -4,6 +4,14 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.8 - 2026-08-24
+
+### Fixed
+
+- Kept the canvas painted while Explorer, Tool Options, and Properties animate
+  open or closed by skipping no-op backing-store resets and redrawing real
+  canvas resizes before the browser presents the frame.
+
 ## 1.0.7 - 2026-08-24
 
 ### Fixed
