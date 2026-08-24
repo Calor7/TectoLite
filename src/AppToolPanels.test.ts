@@ -21,5 +21,12 @@ describe('contextual tool panels', () => {
         expect(html).toContain('id="check-show-tool-names" checked');
         expect(html).toContain('<span>Show tool names</span>');
         expect(html).not.toContain('Show tool actions');
+        expect(html).toContain('class="motion-unit">cm/yr</span>');
+        expect(html).toContain('id="check-use-default-ui-colors" checked');
+        expect(html).toContain('id="ui-color-background"');
+        expect(html).toContain('id="ui-color-surface"');
+        expect(html).toContain('id="ui-color-controls"');
+        expect(html).toContain('id="ui-color-text"');
+        expect(html).toContain('id="ui-color-accent"');
     });
 });

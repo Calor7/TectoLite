@@ -4,6 +4,19 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.3 - 2026-08-24
+
+### Added
+
+- Added saved Appearance settings for UI background, panel, control, text, and
+  accent colors, with a default-colors checkbox that restores theme precedence.
+
+### Changed
+
+- Motion units such as `cm/yr` and `deg/Ma` now use a dedicated high-contrast
+  color: white in the default dark theme and near-black in the light theme.
+- Light/Dark theme selection is now restored when the app starts.
+
 ## 1.0.2 - 2026-08-24
 
 ### Added

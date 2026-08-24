@@ -84,6 +84,7 @@ import { bindKofiHoverAnimation } from './ui/kofiAnimation';
 import { bindProgressivePropertyPanels } from './ui/ProgressiveDisclosure';
 import { bindDockController, type DockController } from './ui/DockController';
 import { loadToolPreferences, saveToolPreferences, type ToolPreferences } from './ui/ToolPreferences';
+import { bindUiColorPreferences } from './ui/UiColorPreferences';
 
 type UnifiedExportOptions = NonNullable<Awaited<ReturnType<typeof showUnifiedExportDialog>>>;
 
@@ -156,7 +157,17 @@ class TectoLiteApp {
     }
 
     private init(): void {
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'light' || savedTheme === 'dark') {
+            document.body.setAttribute('data-theme', savedTheme);
+        }
         document.querySelector<HTMLDivElement>('#app')!.innerHTML = this.getHTML();
+        const themeIcon = document.querySelector<HTMLElement>('#btn-theme-toggle [data-theme-icon]');
+        if (themeIcon) themeIcon.innerHTML = uiIcon(savedTheme === 'light' ? 'sun' : 'moon');
+        bindUiColorPreferences(document, localStorage, () => {
+            this.canvasManager?.markDirty();
+            this.canvasManager?.render();
+        });
         const runningInElectron = navigator.userAgent.toLowerCase().includes('electron');
         document.getElementById('link-download-windows')?.toggleAttribute('hidden', runningInElectron);
         this.setupResizers();

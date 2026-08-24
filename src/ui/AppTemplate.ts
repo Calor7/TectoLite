@@ -77,6 +77,21 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     <span class="icon">${uiIcon('settings')}</span><span class="header-label header-collapse-label">Settings</span>
                 </button>
                 <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px; max-height: calc(100vh - 64px); overflow-y: auto;">
+                    <div class="dropdown-section appearance-settings">
+                        <div class="dropdown-header">Appearance</div>
+                        <label class="view-dropdown-item ui-default-colors-row">
+                            <span>Use default UI colors</span>
+                            <input type="checkbox" id="check-use-default-ui-colors" checked>
+                        </label>
+                        <fieldset id="ui-color-custom-fields" class="ui-color-custom-fields" disabled>
+                            <label class="ui-color-row" for="ui-color-background"><span>Background</span><input type="color" id="ui-color-background" value="#13171f"></label>
+                            <label class="ui-color-row" for="ui-color-surface"><span>Panels</span><input type="color" id="ui-color-surface" value="#1f303e"></label>
+                            <label class="ui-color-row" for="ui-color-controls"><span>Controls</span><input type="color" id="ui-color-controls" value="#252f3e"></label>
+                            <label class="ui-color-row" for="ui-color-text"><span>Text</span><input type="color" id="ui-color-text" value="#eff6fb"></label>
+                            <label class="ui-color-row" for="ui-color-accent"><span>Accent</span><input type="color" id="ui-color-accent" value="#00bde3"></label>
+                        </fieldset>
+                        <p class="appearance-settings-note">Saved on this device. Default colors follow the Light/Dark theme.</p>
+                    </div>
                     <div class="dropdown-section">
                         <div class="dropdown-header">Timeline</div>
                         <div style="padding: 8px; display: flex; flex-direction: column; gap: 8px;">
@@ -645,11 +660,11 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             <div style="display:flex; align-items:center; gap:6px;">
                                 <input type="number" id="speed-input-cm" class="property-input" step="0.05" style="width:70px;" disabled>
-                                <span style="font-size:10px; color:var(--text-secondary);">cm/yr</span>
+                                <span class="motion-unit">cm/yr</span>
                             </div>
                             <div style="display:flex; align-items:center; gap:6px;">
                                 <input type="number" id="speed-input-deg" class="property-input" step="0.05" style="width:70px;" disabled>
-                                <span style="font-size:10px; color:var(--text-secondary);">deg/Ma</span>
+                                <span class="motion-unit">deg/Ma</span>
                             </div>
                         </div>
                         <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
@@ -804,11 +819,11 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                  <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div style="display: flex; align-items: baseline; gap: 6px;">
                         <span id="drag-target-speed-deg" style="color: var(--accent-primary); font-size: 20px; font-weight: bold; font-family: monospace;">--</span>
-                        <span style="color: var(--text-secondary); font-size: 12px;">deg/Ma</span>
+                        <span class="motion-unit motion-unit-modal">deg/Ma</span>
                     </div>
                     <div style="display: flex; align-items: baseline; gap: 6px;">
                         <span id="drag-target-speed-cm" style="color: var(--accent-success); font-size: 16px; font-weight: bold; font-family: monospace;">--</span>
-                        <span style="color: var(--text-secondary); font-size: 12px;">cm/yr</span>
+                        <span class="motion-unit motion-unit-modal">cm/yr</span>
                     </div>
                  </div>
                  <div id="drag-target-warning" style="font-size: 11px; color: var(--accent-warning); display: none;">Warning: Excessive velocity detected!</div>
