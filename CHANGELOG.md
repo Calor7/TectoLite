@@ -4,6 +4,19 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.6 - 2026-08-24
+
+### Changed
+
+- Motion-label fill now shifts from its normal color at 6 cm/yr to the warning
+  color at 8 cm/yr. The warning outline begins above 15 cm/yr and reaches full
+  strength at 20 cm/yr; all four thresholds remain customizable. Speed coloring
+  is enabled by default.
+- Moved UI and canvas appearance controls from Settings to View. View now groups
+  appearance, workspace panels, projection, reference images, camera views, and
+  map display, while Settings contains simulation, planet, drawing-default, and
+  experimental behavior.
+
 ## 1.0.5 - 2026-08-24
 
 ### Changed

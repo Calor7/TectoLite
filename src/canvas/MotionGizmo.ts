@@ -24,15 +24,17 @@ export interface MotionLabelOptions {
     highSpeedColor: string;
     normalSpeedMaxCmYr: number;
     highSpeedCmYr: number;
+    outlineStartSpeedCmYr: number;
     outlineFullSpeedCmYr: number;
 }
 
 export const DEFAULT_MOTION_LABEL_OPTIONS: MotionLabelOptions = {
     normalColor: '#ffffff',
-    useSpeedGradient: false,
+    useSpeedGradient: true,
     highSpeedColor: '#ff3b30',
     normalSpeedMaxCmYr: 6,
-    highSpeedCmYr: 15,
+    highSpeedCmYr: 8,
+    outlineStartSpeedCmYr: 15,
     outlineFullSpeedCmYr: 20,
 };
 
@@ -52,13 +54,13 @@ export function resolveMotionLabelStyle(speedCmYr: number, options: MotionLabelO
         (speed - options.normalSpeedMaxCmYr)
         / (options.highSpeedCmYr - options.normalSpeedMaxCmYr)
     );
-    const fillColor = mixColors(options.normalColor, options.highSpeedColor, 1 - fillProgress * 0.45);
-    if (speed <= options.highSpeedCmYr) {
+    const fillColor = mixColors(options.normalColor, options.highSpeedColor, 1 - fillProgress);
+    if (speed <= options.outlineStartSpeedCmYr) {
         return { fillColor, warningOutlineColor: null };
     }
     const outlineProgress = Math.min(1,
-        (speed - options.highSpeedCmYr)
-        / (options.outlineFullSpeedCmYr - options.highSpeedCmYr)
+        (speed - options.outlineStartSpeedCmYr)
+        / (options.outlineFullSpeedCmYr - options.outlineStartSpeedCmYr)
     );
     const red = Number.parseInt(options.highSpeedColor.slice(1, 3), 16);
     const green = Number.parseInt(options.highSpeedColor.slice(3, 5), 16);

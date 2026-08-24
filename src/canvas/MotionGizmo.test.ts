@@ -8,27 +8,31 @@ describe('MotionGizmo velocity labels', () => {
             normalColor: '#ffffff',
             useSpeedGradient: true,
             highSpeedColor: '#ff0000',
-            normalSpeedMaxCmYr: 18,
-            highSpeedCmYr: 20,
-            outlineFullSpeedCmYr: 25,
+            normalSpeedMaxCmYr: 6,
+            highSpeedCmYr: 8,
+            outlineStartSpeedCmYr: 15,
+            outlineFullSpeedCmYr: 20,
         };
 
-        expect(resolveMotionLabelStyle(10, options)).toEqual({
+        expect(resolveMotionLabelStyle(5, options)).toEqual({
             fillColor: '#ffffff', warningOutlineColor: null,
         });
-        expect(resolveMotionLabelStyle(19, options)).toEqual({
-            fillColor: '#ffc6c6', warningOutlineColor: null,
+        expect(resolveMotionLabelStyle(7, options)).toEqual({
+            fillColor: '#ff8080', warningOutlineColor: null,
+        });
+        expect(resolveMotionLabelStyle(8, options)).toEqual({
+            fillColor: '#ff0000', warningOutlineColor: null,
+        });
+        expect(resolveMotionLabelStyle(15, options)).toEqual({
+            fillColor: '#ff0000', warningOutlineColor: null,
+        });
+        expect(resolveMotionLabelStyle(16, options)).toEqual({
+            fillColor: '#ff0000', warningOutlineColor: 'rgba(255, 0, 0, 0.2)',
         });
         expect(resolveMotionLabelStyle(20, options)).toEqual({
-            fillColor: '#ff8c8c', warningOutlineColor: null,
+            fillColor: '#ff0000', warningOutlineColor: 'rgba(255, 0, 0, 1)',
         });
-        expect(resolveMotionLabelStyle(21, options)).toEqual({
-            fillColor: '#ff8c8c', warningOutlineColor: 'rgba(255, 0, 0, 0.2)',
-        });
-        expect(resolveMotionLabelStyle(25, options)).toEqual({
-            fillColor: '#ff8c8c', warningOutlineColor: 'rgba(255, 0, 0, 1)',
-        });
-        expect(resolveMotionLabelStyle(21, { ...options, useSpeedGradient: false })).toEqual({
+        expect(resolveMotionLabelStyle(16, { ...options, useSpeedGradient: false })).toEqual({
             fillColor: '#ffffff', warningOutlineColor: null,
         });
     });
@@ -88,10 +92,11 @@ describe('MotionGizmo velocity labels', () => {
             highSpeedColor: '#ff0000',
             normalSpeedMaxCmYr: 18,
             highSpeedCmYr: 20,
+            outlineStartSpeedCmYr: 20,
             outlineFullSpeedCmYr: 25,
         });
         gizmo.render(context, projection, [0, 0], 6371);
-        expect(textCalls.find(call => call.kind === 'fill' && call.text.includes('cm/yr'))?.color).toBe('#fe8c8c');
+        expect(textCalls.find(call => call.kind === 'fill' && call.text.includes('cm/yr'))?.color).toBe('#ff0000');
         expect(textCalls.some(call => call.kind === 'stroke'
             && call.text.includes('cm/yr')
             && call.color.startsWith('rgba(255, 0, 0,'))).toBe(true);

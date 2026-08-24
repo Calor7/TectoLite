@@ -22,6 +22,41 @@ export interface AppTemplateOptions {
   customPresetListHtml: string;
 }
 
+function renderAppearanceSettings(): string {
+  return `
+                    <div class="dropdown-section appearance-settings">
+                        <div class="dropdown-header">Appearance</div>
+                        <label class="view-dropdown-item ui-default-colors-row">
+                            <span>Use default UI colors</span>
+                            <input type="checkbox" id="check-use-default-ui-colors" checked>
+                        </label>
+                        <fieldset id="ui-color-custom-fields" class="ui-color-custom-fields" disabled>
+                            <label class="ui-color-row" for="ui-color-background"><span>Background</span><input type="color" id="ui-color-background" value="#13171f"></label>
+                            <label class="ui-color-row" for="ui-color-surface"><span>Panels</span><input type="color" id="ui-color-surface" value="#1f303e"></label>
+                            <label class="ui-color-row" for="ui-color-controls"><span>Controls</span><input type="color" id="ui-color-controls" value="#252f3e"></label>
+                            <label class="ui-color-row" for="ui-color-text"><span>Text</span><input type="color" id="ui-color-text" value="#eff6fb"></label>
+                            <label class="ui-color-row" for="ui-color-accent"><span>Accent</span><input type="color" id="ui-color-accent" value="#00bde3"></label>
+                        </fieldset>
+                        <p class="appearance-settings-note">Saved on this device. Default colors follow the Light/Dark theme.</p>
+                        <div class="canvas-motion-settings">
+                            <div class="appearance-subheader">Canvas motion labels</div>
+                            <label class="ui-color-row" for="canvas-motion-normal-color"><span>Normal color</span><input type="color" id="canvas-motion-normal-color" value="#ffffff"></label>
+                            <label class="ui-default-colors-row canvas-motion-gradient-toggle">
+                                <span>Highlight speed</span>
+                                <input type="checkbox" id="check-canvas-motion-speed-gradient" checked>
+                            </label>
+                            <fieldset id="canvas-motion-gradient-fields" class="canvas-motion-gradient-fields" disabled>
+                                <label class="ui-color-row" for="canvas-motion-high-speed-color"><span>Warning color</span><input type="color" id="canvas-motion-high-speed-color" value="#ff3b30"></label>
+                                <label class="ui-color-row" for="canvas-motion-normal-speed-max"><span>Color shift starts</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-normal-speed-max" value="6" min="0" max="999" step="1"> cm/yr</span></label>
+                                <label class="ui-color-row" for="canvas-motion-high-speed"><span>Full warning color</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-high-speed" value="8" min="1" max="1000" step="1"> cm/yr</span></label>
+                                <label class="ui-color-row" for="canvas-motion-outline-start-speed"><span>Outline starts</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-outline-start-speed" value="15" min="1" max="1000" step="1"> cm/yr</span></label>
+                                <label class="ui-color-row" for="canvas-motion-outline-full-speed"><span>Full outline</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-outline-full-speed" value="20" min="2" max="1000" step="1"> cm/yr</span></label>
+                            </fieldset>
+                            <p class="appearance-settings-note canvas-motion-note">Color shifts from 6–8 cm/yr. Above 15 cm/yr, the warning-colored outer outline fades in until 20 cm/yr.</p>
+                        </div>
+                    </div>`;
+}
+
 /**
  * Generates the full application HTML template.
  */
@@ -73,42 +108,12 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             
             <!-- Settings Dropdown (formerly Planet) -->
             <div class="view-dropdown-container">
-                <button id="btn-planet" class="btn btn-secondary" title="Application Settings" aria-controls="planet-dropdown-menu" aria-expanded="false" aria-haspopup="true">
+                <button id="btn-planet" class="btn btn-secondary" title="Application behavior and defaults" aria-label="Application Settings" aria-controls="planet-dropdown-menu" aria-expanded="false" aria-haspopup="true">
                     <span class="icon">${uiIcon('settings')}</span><span class="header-label header-collapse-label">Settings</span>
                 </button>
                 <div id="planet-dropdown-menu" class="view-dropdown-menu" style="min-width: 240px; max-height: calc(100vh - 64px); overflow-y: auto;">
-                    <div class="dropdown-section appearance-settings">
-                        <div class="dropdown-header">Appearance</div>
-                        <label class="view-dropdown-item ui-default-colors-row">
-                            <span>Use default UI colors</span>
-                            <input type="checkbox" id="check-use-default-ui-colors" checked>
-                        </label>
-                        <fieldset id="ui-color-custom-fields" class="ui-color-custom-fields" disabled>
-                            <label class="ui-color-row" for="ui-color-background"><span>Background</span><input type="color" id="ui-color-background" value="#13171f"></label>
-                            <label class="ui-color-row" for="ui-color-surface"><span>Panels</span><input type="color" id="ui-color-surface" value="#1f303e"></label>
-                            <label class="ui-color-row" for="ui-color-controls"><span>Controls</span><input type="color" id="ui-color-controls" value="#252f3e"></label>
-                            <label class="ui-color-row" for="ui-color-text"><span>Text</span><input type="color" id="ui-color-text" value="#eff6fb"></label>
-                            <label class="ui-color-row" for="ui-color-accent"><span>Accent</span><input type="color" id="ui-color-accent" value="#00bde3"></label>
-                        </fieldset>
-                        <p class="appearance-settings-note">Saved on this device. Default colors follow the Light/Dark theme.</p>
-                        <div class="canvas-motion-settings">
-                            <div class="appearance-subheader">Canvas motion labels</div>
-                            <label class="ui-color-row" for="canvas-motion-normal-color"><span>Normal color</span><input type="color" id="canvas-motion-normal-color" value="#ffffff"></label>
-                            <label class="ui-default-colors-row canvas-motion-gradient-toggle">
-                                <span>Highlight speed limit</span>
-                                <input type="checkbox" id="check-canvas-motion-speed-gradient">
-                            </label>
-                            <fieldset id="canvas-motion-gradient-fields" class="canvas-motion-gradient-fields" disabled>
-                                <label class="ui-color-row" for="canvas-motion-high-speed-color"><span>Limit color</span><input type="color" id="canvas-motion-high-speed-color" value="#ff3b30"></label>
-                                <label class="ui-color-row" for="canvas-motion-normal-speed-max"><span>Highlight from</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-normal-speed-max" value="6" min="0" max="999" step="1"> cm/yr</span></label>
-                                <label class="ui-color-row" for="canvas-motion-high-speed"><span>Fast-speed maximum</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-high-speed" value="15" min="1" max="1000" step="1"> cm/yr</span></label>
-                                <label class="ui-color-row" for="canvas-motion-outline-full-speed"><span>Full outline at</span><span class="canvas-motion-number"><input type="number" id="canvas-motion-outline-full-speed" value="20" min="2" max="1000" step="1"> cm/yr</span></label>
-                            </fieldset>
-                            <p class="appearance-settings-note canvas-motion-note">Near the maximum, the fill becomes light red. Above it, the limit-colored outer outline fades in across the configured range.</p>
-                        </div>
-                    </div>
                     <div class="dropdown-section">
-                        <div class="dropdown-header">Timeline</div>
+                        <div class="dropdown-header">Timeline &amp; simulation</div>
                         <div style="padding: 8px; display: flex; flex-direction: column; gap: 8px;">
                             <label style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
                                 <span>Max Duration (Ma)</span>
@@ -117,7 +122,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         </div>
                     </div>
                     <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
-                        <div class="dropdown-header">Planet</div>
+                        <div class="dropdown-header">Planet model</div>
                         <label class="view-dropdown-item" style="display:flex; justify-content:space-between; align-items:center;">
                             <span>Custom Planet Radius</span>
                             <input type="checkbox" id="check-custom-radius">
@@ -170,7 +175,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
                     <!-- Line Entity Defaults — per-type color + dash pattern -->
                     <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
-                        <div class="dropdown-header">Line Entity Defaults</div>
+                        <div class="dropdown-header">Drawing defaults</div>
                         ${(() => {
                           const defs = resolveLineTypeDefaults(g.lineTypeDefaults);
                           const types: LineType[] = ['divergent', 'convergent', 'transform', 'generic'];
@@ -200,7 +205,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <!-- View Dropdown -->
             <div class="view-dropdown-container">
 
-                <button id="btn-view-panels" class="btn btn-secondary" title="View Options" aria-controls="view-dropdown-menu" aria-expanded="false" aria-haspopup="true">
+                <button id="btn-view-panels" class="btn btn-secondary" title="Display and workspace options" aria-label="View Options" aria-controls="view-dropdown-menu" aria-expanded="false" aria-haspopup="true">
                     <span class="icon">${uiIcon('eye')}</span><span class="header-label header-collapse-label">View</span>
                 </button>
                 <div id="view-dropdown-menu" class="view-dropdown-menu" style="min-width: 250px; max-height: calc(100vh - 64px); overflow-y: auto;">
@@ -216,9 +221,10 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <span>${uiIcon('moon')} Toggle theme</span>
                         </button>
                     </div>
-                    <!-- 1. BAR SETTING (Panels) -->
+                    ${renderAppearanceSettings()}
+                    <!-- 1. WORKSPACE PANELS -->
                     <div class="dropdown-section">
-                        <div class="dropdown-header">Bars</div>
+                        <div class="dropdown-header">Workspace panels</div>
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-view-tools" checked> Tools
                         </label>
@@ -252,7 +258,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
                     <!-- 3. IMAGE OVERLAY -->
                     <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
-                        <div class="dropdown-header">Reference Overlays <span id="overlay-count" style="font-weight: normal; opacity: .7;">(0)</span></div>
+                        <div class="dropdown-header">Reference images <span id="overlay-count" style="font-weight: normal; opacity: .7;">(0)</span></div>
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-show-overlay"> Show selected <span class="info-icon" data-tooltip="Show or hide the selected reference image">(i)</span>
                         </label>
@@ -307,7 +313,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
                     <!-- 4. EFFECTS SETTING -->
                     <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
-                        <div class="dropdown-header">Effects</div>
+                        <div class="dropdown-header">Map display</div>
                         <label class="view-dropdown-item">
                             <input type="checkbox" id="check-grid" checked> Show Grid <span class="info-icon" data-tooltip="Toggle the latitude/longitude grid">(i)</span>
                         </label>
