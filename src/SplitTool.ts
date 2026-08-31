@@ -20,6 +20,7 @@ import {
 } from './utils/sphericalMath';
 import { derivePlateGeometry, pointPositionAt, activeEulerPole } from './motion/RotationModel';
 import { isMotionLinkActiveAtTime } from './motion/LinkModel';
+import { generatedNameWithSuffix } from './nameLimits';
 
 // Legacy interface for start/end splits
 interface SplitLine {
@@ -979,7 +980,7 @@ export function splitPlate(
     const leftPlate: TectonicPlate = {
         ...plateToSplit,
         id: leftPlateId,
-        name: options.resultNames?.[0]?.trim() || `${plateToSplit.name} (A)`,
+        name: options.resultNames?.[0]?.trim() || generatedNameWithSuffix(plateToSplit.name, ' (A)'),
         description: inheritedDescription,
         polygons: leftPolygons,
         features: leftFeatures,
@@ -1007,7 +1008,7 @@ export function splitPlate(
         ...plateToSplit,
         id: rightPlateId,
         description: inheritedDescription,
-        name: options.resultNames?.[1]?.trim() || `${plateToSplit.name} (B)`,
+        name: options.resultNames?.[1]?.trim() || generatedNameWithSuffix(plateToSplit.name, ' (B)'),
         polygons: rightPolygons,
         features: rightFeatures,
         motionSegments: [{ time: currentTime, eulerPole: { ...inheritedPole } }],
@@ -1111,7 +1112,7 @@ export function splitPlate(
                 processedChildren.push({
                     ...child,
                     id: childLeftPlateId,
-                    name: `${child.name} (A)`,
+                    name: generatedNameWithSuffix(child.name, ' (A)'),
                     polygons: childLeftPolys,
                     initialPolygons: childLeftPolys,
                     features: childLeftFeatures,
@@ -1132,7 +1133,7 @@ export function splitPlate(
                 processedChildren.push({
                     ...child,
                     id: childRightPlateId,
-                    name: `${child.name} (B)`,
+                    name: generatedNameWithSuffix(child.name, ' (B)'),
                     polygons: childRightPolys,
                     initialPolygons: childRightPolys,
                     features: childRightFeatures,

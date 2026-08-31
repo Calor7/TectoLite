@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { fusePlates } from './FusionTool';
 import { createDefaultWorldState, type AppState, type Coordinate, type Feature, type TectonicPlate } from './types';
 import { pointPositionAt } from './motion/RotationModel';
+import { parseProjectText, PROJECT_LIMITS } from './ProjectIO';
+import { CURRENT_SAVE_VERSION } from './migration';
 
 function makePlate(id: string, points: Coordinate[], overrides: Partial<TectonicPlate> = {}): TectonicPlate {
     const polygons = [{ id: `${id}-polygon`, points, closed: true }];
@@ -95,6 +97,20 @@ describe('fusePlates', () => {
         const result = fusePlates(makeState([a, b]), 'a', 'b', { resultName: 'Supercontinent' });
 
         expect(result.newState!.world.plates.at(-1)!.name).toBe('Supercontinent');
+    });
+
+    it('keeps automatic fused names saveable after repeated operations', () => {
+        const a = makePlate('a', [[0, 0], [10, 0], [10, 10], [0, 10]], { name: 'A'.repeat(100) });
+        const b = makePlate('b', [[5, 0], [15, 0], [15, 10], [5, 10]], { name: 'B'.repeat(100) });
+        const result = fusePlates(makeState([a, b]), 'a', 'b');
+        const fusedName = result.newState!.world.plates.at(-1)!.name;
+
+        expect(fusedName.length).toBeLessThanOrEqual(PROJECT_LIMITS.name);
+        expect(() => parseProjectText(JSON.stringify({
+            version: CURRENT_SAVE_VERSION,
+            name: 'Project',
+            world: result.newState!.world,
+        }))).not.toThrow();
     });
 
     it('keeps an oceanic result only when both parents are oceanic', () => {

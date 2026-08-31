@@ -70,6 +70,17 @@ describe('ProjectIO', () => {
         expect(() => parseProjectText(JSON.stringify(raw))).toThrow(/too long/);
     });
 
+    it('repairs oversized automatic operation names from older saves', () => {
+        const raw = project();
+        const plate = (raw.world as ReturnType<typeof createDefaultWorldState>).plates[0];
+        plate.name = `${'x'.repeat(PROJECT_LIMITS.name)} (Fused)`;
+
+        const loaded = parseProjectText(JSON.stringify(raw));
+
+        expect(loaded.world.plates[0].name).toHaveLength(PROJECT_LIMITS.name);
+        expect(loaded.world.plates[0].name).toMatch(/ \(Fused\)$/);
+    });
+
     it('rejects executable or oversized embedded image formats', () => {
         const raw = project();
         (raw.world as ReturnType<typeof createDefaultWorldState>).imageOverlays = [{

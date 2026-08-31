@@ -3,6 +3,7 @@ import { calculateSphericalCentroid, latLonToVector, vectorToLatLon, rotateVecto
 import { activeEulerPole } from './motion/RotationModel';
 import polygonClipping from 'polygon-clipping';
 import { mixColors } from './utils/colorUtils';
+import { generatedNameWithSuffix } from './nameLimits';
 
 interface FuseResult {
     success: boolean;
@@ -154,7 +155,7 @@ export function fusePlates(
 
     const fusedPlate: TectonicPlate = {
         id: generateId(),
-        name: options.resultName?.trim() || `${plate1.name}-${plate2.name} (Fused)`,
+        name: options.resultName?.trim() || generatedNameWithSuffix(`${plate1.name}-${plate2.name}`, ' (Fused)'),
         // Explorer organization is inherited only when both parents agree.
         groupId: plate1.groupId === plate2.groupId ? plate1.groupId : undefined,
         color: mixedColor,

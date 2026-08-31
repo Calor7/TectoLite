@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { splitPlate } from './SplitTool';
 import { createDefaultWorldState, type AppState, type Coordinate, type Feature, type TectonicPlate } from './types';
+import { parseProjectText, PROJECT_LIMITS } from './ProjectIO';
+import { CURRENT_SAVE_VERSION } from './migration';
 
 function makePlate(overrides: Partial<TectonicPlate> = {}): TectonicPlate {
     const points: Coordinate[] = [[-10, -10], [10, -10], [10, 10], [-10, 10]];
@@ -77,6 +79,20 @@ describe('splitPlate', () => {
         const children = result.world.plates.filter(plate => plate.parentPlateId === source.id);
 
         expect(children.map(child => child.name).sort()).toEqual(['Eastern block', 'Western block']);
+    });
+
+    it('keeps automatic split names saveable after repeated splits', () => {
+        const source = makePlate({ name: 'Source '.padEnd(PROJECT_LIMITS.name - 1, 'x') });
+        const firstSplit = splitPlate(makeState(source), source.id, verticalCut);
+        const firstChild = firstSplit.world.plates.find(plate => plate.parentPlateId === source.id)!;
+        const secondSplit = splitPlate(firstSplit, firstChild.id, verticalCut);
+
+        expect(secondSplit.world.plates.every(plate => plate.name.length <= PROJECT_LIMITS.name)).toBe(true);
+        expect(() => parseProjectText(JSON.stringify({
+            version: CURRENT_SAVE_VERSION,
+            name: 'Project',
+            world: secondSplit.world,
+        }))).not.toThrow();
     });
 
     it('partitions features between the generated children', () => {

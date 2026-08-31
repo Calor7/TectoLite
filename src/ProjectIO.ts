@@ -7,6 +7,7 @@ import {
     type Viewport,
     type WorldState,
 } from './types';
+import { MAX_PROJECT_NAME_LENGTH, repairGeneratedProjectName } from './nameLimits';
 
 /** Hard limits are intentionally generous for real projects, but finite for hostile input. */
 export const PROJECT_LIMITS = Object.freeze({
@@ -23,7 +24,7 @@ export const PROJECT_LIMITS = Object.freeze({
     timelineRecords: 250_000,
     cameraViews: 100,
     string: 200_000,
-    name: 200,
+    name: MAX_PROJECT_NAME_LENGTH,
     description: 10_000,
     id: 256,
     nestingDepth: 48,
@@ -301,6 +302,11 @@ function normalizeAndValidateSave(raw: unknown, fallbackName: string): SaveFile 
     }
     worldRecord.globalOptions = options;
     const plates = asArray(worldRecord.plates, 'project.world.plates', PROJECT_LIMITS.plates);
+    plates.forEach(plate => {
+        if (!plate || typeof plate !== 'object' || Array.isArray(plate)) return;
+        const record = plate as Record<string, unknown>;
+        if (typeof record.name === 'string') record.name = repairGeneratedProjectName(record.name);
+    });
     const budget: ValidationBudget = { coordinates: 0, polygons: 0, features: 0, timelineRecords: 0, dataUrlBytes: 0 };
     const ids = new Set<string>();
     plates.forEach((plate, index) => {
