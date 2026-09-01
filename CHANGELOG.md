@@ -4,6 +4,13 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.9 - 2026-09-01
+
+### Fixed
+
+- Kept automatic split and fusion plate names within the save-file limit and
+  repaired affected automatic names when loading older savegames.
+
 ## 1.0.8 - 2026-08-24
 
 ### Fixed

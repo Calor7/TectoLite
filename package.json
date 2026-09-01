@@ -1,7 +1,7 @@
 {
   "name": "tectolite",
   "private": true,
-  "version": "1.0.8",
+  "version": "1.0.9",
   "productName": "TectoLite",
   "description": "Tectonic Plate Simulation Engine",
   "author": "TectoLite Team",
