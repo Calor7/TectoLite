@@ -1,6 +1,6 @@
 # Editable geological scenario templates
 
-Status: implemented, independently reassessed, and verified for v1.1.0.
+Status: implemented, independently reassessed, and verified for v1.1.1.
 
 ## Product plan
 
@@ -44,4 +44,4 @@ The geological examples demonstrate authoring tools. They do not solve mantle co
 
 Regenerate the compact source asset with `node scripts/build-scenario-data.cjs`. Validate finite rotations with `npm run test:scenario-data`; `npm run verify` runs the full release checks.
 
-Release validation: 242 application tests and four finite-rotation checks pass; lint, TypeScript, production build, and the coverage ratchet pass. Browser checks cover the Pangaea start/modern endpoint, future assembly, chapter navigation, automatic pause, fresh-world branching, and a 390px-wide guide without horizontal overflow. Existing lint warnings and the main-bundle size advisory remain.
+Release validation: 250 application tests and four finite-rotation checks pass; lint, TypeScript, production build, and the coverage ratchet pass. Template validation runs per variant after Windows coverage instrumentation exposed a shared five-second timeout across all nine templates. Browser checks cover the Pangaea start/modern endpoint, future assembly, chapter navigation, automatic pause, fresh-world branching, and a 390px-wide guide without horizontal overflow. Existing lint warnings and the main-bundle size advisory remain.

@@ -13,8 +13,7 @@ describe('project templates', () => {
         expect(PROJECT_TEMPLATES.filter(template => template.timeline)).toHaveLength(4);
     });
 
-    it('creates fresh, internally valid worlds', async () => {
-        for (const template of PROJECT_TEMPLATES) {
+    it.each(PROJECT_TEMPLATES)('creates fresh, internally valid worlds: $id', async (template) => {
             const first = await template.createWorld();
             const second = await template.createWorld();
             expect(first).not.toBe(second);
@@ -30,7 +29,6 @@ describe('project templates', () => {
                 expect(plateIds.has(axis.plateIdA)).toBe(true);
                 expect(plateIds.has(axis.plateIdB)).toBe(true);
             }
-        }
     });
 
     it('creates detailed cover-only Earth and Pangaea worlds with approximate motion', async () => {

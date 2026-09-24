@@ -4,6 +4,10 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.1.1 - 2026-09-24
+
+- First published geological-timeline release. Run template validation per variant so Windows coverage instrumentation does not exhaust a shared five-second timeout. Includes all v1.1.0 functionality below.
+
 ## 1.1.0 - 2026-09-24
 
 ### Added
