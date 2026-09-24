@@ -4,6 +4,12 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.11 - 2026-09-24
+
+### Changed
+
+- Added a Ko-fi support link beside the RefracturedGames credit in the app header on wide screens.
+
 ## 1.0.10 - 2026-09-24
 
 ### Added

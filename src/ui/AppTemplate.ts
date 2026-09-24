@@ -69,7 +69,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         <a href="https://github.com/Calor7/TectoLite" target="_blank" rel="noopener noreferrer" title="TectoLite by RefracturedGames" style="color: inherit; text-decoration: none;">
                             <span class="app-brand-mark" aria-hidden="true"></span><span>TectoLite</span>
                         </a>
-                        <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a></span>
+                        <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a> <span aria-hidden="true">·</span> <a href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" aria-label="Support TectoLite on Ko-fi">Ko-fi</a></span>
                     </h1>
                     <nav class="workspace-controls" aria-label="Workspace panels">
                         <button type="button" id="btn-toggle-explorer-dock" class="workspace-control-btn" aria-pressed="false" title="Show or hide Explorer">

@@ -34,7 +34,9 @@ describe('header menus', () => {
         expect(html).toContain('aria-label="Download the portable Windows app"');
         expect(html).toContain('<span class="header-label">Download app</span>');
         expect(html.indexOf('id="link-kofi-header"')).toBeLessThan(html.indexOf('id="link-download-windows"'));
-        expect(html.match(/href="https:\/\/ko-fi\.com\/refracturedgames"/g)).toHaveLength(1);
+        expect(html.match(/href="https:\/\/ko-fi\.com\/refracturedgames"/g)).toHaveLength(2);
+        expect(html).toContain('class="app-subtitle">by <a href="https://www.refracturedgames.com"');
+        expect(html).toContain('aria-label="Support TectoLite on Ko-fi">Ko-fi</a>');
         expect(html).toContain('Ctrl+S');
         expect(html).toContain('Ctrl+O');
     });
