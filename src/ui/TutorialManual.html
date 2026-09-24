@@ -1,45 +1,49 @@
 <div class="manual-content">
-  <h1>Welcome to TectoLite</h1>
+  <h1>TectoLite manual</h1>
   <p>
-    TectoLite is an editable plate-tectonics sandbox for drawing land, assigning spherical motion, and building a
-    geological timeline. This help screen is both a quick-start guide and a map reference. The red outlines around the
-    interface are interactive: hover one to see a focused explanation. Press <kbd>Escape</kbd> or click the red
-    <strong>?</strong> again to close the tutorial.
+    Draw plates, set their motion, and explore how the map changes over time.
+    This guide covers the editing tools, plate relationships, and timeline.
+  </p>
+  <p class="manual-interaction-help">
+    Focus, hover over, or tap an outlined control for its explanation.
+    Choose <strong>Close manual</strong> or press <kbd>Escape</kbd> to return to editing.
   </p>
 
   <h2>Quick Start</h2>
   <ol>
-    <li>Choose <strong>New</strong>, then start blank or load an Earth/Pangaea template.</li>
+    <li>Choose <strong>File → New project</strong>, then start blank or load an Earth/Pangaea template.</li>
     <li>Use <strong>Select</strong> to inspect an entity. Its editable values appear in Properties.</li>
     <li>Use <strong>Draw</strong> for a closed polygon or a typed boundary line; press <kbd>Enter</kbd> to finish.</li>
     <li>Set motion with the red <strong>Euler pole</strong> and blue rate arc, or enter speed and pole values.</li>
     <li>Use <strong>Split</strong>, <strong>Fuse</strong>, and <strong>Link</strong> to build relationships over time.</li>
     <li>Scrub the timeline or press <kbd>Space</kbd> to preview motion. Use velocity arrows and flowlines to check it.</li>
-    <li>Save the editable project as JSON; use Export for images, heightmaps, GeoJSON, or GeoPackage output.</li>
+    <li>Choose <strong>File → Save project</strong> to keep the editable timeline. Use <strong>Export map…</strong>
+      for PNG images, heightmaps, or GeoPackage data.</li>
   </ol>
 
+  <h2>Make one plate follow another</h2>
+  <ol>
+    <li>Select the follower, then choose <strong>Follow another plate…</strong> in Properties.</li>
+    <li>Choose the leader on the map or in Explorer. Review the direction and start time, then create the link.</li>
+    <li>Use <strong>Follows</strong> or <strong>Followed by</strong> to select a related plate.
+      The unlink button beside each row ends that relationship at the current time.</li>
+  </ol>
+  <p>Unlinking preserves earlier linked motion and can be undone. Replacing a saved relationship can change earlier
+    motion; the review dialog explains this before you apply it.</p>
+
   <h2>Template Layers</h2>
-  <div class="legend-grid tutorial-reference-grid">
-    <section class="legend-section">
-      <h4>Cover — landmass</h4>
-      <p>A detailed coastline or island silhouette intended for manual map curation. Covers are ordinary editable
-        entities and carry approximate motion at the template epoch.</p>
-    </section>
-    <section class="legend-section">
-      <h4>Plate — continental region</h4>
-      <p>A broad, deliberately simplified non-oceanic tectonic region. It may overlap one or more land covers.</p>
-    </section>
-    <section class="legend-section">
-      <h4>Craton — stable core</h4>
-      <p>A coherent approximation of an ancient continental core. Cratons are independent overlays drawn above covers
-        and plate regions; the cover is not cut away beneath them.</p>
-    </section>
-    <section class="legend-section">
-      <h4>Oceanic crust</h4>
-      <p>An oceanic plate or seafloor strip generated away from an active rift. Its opacity is controlled separately in
-        Settings.</p>
-    </section>
-  </div>
+  <dl class="manual-layer-reference">
+    <div><dt>Cover — landmass</dt>
+      <dd>A detailed coastline or island silhouette for map editing. Covers are editable entities with approximate
+        motion at the template epoch.</dd></div>
+    <div><dt>Plate — continental region</dt>
+      <dd>A simplified non-oceanic tectonic region. It may overlap one or more land covers.</dd></div>
+    <div><dt>Craton — stable core</dt>
+      <dd>An approximation of an ancient continental core. Cratons are independent overlays above covers and plate
+        regions; the cover remains beneath them.</dd></div>
+    <div><dt>Oceanic crust</dt>
+      <dd>An oceanic plate or seafloor strip generated away from an active rift. Adjust its opacity in Settings.</dd></div>
+  </dl>
   <p><strong>Important:</strong> overlap between covers, plates, and cratons is intentional. The templates are detailed,
     editable starting approximations—not precision GPlates reconstructions.</p>
   <p>The largest continuous covers are divided into familiar editing regions: Africa, Europe, Asia, Arabia, and the
@@ -71,7 +75,7 @@
   <ul>
     <li><strong>Divergent</strong> lines mark spreading, <strong>convergent</strong> lines mark collision/subduction,
       <strong>transform</strong> lines mark lateral motion, and <strong>generic</strong> lines carry no automatic meaning.</li>
-    <li>Line colors and dash patterns are editable under Settings → Line Entity Defaults.</li>
+    <li>Line colors and dash patterns are editable under <strong>Settings → Drawing defaults</strong>.</li>
     <li>Automated boundary visualization is separate: detected convergent boundaries are red, divergent blue, and
       transform green.</li>
     <li>Feature types include mountains, volcanoes, hotspots, rifts, trenches, islands, weaknesses, polygon regions,
@@ -96,7 +100,7 @@
     <li><strong>Escape</strong>: Cancel the current operation or close the tutorial</li>
     <li><strong>Enter</strong>: Apply the active Draw or Split path</li>
     <li><strong>Ctrl+Z / Ctrl+Y</strong>: Undo / Redo; <strong>Ctrl+D</strong>: duplicate the selected entity</li>
-    <li><strong>V, H, P, D, E, F, S, L, G</strong>: Select, Rotate View, Move View, Draw, Edit, Feature, Split, Link, Fuse</li>
+    <li><strong>V, H, P, D, E, F, A, S, L, G</strong>: Select, Rotate, Move View, Draw, Edit, Feature, Label, Split, Link, Fuse</li>
     <li><strong>C</strong>: Center the camera on the selected entity</li>
     <li><strong>← / →</strong>: Step 1 Ma; hold <strong>Shift</strong> to step 10 Ma</li>
     <li><strong>Delete / Backspace</strong>: Delete the current selection</li>
@@ -106,12 +110,12 @@
   <!-- Tooltip Data Definitions (Parsed dynamically by TutorialOverlay.ts) -->
   <div id="tutorial-data" style="display: none;">
     <!-- Top Bar Actions -->
-    <div data-selector="#btn-tutorial-help">Click this button again, or press <kbd>Escape</kbd>, to close the tutorial
-      overlay.</div>
+    <div data-selector="#btn-tutorial-help">Open this manual. Choose Close manual or press <kbd>Escape</kbd> to return
+      to editing.</div>
     <div data-selector="#btn-file-menu">Open project creation, save, load, and map export actions. Save and Load also
       use <kbd>Ctrl+S</kbd> and <kbd>Ctrl+O</kbd>.</div>
-    <div data-selector="#autosave-status">Shows whether crash-recovery data is ready, being saved, or needs attention.
-      Desktop recovery uses an atomic application-data file; the browser uses IndexedDB.</div>
+    <div data-selector="#autosave-status">Shows whether the recovery copy is up to date or needs attention.
+      Save a project file to keep a copy you can open on another device.</div>
     <div data-selector="#btn-planet"
       data-nested='{"planet-radius": "Radius is locked if Custom Planet Radius is unchecked.", "timeline": "Maximum duration of the geological history in Ma (Mega-annum)."}'>
       Opens the <strong style="color:var(--accent-primary);">Settings Menu</strong> to configure simulation rules,
@@ -135,10 +139,8 @@
     <div data-selector="#btn-report-bug">Prepare a bug report with reproduction steps and optional diagnostic data.</div>
     <div data-selector="#btn-help-menu">Open the tutorial, keyboard guide, bug report, project links, and version information.</div>
     <div data-selector="#btn-hotkey-help">Show the complete keyboard shortcut guide. Shortcut: <kbd>?</kbd>.</div>
-    <div data-selector=".app-title a:first-child">TectoLite Official GitHub Repository. Open source and available for
-      your contributions!</div>
-    <div data-selector=".app-subtitle a">Refractured Games Website. Check out our other educational games and tools!
-    </div>
+    <div data-selector=".app-title a:first-child">Open TectoLite's source code and issue tracker on GitHub.</div>
+    <div data-selector=".app-subtitle a">Open the RefracturedGames website.</div>
     <div data-selector="#link-kofi-header">Support the solo developer of TectoLite on Ko-fi.</div>
     <div data-selector="#link-subscribe">Subscribe to the newsletter to get development updates and beta access.</div>
 
@@ -193,10 +195,8 @@
     <div data-selector="#plate-opacity-slider">Adjust the global transparency of all plates simultaneously.</div>
 
     <!-- Tools -->
-    <div data-selector="#title-interaction">This panel contains your primary tools for creating, rotating, and molding
-      the tectonic environment.</div>
-    <div data-selector="#title-tool-options">This panel dynamically updates to provide settings and configurations
-      specific to the tool you currently have active.</div>
+    <div data-selector="#title-interaction">Choose a tool to draw, edit, move, or link plates.</div>
+    <div data-selector="#title-tool-options">Options for the selected tool.</div>
     <div data-selector="#check-show-hints">Toggle the instructional text hints at the bottom right corner of the canvas.
     </div>
     <div data-selector="[data-tool='select']">The <strong style="color:var(--accent-primary);">Select Tool</strong> lets
@@ -271,9 +271,9 @@
       location.</div>
     <div data-selector="#btn-drag-target-confirm">Confirms the dynamically calculated pole and speeds and applies the
       motion.</div>
-    <div data-selector="#time-input-modal">Manually enter a specific year to jump to in the timeline.</div>
-    <div data-selector="#time-input-field">Type the exact year in Mega-annum (Ma).</div>
-    <div data-selector="#btn-time-input-confirm">Jump to the specified year in the timeline.</div>
+    <div data-selector="#time-input-modal">Jump to an exact time on the timeline.</div>
+    <div data-selector="#time-input-field">Enter a time in millions of years (Ma).</div>
+    <div data-selector="#btn-time-input-confirm">Jump to the entered time.</div>
 
     <!-- Timeline -->
     <div data-selector="#btn-play">Start or Pause the <strong style="color:var(--accent-primary);">Simulation
@@ -324,7 +324,7 @@
     <div data-selector=".child-link-hide">Hides the visual dotted line connecting this leader to a specific follower.
     </div>
     <div data-selector="#prop-link-time">The timeline year (Ma) when the kinematic link becomes active.</div>
-    <div data-selector="#prop-unlink-time">The timeline year (Ma) when the plates severe their kinematic relationship.
+    <div data-selector="#prop-unlink-time">The timeline time (Ma) when the follower stops inheriting the leader's motion.
     </div>
     <div data-selector="#prop-flowlines-enable">Enables visualization trails showing the exact path vertices have taken
       over time.</div>

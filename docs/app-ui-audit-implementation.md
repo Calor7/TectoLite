@@ -54,3 +54,15 @@ This implements the changes proposed in the TectoLite app audit. Existing projec
 The original reporter's precise linking symptom at 620 Ma is still unknown. These checks establish the observed behavior; they do not identify that unreported symptom. The file format stores one saved follow relationship per plate, so replacing it can rewrite earlier linked history; the review dialog now says so. Unlinking preserves earlier history.
 
 Native operating-system save dialogs and packaged Electron builds on every supported OS were not exercised. Save outcomes and failure handling have automated coverage. This is not a complete screen-reader, touch-hardware, forced-colors or accessibility certification pass; the audit's broader exploratory checks remain appropriate release QA.
+
+## Text and interface pass after commit 91b549a
+
+Applied the supplied Web AI Slop checklist to the editing app and manual. The working reference is TectoLite's map, Explorer and plate timeline. The existing Segoe UI/system font keeps controls familiar; the dark `#13171f` surface and `#00bde3` accent, with their light-theme counterparts, remain the app's visual identity.
+
+- Replaced stale tutorial instructions with current menu names, keyboard/touch guidance and the follower-first linking workflow. Layer definitions now use a semantic glossary with a readable line length instead of boxed cards. The manual has a keyboard-focusable reading area, and help outlines no longer cover its text when narrow panels sit underneath it.
+- Named time, motion and geometry actions by their result. Clarified the high-speed warning and removed reduced-opacity geometry explanations. Reused the shared choice buttons.
+- Corrected recovery wording so it does not assume the previous session was unsaved. Report messages distinguish confirmed native writes from browser downloads, explain that nothing has been sent, and state that reports include the current project.
+- Added recovery instructions to load/export failures. Preserved visible field labels when dialog forms are prepared before insertion into the document. Removed an extra HTML escape from a text-only fusion description.
+- Removed obsolete tutorial glow effects and duplicated CSS. Scoped control transitions, respected reduced motion for notifications, and enlarged narrow-screen dialog and unlink targets. Added an app-specific document description.
+
+Validation: 220 tests passed; the final overlay changes also passed the six focused tutorial/modal tests. TypeScript, changed-module ESLint and the production build passed. Browser checks covered recovery, required report fields, download status without submission, invalid project loading, time entry, keyboard focus, and manual layouts at desktop, 390px and 320px. At 320px the manual has no horizontal overflow or help targets over its reading area; the unlink button is at least 44px in each dimension. Original save-file hash remains unchanged. Native save dialogs and a complete assistive-technology audit remain outside this pass.

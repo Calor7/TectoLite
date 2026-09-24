@@ -61,6 +61,10 @@ export function showToast(message: string, duration: number = 2000): void {
                 from { opacity: 1; transform: translateX(-50%) translateY(0); }
                 to { opacity: 0; transform: translateX(-50%) translateY(10px); }
             }
+            @media (prefers-reduced-motion: reduce) {
+                @keyframes toastFadeIn { from { opacity: 1; } to { opacity: 1; } }
+                @keyframes toastFadeOut { from { opacity: 1; } to { opacity: 1; } }
+            }
         `;
         document.head.appendChild(style);
     }

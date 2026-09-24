@@ -643,7 +643,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
 
                  <div id="motion-controls" style="display: none; flex-direction:column; gap:4px;">
-                      <div style="font-size: 12px; color: var(--text-secondary);">Confirm Motion?</div>
+                      <div style="font-size: 12px; color: var(--text-secondary);">Apply this motion?</div>
                       <button class="btn btn-success" id="btn-motion-apply">${uiIcon('check')} Apply</button>
                       <button class="btn btn-secondary" id="btn-motion-cancel">${uiIcon('x')} Cancel</button>
                  </div>
@@ -783,12 +783,12 @@ export function getAppHTML(opts: AppTemplateOptions): string {
         <!-- Time Input Modal -->
         <div id="time-input-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="time-input-title" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
           <div class="modal-content" style="background: var(--bg-secondary); border: 2px solid var(--border-default); border-radius: 4px; padding: 16px; min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
-            <h3 id="time-input-title" style="margin-top: 0; color: var(--text-primary);">Set Current Time</h3>
+            <h3 id="time-input-title" style="margin-top: 0; color: var(--text-primary);">Set current time</h3>
             <label for="time-input-field">Time (Ma)</label><p id="time-input-error" class="field-error" hidden></p>
             <input type="number" min="0" id="time-input-field" class="property-input" style="width: 100%; padding: 8px; margin-bottom: 12px; font-size: 14px;" placeholder="Enter time value">
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
               <button id="btn-time-input-cancel" class="btn btn-secondary" style="padding: 6px 12px;">Cancel</button>
-              <button id="btn-time-input-confirm" class="btn btn-primary" style="padding: 6px 12px;">Confirm</button>
+              <button id="btn-time-input-confirm" class="btn btn-primary" style="padding: 6px 12px;">Set time</button>
             </div>
           </div>
         </div>
@@ -799,14 +799,14 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <div id="apply-edit-description" style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">Choose how to apply these changes to the timeline:</div>
             
             <div style="display: flex; flex-direction: column; gap: 8px;">
-                <button id="btn-apply-generation" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
-                    <span style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--color-primary);">Apply at Generation (Rewrite History)</span>
-                    <span style="font-size: 12px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Modifies the plate's base shape from birth. The change propagates through all time.</span>
+                <button id="btn-apply-generation" class="btn app-modal-choice">
+                    <span style="font-weight: 600;">Rewrite shape from birth</span>
+                    <span class="app-modal-button-subtext">Changes the plate's base shape throughout its history.</span>
                 </button>
                 
-                <button id="btn-apply-event" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
-                    <span style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--color-success);">Insert Event at Current Time</span>
-                    <span style="font-size: 12px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Creates a new 'Edit' event at <span id="lbl-current-time" style="color:var(--text-primary); font-weight:bold;">0</span> Ma. The shape changes only from this point forward.</span>
+                <button id="btn-apply-event" class="btn app-modal-choice">
+                    <span style="font-weight: 600;">Change shape from this time</span>
+                    <span class="app-modal-button-subtext">Adds an edit at <span id="lbl-current-time">0</span> Ma. Earlier geometry stays unchanged.</span>
                 </button>
             </div>
             
@@ -844,12 +844,12 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         <span class="motion-unit motion-unit-modal">cm/yr</span>
                     </div>
                  </div>
-                 <div id="drag-target-warning" style="font-size: 12px; color: var(--accent-warning); display: none;">Warning: Excessive velocity detected!</div>
+                 <div id="drag-target-warning" style="font-size: 12px; color: var(--text-danger); display: none;">Speed exceeds 20 cm/yr. Choose a target time farther from the current time to reduce it.</div>
             </div>
 
             <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
                 <button id="btn-drag-target-cancel" class="btn btn-secondary" style="min-width: 80px;">Cancel</button>
-                <button id="btn-drag-target-confirm" class="btn btn-primary" style="min-width: 80px; background-color: var(--accent-primary); color: white;">Confirm</button>
+                <button id="btn-drag-target-confirm" class="btn btn-primary" style="min-width: 80px;">Apply motion</button>
             </div>
           </div>
         </div>

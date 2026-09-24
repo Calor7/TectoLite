@@ -483,7 +483,7 @@ export function showExportDialog(currentTime = 0): Promise<ExportOptions | null>
             <h3 id="save-export-title" style="margin: 0 0 16px 0; color: var(--text-primary); display:flex; align-items:center; gap:8px;">${uiIcon('save')} Save project</h3>
             
             <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">File Name:</label>
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">File name</label>
                 <input type="text" id="export-filename" value="TectoLite-${new Date().toISOString().split('T')[0]}" 
                     style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
                     background: var(--bg-elevated); color: var(--text-primary); box-sizing: border-box;">
@@ -491,7 +491,7 @@ export function showExportDialog(currentTime = 0): Promise<ExportOptions | null>
             </div>
             
             <div style="margin-bottom: 20px;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Timeline Mode:</label>
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Timeline to save</label>
                 <div style="display: flex; flex-direction: column; gap: 8px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; 
                         background: var(--bg-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
@@ -697,7 +697,7 @@ export function parseImportFile(file: File): Promise<{ world: WorldState; viewpo
                 reject(err);
             }
         };
-        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.onerror = () => reject(new Error('Could not read the project file. Check that it is available on this device, then try opening it again.'));
         reader.readAsText(file);
     });
 }

@@ -37,7 +37,8 @@ export function prepareFields(root: ParentNode): void {
                 if (error && !hasFieldError(control)) setFieldError(control, error, '');
             });
         }
-        if (control.labels?.length || control.hasAttribute('aria-label') || control.hasAttribute('aria-labelledby')) return;
+        // Dialogs are prepared before mounting, when .labels can omit an enclosing label.
+        if (control.labels?.length || control.closest('label') || control.hasAttribute('aria-label') || control.hasAttribute('aria-labelledby')) return;
         const previous = control.previousElementSibling;
         const group = control.closest('.property-group, .tool-field, .timeline-row');
         const caption = previous?.matches('label, .property-label, .timeline-row-label') ? previous

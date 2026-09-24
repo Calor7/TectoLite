@@ -356,10 +356,10 @@ class TectoLiteApp {
 
             this.showModal({
                 title: 'Restore autosaved session?',
-                content: `An autosave from <b>${when}</b> with ${autosaveEntityCount} map entities was found. The current session ended without saving.`,
+                content: `A recovery copy from <b>${when}</b> contains ${autosaveEntityCount} map entities. Restore it to continue editing, or discard this recovery copy. Saved project files are unchanged.`,
                 buttons: [
                     {
-                        text: 'Restore Autosave',
+                        text: 'Restore session',
                         subtext: 'Continue where you left off',
                         onClick: () => {
                             this.state = {
@@ -381,7 +381,7 @@ class TectoLiteApp {
                         }
                     },
                     {
-                        text: 'Discard',
+                        text: 'Discard recovery',
                         isSecondary: true,
                         onClick: () => this.clearAutosave()
                     }
@@ -660,7 +660,12 @@ class TectoLiteApp {
         } catch (e) {
             console.error('Export failed', e);
             window.__TECTOLITE_SMOKE_LAST_ERROR__ = e instanceof Error ? e.message : 'Unknown error';
-            alert(`Export failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+            this.showModal({
+                title: 'Could not export the map',
+                content: `<p>${escapeHtml(e instanceof Error ? e.message : 'The export could not be completed.')}</p>
+                    <p>Open <strong>File → Export map…</strong> to try again. For a large image, try smaller dimensions.</p>`,
+                buttons: [{ text: 'Close', isSecondary: true, onClick: () => {} }]
+            });
         }
     }
 
@@ -1982,7 +1987,12 @@ class TectoLiteApp {
 
                 } catch (err) {
                     console.error(err);
-                    alert('Failed to load file: ' + (err as Error).message);
+                    this.showModal({
+                        title: 'Could not load the project',
+                        content: `<p>${escapeHtml(err instanceof Error ? err.message : 'The file could not be opened.')}</p>
+                            <p>Choose a TectoLite JSON project with <strong>File → Load project</strong>. If this file keeps failing, try an earlier saved copy.</p>`,
+                        buttons: [{ text: 'Close', isSecondary: true, onClick: () => {} }]
+                    });
                     (e.target as HTMLInputElement).value = '';
                 }
             }
@@ -2013,6 +2023,7 @@ class TectoLiteApp {
 
         const formHtml = `
             <div style="display:flex;flex-direction:column;gap:12px;">
+                <p class="report-file-note">The report includes your current project and app details. Save the files first, then choose where to send them.</p>
                 <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-primary);">
                     Description <span style="color:var(--accent-danger);font-size: 12px;">(required)</span>
                     <textarea id="bug-description" required rows="4" style="background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:6px;padding:8px;color:var(--text-primary);font-size:13px;font-family:inherit;resize:vertical;" placeholder="What happened? What did you expect?"></textarea><span id="bug-description-error" class="field-error" hidden></span>
@@ -2048,7 +2059,7 @@ class TectoLiteApp {
             width: '480px',
             buttons: [
                 {
-                    text: 'Save Report',
+                    text: 'Save report files',
                     onClick: () => {
                         const descEl = document.getElementById('bug-description') as HTMLTextAreaElement | null;
                         const stepsEl = document.getElementById('bug-steps') as HTMLTextAreaElement | null;
@@ -2136,44 +2147,45 @@ class TectoLiteApp {
             // Electron: save to bugs/ folder via IPC
             electronApi.saveBugReport(reportId, reportText, screenshotDataUrl)
                 .then((folder) => {
-                    this.showBugReportSentDialog(folder, reportText);
+                    this.showBugReportFilesDialog(folder, reportText);
                 })
                 .catch((err) => {
                     console.error('Failed to save bug report:', err);
                     this.downloadBugReportFiles(reportId, reportText, screenshotDataUrl);
-                    this.showBugReportSentDialog('Downloads folder', reportText);
+                    this.showBugReportFilesDialog(null, reportText, true);
                 });
         } else {
             // Web fallback: download files
             this.downloadBugReportFiles(reportId, reportText, screenshotDataUrl);
-            this.showBugReportSentDialog('Downloads folder', reportText);
+            this.showBugReportFilesDialog(null, reportText);
         }
     }
 
-    private showBugReportSentDialog(savedLocation: string, reportText: string): void {
+    private showBugReportFilesDialog(savedLocation: string | null, reportText: string, usedDownloadFallback = false): void {
         const githubBody = encodeURIComponent(reportText.split('\n--- Save file (JSON) ---')[0].trim());
         const githubUrl = `https://github.com/Calor7/TectoLite/issues/new?title=${encodeURIComponent('Bug Report')}&body=${githubBody}`;
         const discordUrl = 'https://discord.com/channels/1463842783742922772/1477000139624284343';
 
         _showModal({
-            title: 'Bug Report Saved',
-            content: `<div style="font-size:13px;color:var(--text-secondary);line-height:1.5;">
-                Your bug report has been saved to:<br>
-                <code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:12px;">${savedLocation}</code><br><br>
-                Choose how you'd like to submit it:
+            title: savedLocation ? 'Report files saved' : 'Report download started',
+            content: `<div class="report-file-note">
+                ${savedLocation
+                    ? `<p>Your report files are saved in <code>${escapeHtml(savedLocation)}</code>.</p>`
+                    : `<p>${usedDownloadFallback ? 'The app could not write to its report folder. A file download was started instead.' : 'Check your browser downloads for the report files.'} Wait for the downloads to finish before attaching them.</p>`}
+                <p>The report has not been sent. Choose a destination below, or email the files to mail@refracturedgames.com.</p>
             </div>`,
             width: '420px',
             buttons: [
                 {
                     text: 'Open GitHub Issues',
-                    subtext: 'Pre-filled with your bug report text',
+                    subtext: 'Review the report text and attach the saved files before submitting.',
                     onClick: () => {
                         this.openExternalUrl(githubUrl);
                     }
                 },
                 {
                     text: 'Open Discord bug channel',
-                    subtext: 'Paste your report into the channel',
+                    subtext: 'Attach the report files to a message in the bug channel.',
                     onClick: () => {
                         this.openExternalUrl(discordUrl);
                     }
@@ -2220,7 +2232,6 @@ class TectoLiteApp {
             shotLink.click();
         }
 
-        _showToast('Bug report downloaded. Send the files to mail@refracturedgames.com', 5000);
     }
 
     private toggleTheme(): void {
@@ -3055,7 +3066,7 @@ class TectoLiteApp {
                 buttons: [
                     {
                         text: 'Fuse Plates',
-                        subtext: `Combine geometries and features. Initial motion comes from ${escapeHtml(firstPlate.name)}.`,
+                        subtext: `Combine geometries and features. Initial motion comes from ${firstPlate.name}.`,
                         onClick: () => {
                             const resultName = (document.getElementById('fuse-result-name') as HTMLInputElement | null)?.value.trim();
                             this.pushState();

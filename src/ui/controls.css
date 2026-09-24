@@ -70,8 +70,9 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .ui-control:focus-
 .settings-section > summary { cursor: pointer; font-size: 14px; font-weight: 600; padding: 12px 4px; border-bottom: 1px solid var(--border-default); }
 .settings-section > .dropdown-section { border: 0; margin-top: 0; }
 .settings-section .dropdown-header { display: none; }
-.tutorial-highlight { border: 1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent); background: color-mix(in srgb, var(--accent-primary) 4%, transparent); box-shadow: none; animation: none; }
-.tutorial-highlight:hover, .tutorial-highlight:focus-visible { border: 2px solid var(--accent-primary); background: color-mix(in srgb, var(--accent-primary) 12%, transparent); outline: none; }
+.report-file-note { color: var(--text-secondary); overflow-wrap: anywhere; }
+.report-file-note p { margin-block: 0 12px; }
+.report-file-note code { color: var(--text-primary); }
 .tutorial-close { position: fixed; top: 12px; right: 12px; z-index: 6; }
 #toast-notification { max-width: calc(100vw - 24px); width: max-content; }
 @media (max-width: 760px) {
@@ -90,6 +91,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .ui-control:focus-
   .time-controls-row { display: flex; align-items: center; gap: 4px; }
   .speed-select.ui-control { width: 78px; padding-inline: 4px; font-size: 12px; }
   .tool-options-sidebar, .plate-sidebar, .right-sidebar { width: min(100%, 360px); }
-  .motion-link-target { min-height: 44px; }
+  .motion-link-target, .motion-link-unlink, .follow-another-plate, .tutorial-close, .app-modal-dialog .btn { min-height: 44px; }
+  .motion-link-unlink { min-width: 44px; }
   .app-modal-dialog { max-height: calc(100dvh - 16px); }
 }

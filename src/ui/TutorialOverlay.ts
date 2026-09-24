@@ -200,20 +200,6 @@ export class TutorialOverlay {
         this.svgElement.style.zIndex = '2'; // Behind tooltips, above manual
         this.svgElement.style.pointerEvents = 'none';
 
-        // Define a glowing filter for lines
-        this.svgElement.innerHTML = `
-             <defs>
-                <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-                    <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                    <feMerge>
-                        <feMergeNode in="coloredBlur"/>
-                        <feMergeNode in="SourceGraphic"/>
-                    </feMerge>
-                </filter>
-            </defs>
-        `;
-
-
         this.overlayElement.appendChild(this.svgElement);
         document.body.appendChild(this.overlayElement);
 
@@ -270,9 +256,7 @@ export class TutorialOverlay {
         });
 
         if (this.svgElement) {
-            const defs = this.svgElement.querySelector('defs');
-            this.svgElement.innerHTML = '';
-            if (defs) this.svgElement.appendChild(defs);
+            this.svgElement.replaceChildren();
         }
 
         const canvasContainer = document.querySelector('.canvas-container') as HTMLElement;
@@ -310,8 +294,11 @@ export class TutorialOverlay {
             if (dataNode) dataNode.remove();
         }
 
-        const manualDiv = document.createElement('div');
+        const manualDiv = document.createElement('article');
         manualDiv.classList.add('tutorial-general-manual');
+        manualDiv.tabIndex = 0;
+        manualDiv.setAttribute('aria-label', 'Manual contents');
+        manualDiv.addEventListener('focus', () => this.hideDynamicTooltip());
         manualDiv.innerHTML = doc.body.innerHTML;
         manualDiv.style.left = `${rawRect.left}px`;
         manualDiv.style.top = `${rawRect.top}px`;
@@ -349,9 +336,7 @@ export class TutorialOverlay {
         }
 
         if (this.svgElement) {
-            const defs = this.svgElement.querySelector('defs');
-            this.svgElement.innerHTML = '';
-            if (defs) this.svgElement.appendChild(defs);
+            this.svgElement.replaceChildren();
         }
     }
 
@@ -477,15 +462,13 @@ export class TutorialOverlay {
         path.setAttribute('stroke', 'var(--accent-primary)');
         path.setAttribute('stroke-width', '2');
         path.setAttribute('stroke-dasharray', '5,5'); // Dotted line effect
-        path.setAttribute('filter', 'url(#glow)');
 
         // Add a dot at the target element
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         circle.setAttribute('cx', `${startX}`);
         circle.setAttribute('cy', `${startY}`);
         circle.setAttribute('r', '4');
-        circle.setAttribute('fill', 'var(--accent-danger)');
-        circle.setAttribute('filter', 'url(#glow)');
+        circle.setAttribute('fill', 'var(--accent-primary)');
 
         this.svgElement.appendChild(path);
         this.svgElement.appendChild(circle);
@@ -573,6 +556,10 @@ export class TutorialOverlay {
         if (style.visibility === 'hidden' || style.opacity === '0') return false;
 
         const rect = el.getBoundingClientRect();
+        const manualRect = this.overlayElement?.querySelector('.tutorial-general-manual')?.getBoundingClientRect();
+        // Narrow sheets can sit beneath the manual. Their help targets would cover its text.
+        if (manualRect && rect.left < manualRect.right && rect.right > manualRect.left
+            && rect.top < manualRect.bottom && rect.bottom > manualRect.top) return false;
         return (
             rect.width > 0 &&
             rect.height > 0 &&

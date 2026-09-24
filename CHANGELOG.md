@@ -4,6 +4,33 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.10 - 2026-09-24
+
+### Added
+
+- Visible Follows and Followed by relationships with plate selection, individual
+  unlink actions, and a follower-first linking workflow.
+- PNG export preview, independent map-layer controls, transparent artwork export,
+  and a direct route to saving the editable project.
+- RefracturedGames branding and an updated manual with plate-following guidance.
+
+### Fixed
+
+- Unlinking retains earlier linked motion. Replacing an existing relationship
+  now explains its effect on history before it is applied.
+- Cancelled or failed saves preserve recovery data; recovery clears only after
+  a confirmed file write. Report downloads no longer claim to have finished.
+- Property edits and Explorer visibility changes participate in Undo/Redo.
+- Dialog focus, field labels and validation, filtered Explorer counts, and
+  narrow-screen panels, timeline controls and tutorial help.
+- Updated the development dependencies `js-yaml` and `joi` to patched versions
+  so the release dependency audit passes.
+
+### Changed
+
+- Consolidated form controls and dialogs, moved detailed appearance controls
+  into Settings, and clarified time, motion, geometry and recovery messages.
+
 ## 1.0.9 - 2026-09-01
 
 ### Fixed
