@@ -14,6 +14,7 @@ export interface ProjectTemplate {
     id: string;
     name: string;
     description: string;
+    timeline?: boolean;
     createWorld(): Promise<WorldState>;
 }
 
@@ -289,5 +290,14 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
         name: 'Pangaea — Covers + Plates',
         description: 'Continuous 200 Ma covers with simplified reconstructed continental plates and major cratons. Oceanic plates are omitted.',
         createWorld: () => createOverviewWorld('pangaea', 200)
-    }
+    },
+    ...(['reconstruction', 'future'] as const).flatMap(kind => [false, true].map(details => ({
+        id: `${kind === 'reconstruction' ? 'pangaea' : 'earth'}-timeline-${details ? 'overview' : 'covers'}`,
+        name: `${kind === 'reconstruction' ? 'Pangaea → present' : 'Earth → +500 Myr'} — ${details ? 'Covers + Plates' : 'Covers'}`,
+        description: kind === 'reconstruction'
+            ? 'Playable curated reconstruction: breakup, collisions, changing shapes and emerging land. Editable history from 200 Ma to today.'
+            : 'Playable illustrative Amasia scenario: rifting, new land, collision, assembly and an authored later breakup. Not a forecast.',
+        timeline: true,
+        createWorld: () => import('./scenarios/GeologicalScenarios').then(m => m.createGeologicalScenario(kind, details)),
+    })))
 ];

@@ -4,7 +4,7 @@ TectoLite is a visual tectonic-plate simulation editor for designing plates, ass
 
 ## Current status
 
-TectoLite 1.0 provides the core editing, simulation, undo/redo, project save/load, project templates, image overlays, and export workflows. Saved projects are migrated forward when the file format changes.
+TectoLite 1.1 provides the core editing, simulation, undo/redo, project save/load, project templates, image overlays, and export workflows. Saved projects are migrated forward when the file format changes.
 
 Oceanic crust generation is experimental. It is disabled by default and appears under **Settings → Experimental**. The feature can create large or unexpected geometry, so save the project before enabling it.
 
@@ -12,7 +12,18 @@ The retired guided-event automation prototype, mesh runtime, and unused elevatio
 
 ## Download
 
-[Download the latest portable Windows app](https://github.com/Calor7/TectoLite/releases/latest/download/TectoLite-Portable-1.0.13-x64.exe), or browse [all TectoLite releases](https://github.com/Calor7/TectoLite/releases).
+[Download the latest portable Windows app](https://github.com/Calor7/TectoLite/releases/latest/download/TectoLite-Portable-1.1.0-x64.exe), or browse [all TectoLite releases](https://github.com/Calor7/TectoLite/releases).
+
+## Playable geological timelines
+
+Choose **File → New project → Explore example worlds → Playable timelines**. Both Pangaea and modern Earth offer **Covers** and **Covers + Plates** variants, alongside the original static starts.
+
+- **Pangaea → present:** 200 million years of curated reconstruction with representative GPlates finite rotations, continental breakup, India–Eurasia collision, animated shapes, and illustrative emergence.
+- **Earth → +500 Myr:** a model-inspired Pacific-closure Amasia scenario, with an authored later breakup. The exact map, paths, and event dates are illustrative; there is no consensus forecast at this timescale.
+
+Use the chapter menu to jump, or play and scrub continuously. The guide shows geological age; editor fields use elapsed millions of years. Each split, fusion, motion segment and shape stage is editable in entity History. The detailed variants add linked motion carriers and representative cratons. Optional **Animate toward the next shape** interpolates stages with matching vertices.
+
+Save **Entire timeline** to retain the whole example, or **From current time** to keep its remaining history. **Guide & sources → Use current world as a new starting point** creates a fresh project without the later scripted events. Everything runs offline in the desktop app. Source notes and scientific limits are in [the scenario plan](docs/PLAN_geological_scenarios.md).
 
 ## Development
 

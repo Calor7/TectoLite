@@ -427,6 +427,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
           </div>
         </header>
         
+        <section id="scenario-guide" class="scenario-guide" aria-label="Geological scenario guide" hidden></section>
         <div class="main-content">
           <aside class="toolbar" id="toolbar" aria-label="Map tools">
             <!-- 1. TOOLS GROUP -->

@@ -4,6 +4,20 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.1.0 - 2026-09-24
+
+### Added
+
+- Four editable timeline templates: Pangaea to present and Earth to +500 million years, each with Covers and Covers + Plates variants. Includes native breakup and fusion, changing motion, animated coast deformation, new land and schematic geological processes.
+- Geological chapter guide with age labels, sources, endpoint pause and a current-world branching workflow. Historical reconstruction and illustrative future scenarios are explicitly distinguished.
+- Opt-in spherical interpolation between compatible geometry stages; save format 12 preserves it and scenario metadata.
+
+### Fixed
+
+- Split/fusion history edits synchronize ancestors, successors and linked display layers. Cascades update the playback endpoint; deleting a transition restores ancestors.
+- Feature inheritance derives parent positions at the transition, making playback and direct chapter jumps agree.
+- Saving a scenario from the middle keeps future successors, animation, geological age and feature history.
+
 ## 1.0.13 - 2026-09-24
 
 ### Changed

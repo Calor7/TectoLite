@@ -1,7 +1,7 @@
 {
   "name": "tectolite",
   "private": true,
-  "version": "1.0.13",
+  "version": "1.1.0",
   "productName": "TectoLite",
   "description": "Tectonic Plate Simulation Engine",
   "author": "TectoLite Team",
@@ -18,7 +18,8 @@
     "test:watch": "vitest",
     "lint": "eslint src",
     "build": "tsc && vite build",
-    "verify": "npm run lint && npm run typecheck && npm run check:electron && npm run test && npm run build",
+    "verify": "npm run lint && npm run typecheck && npm run check:electron && npm run test:scenario-data && npm run test && npm run build",
+    "test:scenario-data": "node scripts/check-finite-rotations.cjs",
     "preview": "vite preview",
     "icon:render": "electron scripts/render-app-icon.cjs",
     "electron-dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",

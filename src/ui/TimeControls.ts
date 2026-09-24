@@ -12,7 +12,7 @@ import { uiIcon } from './icons';
  */
 export function updatePlayButton(isPlaying: boolean): void {
     const btn = document.getElementById('btn-play');
-    if (btn) {
+    if (btn && btn.getAttribute('aria-label') !== (isPlaying ? 'Pause timeline' : 'Play timeline')) {
         btn.innerHTML = uiIcon(isPlaying ? 'pause' : 'play');
         btn.setAttribute('aria-label', isPlaying ? 'Pause timeline' : 'Play timeline');
     }

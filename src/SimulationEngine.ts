@@ -6,10 +6,8 @@ import {
     normalize,
     calculateSphericalCentroid,
     nlerpCoord,
-    rotateCoordByQuat,
-    isPointInPolygon,
 } from './utils/sphericalMath';
-import { getMotionModel, activeStage, plateRotation, pointPositionAt } from './motion/RotationModel';
+import { pointPositionAt, derivePlateGeometry } from './motion/RotationModel';
 import { BoundarySystem } from './BoundarySystem';
 import { perfMonitor } from './utils/PerfMonitor';
 
@@ -127,7 +125,13 @@ export class SimulationEngine {
         const state = this.getState();
         const deltaMa = (deltaMs / 1000) * state.world.timeScale;
 
-        this.update(deltaMa);
+        const end = state.world.scenario?.duration;
+        this.update(end === undefined ? deltaMa : Math.max(0, Math.min(deltaMa, end - state.world.currentTime)));
+        if (end !== undefined && this.getState().world.currentTime >= end) {
+            this.stop();
+            this.setState(s => ({ ...s, world: { ...s.world, isPlaying: false } }));
+            return;
+        }
 
         this.animationId = requestAnimationFrame(() => this.tick());
     }
@@ -1819,6 +1823,7 @@ export class SimulationEngine {
             mixNumber(plate.geometryStages.length);
             for (const stage of plate.geometryStages) {
                 mixNumber(stage.time);
+                mixText(stage.interpolation);
                 mixNumber(stage.polygons.length);
                 for (const polygon of stage.polygons) {
                     mixText(polygon.id);
@@ -1836,87 +1841,7 @@ export class SimulationEngine {
     }
 
     public calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {
-        // KEYFRAME-LESS MODEL (docs/PLAN_rotation_model.md): geometry is DERIVED â€”
-        // the active geometry stage rotated by the composed rotation from the stage
-        // time to t (own segments + parent chain + link window). Plates still
-        // carrying legacy keyframes are converted on the fly by getMotionModel().
-
-        // Feature inheritance (legacy behavior preserved): features placed on a
-        // parent before the split, inside this plate's birth geometry, render here.
-        const inheritedFeatures: Feature[] = [];
-        const parentIds = plate.parentPlateIds || (plate.parentPlateId ? [plate.parentPlateId] : []);
-        for (const pid of parentIds) {
-            const parentPlate = allPlates.find(p => p.id === pid);
-            if (!parentPlate) continue;
-
-            const transitionTime = plate.birthTime;
-            const candidateFeatures = parentPlate.features.filter(f =>
-                f.generatedAt !== undefined &&
-                f.generatedAt >= parentPlate.birthTime &&
-                f.generatedAt <= transitionTime
-            );
-
-            const featuresToInherit = candidateFeatures.filter(f => {
-                return plate.initialPolygons.some(poly =>
-                    isPointInPolygon(f.position, poly.points)
-                );
-            }).filter(f => {
-                return !plate.features.some(existing => existing.id === f.id) &&
-                    !inheritedFeatures.some(existing => existing.id === f.id);
-            });
-            inheritedFeatures.push(...featuresToInherit);
-        }
-
-        const { stages } = getMotionModel(plate);
-        const stage = activeStage(stages, time);
-        const qStage = plateRotation(plate, allPlates, stage.time, time);
-
-        const newPolygons = stage.polygons.map(poly => ({
-            ...poly,
-            points: poly.points.map(p => rotateCoordByQuat(p, qStage))
-        }));
-
-        // Stage features are anchored at the stage time, unless they were placed
-        // later â€” then their placement position/time is the anchor.
-        const stageFeatureIds = new Set(stage.features.map(f => f.id));
-        const transformedStageFeatures = stage.features.map(f => {
-            const anchor = f.generatedAt !== undefined ? Math.max(f.generatedAt, stage.time) : stage.time;
-            if (anchor === stage.time) {
-                return { ...f, position: rotateCoordByQuat(f.position, qStage) };
-            }
-            const src = f.originalPosition ?? f.position;
-            return { ...f, position: pointPositionAt(plate, allPlates, src, anchor, time) };
-        });
-
-        // Features placed after the stage (live additions not yet part of any
-        // stage): anchored at creation time, from their placement position.
-        const dynamicFeatures = plate.features.filter(f =>
-            !stageFeatureIds.has(f.id) &&
-            f.generatedAt !== undefined &&
-            f.generatedAt >= stage.time
-        );
-        const transformedDynamicFeatures = dynamicFeatures.map(f => {
-            const src = f.originalPosition ?? f.position;
-            return { ...f, position: pointPositionAt(plate, allPlates, src, f.generatedAt!, time) };
-        });
-
-        // Inherited features: anchored at the split time from their current
-        // position (legacy semantics preserved).
-        const transformedInheritedFeatures = inheritedFeatures.map(f => ({
-            ...f,
-            position: pointPositionAt(plate, allPlates, f.position, plate.birthTime, time)
-        }));
-
-        const newFeatures = [...transformedStageFeatures, ...transformedDynamicFeatures, ...transformedInheritedFeatures];
-        const allPoints = newPolygons.flatMap(poly => poly.points);
-        const newCenter = allPoints.length > 0 ? calculateSphericalCentroid(allPoints) : plate.center;
-
-        return {
-            ...plate,
-            polygons: newPolygons,
-            features: newFeatures,
-            center: newCenter
-        };
+        return { ...plate, ...derivePlateGeometry(plate, allPlates, time) };
     }
 
     private updateFlowlines(): void {

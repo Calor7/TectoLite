@@ -22,6 +22,7 @@ import {
 } from './ui/workflowGuidance';
 import { escapeHtml } from './ui/safeHtml';
 import { uiIcon } from './ui/icons';
+import { trimScenarioTimeline } from './scenarios/ScenarioTimeline';
 
 export interface PNGExportOptions {
     projection: ProjectionType;
@@ -315,6 +316,7 @@ export interface ExportOptions {
  * events follow the same rule.
  */
 export function createWorldFromCurrentTime(world: WorldState): WorldState {
+    if (world.scenario) return trimScenarioTimeline(world);
     const currentTime = world.currentTime;
     const activePlates = world.plates.filter(plate =>
         plate.birthTime <= currentTime

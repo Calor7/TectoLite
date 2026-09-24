@@ -39,6 +39,9 @@ import {
     rotateCoordByQuat,
     toRad,
     calculateSphericalCentroid,
+    vectorToLatLon,
+    dot,
+    isPointInPolygon,
 } from '../utils/sphericalMath';
 
 const EPS = 1e-9;
@@ -353,6 +356,89 @@ export interface DerivedGeometry {
     center: Coordinate;
 }
 
+/** Resolve features from authored anchors, including parents at their transition.
+ * Never use a parent's last rendered position: scrubbing order is not history. */
+export function derivePlateFeatures(plate: TectonicPlate, allPlates: TectonicPlate[], t: number, visited = new Set<string>()): Feature[] {
+    if (visited.has(plate.id)) return [];
+    const path = new Set(visited).add(plate.id);
+    const { stages } = getMotionModel(plate);
+    const stage = activeStage(stages, t);
+    const authoredIds = new Set(stages.filter(s => s.time <= t).flatMap(s => s.features.map(f => f.id)));
+    const features = stage.features.map(f => {
+        const anchor = Math.max(f.generatedAt ?? stage.time, stage.time);
+        const source = anchor === stage.time ? f.position : f.originalPosition ?? f.position;
+        return { ...f, ...(anchor > stage.time ? { originalPosition: source } : {}), position: pointPositionAt(plate, allPlates, source, anchor, t) };
+    });
+    const candidates = new Map(plate.features.map(f => [f.id, f]));
+    for (const future of stages.filter(s => s.time > t)) {
+        for (const f of future.features) if (!candidates.has(f.id)) candidates.set(f.id, f);
+    }
+    for (const f of candidates.values()) {
+        if (authoredIds.has(f.id) || f.generatedAt === undefined || f.generatedAt < stage.time) continue;
+        const futureStage = stages.find(s => s.time > t && s.features.some(candidate => candidate.id === f.id));
+        const captured = futureStage?.features.find(candidate => candidate.id === f.id);
+        const source = f.originalPosition ?? (captured && futureStage
+            ? pointPositionAt(plate, allPlates, captured.position, futureStage.time, f.generatedAt) : f.position);
+        features.push({ ...f, originalPosition: source, position: pointPositionAt(plate, allPlates, source, f.generatedAt, t) });
+    }
+    const ownIds = new Set(features.map(f => f.id));
+    for (const id of plate.parentPlateIds ?? (plate.parentPlateId ? [plate.parentPlateId] : [])) {
+        const parent = allPlates.find(p => p.id === id);
+        if (!parent) continue;
+        for (const f of derivePlateFeatures(parent, allPlates, plate.birthTime, path)) {
+            if (ownIds.has(f.id) || f.generatedAt === undefined || f.generatedAt > plate.birthTime
+                || (f.deathTime !== undefined && f.deathTime <= plate.birthTime)
+                || !plate.initialPolygons.some(p => p.closed !== false && isPointInPolygon(f.position, p.points))) continue;
+            ownIds.add(f.id);
+            features.push({ ...f, position: pointPositionAt(plate, allPlates, f.position, plate.birthTime, t) });
+        }
+    }
+    return features;
+}
+
+/** Shared by simulation, exports and editing. Old stages remain stepped. */
+export function deriveStagePolygons(plate: TectonicPlate, allPlates: TectonicPlate[], t: number): Polygon[] {
+    const { stages } = getMotionModel(plate);
+    const stage = activeStage(stages, t);
+    const next = stages[stages.indexOf(stage) + 1];
+    const q = plateRotation(plate, allPlates, stage.time, t);
+    const compatible = stage.interpolation === 'spherical' && next && next.time > stage.time
+        && next.polygons.length === stage.polygons.length
+        && stage.polygons.every((p, i) => p.id === next.polygons[i].id
+            && p.closed === next.polygons[i].closed && p.points.length === next.polygons[i].points.length);
+    const targetRotation = compatible ? plateRotation(plate, allPlates, next.time, t) : null;
+    const alpha = compatible ? Math.max(0, Math.min(1, (t - stage.time) / (next.time - stage.time))) : 0;
+    return stage.polygons.map((poly, i) => ({
+        ...poly,
+        points: poly.points.map((pt, j) => {
+            const source = rotateCoordByQuat(pt, q);
+            if (!targetRotation || alpha === 0) return source;
+            const target = rotateCoordByQuat(next.polygons[i].points[j], targetRotation);
+            if (alpha === 1) return target;
+            const a = latLonToVector(source), b = latLonToVector(target);
+            const angle = Math.acos(Math.max(-1, Math.min(1, dot(a, b))));
+            // Exact spherical interpolation remains the same path when a save
+            // trims a stage interval or a user inserts a new shape snapshot.
+            if (angle < 1e-10) return source;
+            if (Math.PI - angle < 1e-8) return source; // No unique arc for antipodal vertices.
+            const left = Math.sin((1 - alpha) * angle) / Math.sin(angle);
+            const right = Math.sin(alpha * angle) / Math.sin(angle);
+            return vectorToLatLon({ x: a.x * left + b.x * right, y: a.y * left + b.y * right, z: a.z * left + b.z * right });
+        })
+    }));
+}
+
+/** Preserve the pre-edit interpolation path when inserting an ordinary shape edit. */
+export function insertGeometryEdit(plate: TectonicPlate, allPlates: TectonicPlate[], time: number, polygons: Polygon[], features: Feature[]): GeometryStage[] {
+    const stages = [...getMotionModel(plate).stages];
+    const prior = activeStage(stages, time - EPS * 2);
+    const original = deriveStagePolygons(plate, allPlates, time);
+    const kept = stages.filter(stage => stage.time !== time);
+    if (prior?.interpolation && prior.time < time) kept.push({ time, polygons: original, features });
+    kept.push({ time, polygons, features });
+    return kept.sort((a, b) => a.time - b.time);
+}
+
 /**
  * Derive a plate's geometry at time t: active stage rotated by the full
  * rotation from the stage time to t. Pure — returns new objects.
@@ -362,23 +448,8 @@ export function derivePlateGeometry(
     allPlates: TectonicPlate[],
     t: number
 ): DerivedGeometry {
-    const { stages } = getMotionModel(plate);
-    const stage = activeStage(stages, t);
-    const q = plateRotation(plate, allPlates, stage.time, t);
-
-    const polygons = stage.polygons.map(poly => ({
-        ...poly,
-        points: poly.points.map(pt => rotateCoordByQuat(pt, q)),
-    }));
-
-    // Stage features are absolute at the stage time. Features created after the
-    // stage (generatedAt > stage.time) are anchored at their creation time —
-    // their stored position is where they were placed.
-    const features = stage.features.map(f => {
-        const anchor = f.generatedAt !== undefined ? Math.max(f.generatedAt, stage.time) : stage.time;
-        const qf = anchor === stage.time ? q : plateRotation(plate, allPlates, anchor, t);
-        return { ...f, position: rotateCoordByQuat(f.position, qf) };
-    });
+    const polygons = deriveStagePolygons(plate, allPlates, t);
+    const features = derivePlateFeatures(plate, allPlates, t);
 
     const allPoints = polygons.flatMap(p => p.points);
     const center = allPoints.length > 0 ? calculateSphericalCentroid(allPoints) : plate.center;

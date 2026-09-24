@@ -160,6 +160,7 @@ export class HistoryManager {
             },
             world: {
                 ...world,
+                scenario: world.scenario ? structuredClone(world.scenario) : undefined,
                 plates: (world.plates ?? []).map(clonePlate),
                 labels: (world.labels ?? []).map((label: any) => ({
                     ...label,

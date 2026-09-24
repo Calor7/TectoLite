@@ -4,6 +4,7 @@ import { ensureMotionModel } from '../motion/RotationModel';
 import type { ModalOptions } from '../ui/ModalSystem';
 import { uiIcon, type UiIconName } from '../ui/icons';
 import { prepareFields } from '../ui/Fields';
+import { reconcileEditedTimeline, removeLifecycleTransition, retimeLifecycleTransition } from './LifecycleEditing';
 // import toDisplayTime, toInternalTime removed
 
 
@@ -136,7 +137,7 @@ export class TimelineSystem {
                 time: stage.time,
                 type: 'shape',
                 label: prefix + 'Shape Edit',
-                details: `${stage.polygons.length} polygon(s)`,
+                details: `${stage.polygons.length} polygon(s)${stage.interpolation ? ' · animated toward next shape' : ''}`,
                 isEditable: true,
                 isDeletable: true,
                 originalRef: stage
@@ -215,13 +216,27 @@ export class TimelineSystem {
         if (event.isEditable) {
             // Only show cascade option for Birth and Split and Fuse events where it matters most
             const showCascade = event.type === 'birth' || event.type === 'split' || event.type === 'fuse';
-            const timeRow = this.createInputRow('Time', event.time, (val, cascade) => {
+            const timeRow = this.createInputRow(this.host.getState().world.scenario ? 'Elapsed Myr' : 'Time', event.time, (val, cascade) => {
                 this.updateEventTime(event, val, cascade);
             }, 1, showCascade);
             content.appendChild(timeRow);
         }
 
         // Specific fields based on type
+        if (event.type === 'shape') {
+            const stage = event.originalRef as GeometryStage;
+            const label = document.createElement('label');
+            const check = document.createElement('input');
+            check.type = 'checkbox';check.checked = stage.interpolation === 'spherical';
+            check.onchange = () => {
+                this.pushHistory();
+                stage.interpolation = check.checked ? 'spherical' : undefined;
+                this.host.setTime(this.host.getState().world.currentTime);
+                this.host.updateUI();
+            };
+            label.append(check, document.createTextNode(' Animate toward the next shape (matching vertices)'));
+            content.append(label);
+        }
         if (event.type === 'motion') {
             const kf = event.originalRef as MotionSegment;
 
@@ -361,6 +376,21 @@ export class TimelineSystem {
 
         this.pushHistory();
 
+        if (event.type === 'split' || event.type === 'fuse'
+            || (event.type === 'birth' && (targetPlate.parentPlateId || targetPlate.parentPlateIds?.length))) {
+            try {
+                if (retimeLifecycleTransition(state.world.plates, targetPlate.id, event.time, newTime, cascade)) {
+                    if (Math.abs(newTime - event.time) > 1e-7) reconcileEditedTimeline(state.world, newTime - event.time, cascade);
+                    this.triggerUpdate(Math.min(event.time, newTime), targetPlate);
+                    return;
+                }
+            } catch (error) {
+                this.host.showModal({ title: 'Cannot move this event', content: error instanceof Error ? error.message : 'Choose another event time.',
+                    buttons: [{ text: 'OK', onClick: () => this.render(this.plate) }] });
+                return;
+            }
+        }
+
         let oldInternalTime = internalTime;
         if (event.type === 'birth') {
             oldInternalTime = (event.originalRef as TectonicPlate).birthTime;
@@ -483,7 +513,7 @@ export class TimelineSystem {
             buttons: [
                 {
                     text: 'Delete',
-                    subtext: 'This action cannot be undone.',
+                    subtext: event.type === 'split' || event.type === 'fuse' ? 'Restore the ancestors and remove their successors and later descendants. Undo restores them.' : 'Undo can restore this change.',
                     onClick: () => {
                         this.performDeleteEvent(event);
                     }
@@ -501,6 +531,16 @@ export class TimelineSystem {
         this.pushHistory();
 
         const targetPlate = this.host.getState().world.plates.find((p: TectonicPlate) => p.id === event.plateId);
+        if (targetPlate && (event.type === 'split' || event.type === 'fuse'
+            || (event.type === 'birth' && (targetPlate.parentPlateId || targetPlate.parentPlateIds?.length)))) {
+            const removed = removeLifecycleTransition(this.host.getState().world.plates, targetPlate.id, event.time);
+            if (removed.length) {
+                this.host.deletePlates(removed);
+                reconcileEditedTimeline(this.host.getState().world);
+                this.triggerUpdate(event.time, targetPlate);
+                return;
+            }
+        }
         if (event.type === 'birth') {
             const p = event.originalRef as TectonicPlate;
             this.host.deletePlates([p.id]);

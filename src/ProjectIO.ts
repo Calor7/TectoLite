@@ -190,6 +190,7 @@ function validateFeatureArray(value: unknown, path: string, budget: ValidationBu
 
 function validateStage(value: unknown, path: string, budget: ValidationBudget): void {
     const stage = asRecord(value, path);
+    if (stage.interpolation !== undefined && stage.interpolation !== 'spherical') fail(`${path}.interpolation`, 'unsupported interpolation');
     finiteNumber(stage.time, `${path}.time`);
     validatePolygonArray(stage.polygons, `${path}.polygons`, budget);
     validateFeatureArray(stage.features, `${path}.features`, budget);
@@ -272,6 +273,32 @@ function normalizeAndValidateSave(raw: unknown, fallbackName: string): SaveFile 
         fail('project.version', `version ${version} is newer than this app supports (${CURRENT_SAVE_VERSION})`);
     }
     const worldRecord = asRecord(data.world, 'project.world');
+    if (worldRecord.scenario !== undefined) {
+        const path = 'project.world.scenario';
+        const scenario = asRecord(worldRecord.scenario, path);
+        requireId(scenario.id, `${path}.id`);
+        requireString(scenario.title, `${path}.title`, 200);
+        requireString(scenario.summary, `${path}.summary`, 10000);
+        if (!['reconstruction', 'future'].includes(String(scenario.kind))) fail(`${path}.kind`, 'unsupported scenario kind');
+        const duration = finiteNumber(scenario.duration, `${path}.duration`);
+        if (duration <= 0 || duration > 10000) fail(`${path}.duration`, 'must be between 0 and 10000');
+        finiteNumber(scenario.startAge, `${path}.startAge`);
+        asArray(scenario.sources, `${path}.sources`, 20).forEach((source, i) => {
+            const item = asRecord(source, `${path}.sources[${i}]`);
+            requireString(item.title, `${path}.sources[${i}].title`, 300);
+            const url = requireString(item.url, `${path}.sources[${i}].url`, 2000);
+            if (!/^https:\/\//i.test(url)) fail(`${path}.sources[${i}].url`, 'must use HTTPS');
+        });
+        let previous = -1;
+        asArray(scenario.chapters, `${path}.chapters`, 100).forEach((chapter, i) => {
+            const item = asRecord(chapter, `${path}.chapters[${i}]`);
+            const time = finiteNumber(item.time, `${path}.chapters[${i}].time`);
+            if (time < 0 || time > duration || time <= previous) fail(`${path}.chapters[${i}].time`, 'chapters must be ordered within the scenario');
+            previous = time;
+            requireString(item.title, `${path}.chapters[${i}].title`, 300);
+            requireString(item.description, `${path}.chapters[${i}].description`, 10000);
+        });
+    }
     finiteNumber(worldRecord.currentTime, 'project.world.currentTime');
     if (worldRecord.timeScale !== undefined) finiteNumber(worldRecord.timeScale, 'project.world.timeScale');
     if (worldRecord.projection !== undefined && !['equirectangular', 'mollweide', 'mercator', 'robinson', 'orthographic'].includes(String(worldRecord.projection))) {

@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { PROJECT_TEMPLATES } from './projectTemplates';
 
 describe('project templates', () => {
-    it('offers only the five focused starting templates', () => {
-        expect(PROJECT_TEMPLATES.map(template => [template.id, template.name])).toEqual([
+    it('keeps the five static starts alongside four playable timelines', () => {
+        expect(PROJECT_TEMPLATES.filter(template => !template.timeline).map(template => [template.id, template.name])).toEqual([
             ['blank', 'Blank World'],
             ['modern-earth-curation-covers', 'Earth — Covers'],
             ['pangaea-200ma-covers', 'Pangaea — Covers'],
             ['modern-earth-overview', 'Earth — Covers + Plates'],
             ['pangaea-200ma-overview', 'Pangaea — Covers + Plates']
         ]);
+        expect(PROJECT_TEMPLATES.filter(template => template.timeline)).toHaveLength(4);
     });
 
     it('creates fresh, internally valid worlds', async () => {

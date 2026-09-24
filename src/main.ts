@@ -41,7 +41,7 @@ import { HistoryManager } from './HistoryManager';
 import { remapImportedWorld } from './importHelpers';
 import { CURRENT_SAVE_VERSION } from './migration';
 import { parseProjectText } from './ProjectIO';
-import { pointPositionAt, ensureMotionModel, activeEulerPole, rewriteBirthGeometryStage } from './motion/RotationModel';
+import { pointPositionAt, ensureMotionModel, activeEulerPole, rewriteBirthGeometryStage, insertGeometryEdit } from './motion/RotationModel';
 import { isMotionLinkActiveAtTime, linkPlateAtTime, motionLinkDescendantIds, unlinkPlateAtTime, wouldCreateMotionLinkCycle } from './motion/LinkModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
@@ -80,6 +80,8 @@ import { TutorialOverlay } from './ui/TutorialOverlay';
 import { makeBenchmarkWorld } from './utils/benchmarkWorld';
 import { perfMonitor } from './utils/PerfMonitor';
 import { PROJECT_TEMPLATES, type ProjectTemplate } from './projectTemplates';
+import { updateScenarioGuide } from './ui/ScenarioGuide';
+import { branchScenario } from './scenarios/ScenarioTimeline';
 import { bindProjectSettings, syncProjectSettings, type ProjectSettingEffect } from './ui/SettingsBindings';
 import { selectExplorerRange } from './ui/ExplorerSelection';
 import { escapeHtml } from './ui/safeHtml';
@@ -440,17 +442,25 @@ class TectoLiteApp {
         });
     }
 
-    private showTemplateChoices(goBack: () => void): void {
+    private showTemplateChoices(goBack: () => void, timeline?: boolean): void {
+        if (timeline === undefined) {
+            this.showModal({ title: 'Explore an example world', content: 'Choose a starting snapshot or a complete, editable geological story.', buttons: [
+                { text: 'Playable timelines', subtext: 'Pangaea to today, or an illustrative next 500 million years. Includes breakup, fusion, changing shapes and new land.', featured: true, onClick: () => this.showTemplateChoices(goBack, true) },
+                { text: 'Static starting worlds', subtext: 'Detailed Earth and Pangaea snapshots for building your own history.', onClick: () => this.showTemplateChoices(goBack, false) },
+                { text: 'Back', isSecondary: true, onClick: goBack }
+            ] });
+            return;
+        }
         this.showModal({
-            title: 'Choose an example world',
-            content: 'Covers are editable landmasses. “Covers + Plates” also includes simplified continental plates and cratons for exploring motion; oceanic plates are omitted.',
+            title: timeline ? 'Choose a playable timeline' : 'Choose a starting snapshot',
+            content: timeline ? 'Curated, editable examples. Past motion uses representative reconstruction rotations; the future is an illustrative Amasia scenario. Covers + Plates adds linked motion carriers and cratons.' : 'Covers are editable landmasses. “Covers + Plates” also includes simplified continental plates and cratons for exploring motion; oceanic plates are omitted.',
             buttons: [
-                ...PROJECT_TEMPLATES.filter(template => template.id !== 'blank').map(template => ({
+                ...PROJECT_TEMPLATES.filter(template => template.id !== 'blank' && Boolean(template.timeline) === timeline).map(template => ({
                     text: template.name,
                     subtext: template.description,
                     onClick: () => { void this.createProjectFromTemplate(template); }
                 })),
-                { text: 'Back', isSecondary: true, onClick: goBack }
+                { text: 'Back', isSecondary: true, onClick: () => this.showTemplateChoices(goBack) }
             ]
         });
     }
@@ -1404,14 +1414,7 @@ class TectoLiteApp {
                             // polygons + current features ARE the absolute coordinates
                             // at this time, which is exactly a stage definition.
                             ensureMotionModel(copy);
-                            const stages = [...copy.geometryStages!]
-                                .filter(s => Math.abs(s.time - this.state.world.currentTime) > 0.001);
-                            stages.push({
-                                time: this.state.world.currentTime,
-                                polygons: JSON.parse(JSON.stringify(result.polygons)),
-                                features: [...p.features]
-                            });
-                            copy.geometryStages = stages.sort((a, b) => a.time - b.time);
+                            copy.geometryStages = insertGeometryEdit(copy, this.state.world.plates, this.state.world.currentTime, structuredClone(result.polygons), [...p.features]);
                         }
                         return copy;
                     }
@@ -5299,6 +5302,23 @@ class TectoLiteApp {
 
     private updateTimeDisplay(): void {
         _updateTimeDisplay(this.state.world.currentTime);
+        _updatePlayButton(this.state.world.isPlaying);
+        const unit = document.getElementById('time-mode-label');
+        if (unit) {
+            unit.textContent = this.state.world.scenario ? 'Myr elapsed' : 'Ma';
+            unit.title = this.state.world.scenario ? 'Elapsed millions of years since this scenario begins; see the guide for geological age.' : 'Elapsed millions of years in this project';
+        }
+        updateScenarioGuide(this.state.world, time => {
+            this.simulation?.stop();
+            this.state.world.isPlaying = false;
+            this.simulation?.setTime(time);
+            this.updateUI();
+        }, () => {
+            this.showModal({ title: 'Start from the current world?', content: 'Creates a fresh editable project from the visible world at this time, with no later split, fusion or shape events. Save the full scenario first if you want to keep your changes.', buttons: [
+                { text: 'Use current world', onClick: () => { const next = createDefaultAppState(); next.world = branchScenario(this.state.world); next.viewport = structuredClone(this.state.viewport); this.replaceProject(next, [], 'New starting world created from this chapter', true); } },
+                { text: 'Keep scenario', isSecondary: true, onClick: () => undefined }
+            ] });
+        });
         this.syncToolOptionControls();
     }
 
@@ -5816,9 +5836,16 @@ class TectoLiteApp {
     }
 
     private async createProjectFromTemplate(template: ProjectTemplate): Promise<void> {
-        const nextState = createDefaultAppState();
-        nextState.world = await template.createWorld();
-        this.replaceProject(nextState, [], `${template.name} template loaded`, true);
+        this.showToast(`Preparing ${template.name}…`);
+        try {
+            const nextState = createDefaultAppState();
+            nextState.world = await template.createWorld();
+            if (nextState.world.scenario?.kind === 'future') nextState.viewport.rotate = [-140, -15, 0];
+            this.replaceProject(nextState, [], `${template.name} template loaded`, true);
+        } catch (error) {
+            console.error('Could not load template', error);
+            this.showToast('Could not load this example. Please try again.', 6000);
+        }
     }
 
     private replaceProject(nextState: AppState, cameraBookmarks: CameraView[], message: string, unsaved: boolean, initialTool: ToolType = 'select'): void {

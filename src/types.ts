@@ -402,6 +402,8 @@ export interface GlobalOptions {
 // ============================================================================
 // Pure document metadata. Never read by SimulationEngine / motion / geometry.
 export interface WorldState {
+  /** Optional, non-mechanical guide for an editable geological example. */
+  scenario?: GeologicalScenario;
   plates: TectonicPlate[];
   labels: MapLabel[];
   entityGroups: EntityGroup[];
@@ -512,6 +514,19 @@ export interface GeometryStage {
   time: number;
   polygons: Polygon[];
   features: Feature[];
+  /** Blend corresponding vertices toward the next stage in a common moving frame. */
+  interpolation?: 'spherical';
+}
+
+export interface GeologicalScenario {
+  id: string;
+  title: string;
+  kind: 'reconstruction' | 'future';
+  duration: number;
+  startAge: number;
+  summary: string;
+  sources: Array<{ title: string; url: string }>;
+  chapters: Array<{ time: number; title: string; description: string }>;
 }
 
 /** A named, saved camera position (persisted in project files, not part of undo history). */

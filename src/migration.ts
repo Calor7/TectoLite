@@ -26,7 +26,7 @@ export interface SaveFile {
 }
 
 /** Current save file version. Bump this whenever the on-disk format changes. */
-export const CURRENT_SAVE_VERSION = 11;
+export const CURRENT_SAVE_VERSION = 12;
 
 /**
  * Migrate a parsed save file to {@link CURRENT_SAVE_VERSION}.
@@ -203,5 +203,8 @@ export function migrateSaveFile(data: SaveFile): SaveFile {
         data.version = 11;
     }
 
+    // v12 adds opt-in interpolated geometry stages and optional example metadata.
+    // Existing projects retain their original stepped geometry semantics.
+    if (data.version < 12) data.version = 12;
     return data;
 }
