@@ -25,7 +25,7 @@ describe('workflow guidance', () => {
         expect(html).toContain('data-feature="seafloor"');
         expect(html).toContain('data-feature-icon="weakness"');
         expect(html).not.toMatch(/[●⌁⌣◇◎]/);
-        expect(html).toContain('Select the parent/anchor first, then the child.');
+        expect(html).toContain('Choose the leader on the map or in Explorer, then the follower.');
         expect(html).toContain('The first-selected plate supplies the new plate\'s initial motion');
     });
 

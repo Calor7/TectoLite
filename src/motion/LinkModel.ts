@@ -1,4 +1,4 @@
-import type { MotionSegment, TectonicPlate } from '../types';
+import type { EulerPole, MotionSegment, TectonicPlate } from '../types';
 
 const EPS = 0.001;
 const STATIONARY_POLE = { position: [0, 90] as [number, number], rate: 0, visible: false };
@@ -34,6 +34,45 @@ export function linkPlateAtTime(child: TectonicPlate, parentId: string, time: nu
         linkTime: time,
         unlinkTime: undefined,
     };
+}
+
+/**
+ * End a link and continue with the supplied independent motion from that time.
+ * Keep the parent reference: deriving any earlier position still needs the
+ * inherited rotation over [linkTime, unlinkTime).
+ */
+export function unlinkPlateAtTime(child: TectonicPlate, time: number, continuationPole: EulerPole): TectonicPlate {
+    const motionSegments = child.motionSegments
+        .filter(segment => Math.abs(segment.time - time) > EPS)
+        .concat({ time, eulerPole: { ...continuationPole } })
+        .sort((a, b) => a.time - b.time);
+
+    return {
+        ...child,
+        motionSegments,
+        unlinkTime: time,
+    };
+}
+
+/**
+ * All saved descendants whose derived history may depend on a motion edit.
+ * Historical links can point in opposite directions in disjoint time windows,
+ * so traversing the saved graph must tolerate cycles even in valid projects.
+ */
+export function motionLinkDescendantIds(plates: readonly TectonicPlate[], plateId: string): string[] {
+    const visited = new Set([plateId]);
+    const pending = [plateId];
+    const descendants: string[] = [];
+    while (pending.length > 0) {
+        const parentId = pending.pop()!;
+        for (const plate of plates) {
+            if (plate.linkedToPlateId !== parentId || visited.has(plate.id)) continue;
+            visited.add(plate.id);
+            descendants.push(plate.id);
+            pending.push(plate.id);
+        }
+    }
+    return descendants;
 }
 
 /**

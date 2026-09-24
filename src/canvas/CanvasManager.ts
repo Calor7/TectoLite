@@ -679,7 +679,7 @@ export class CanvasManager {
             if (!this.hoverTooltipEl) {
                 this.hoverTooltipEl = document.createElement('div');
                 this.hoverTooltipEl.style.cssText =
-                    'position: absolute; z-index: 50; pointer-events: none; font-size: 11px; ' +
+                    'position: absolute; z-index: 50; pointer-events: none; font-size: 12px; ' +
                     'background: color-mix(in srgb, var(--bg-surface) 94%, transparent); color: var(--text-primary); padding: 6px 8px; border-radius: var(--radius-sm); ' +
                     'border: 1px solid rgba(137,180,250,0.3); line-height: 1.5; white-space: nowrap;';
                 this.canvas.parentElement?.appendChild(this.hoverTooltipEl);

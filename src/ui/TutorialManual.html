@@ -63,7 +63,7 @@
     <li><strong>cm/yr</strong> is the approximate surface speed at the entity for the configured planet radius.</li>
     <li><strong>Motion segments</strong> let speed and direction change at different points in the timeline.</li>
     <li><strong>Birth/death times</strong> determine when an entity exists, including results of splits and fusions.</li>
-    <li><strong>Parent links</strong> are teal dashed lines; a linked child inherits the parent's motion plus any relative motion.</li>
+    <li><strong>Follow links</strong> are teal dashed lines; a follower inherits the leader's motion plus any relative motion.</li>
     <li><strong>Velocity arrows</strong> show current direction; their length is a visual rate cue, not travelled distance.</li>
   </ul>
 
@@ -125,8 +125,10 @@
     <div data-selector="#btn-undo">Undo the last action (Shortcut: <kbd>Ctrl+Z</kbd>).</div>
     <div data-selector="#btn-redo">Redo previously undone action (Shortcut: <kbd>Ctrl+Y</kbd>).</div>
     <div data-selector="#btn-new-project">Start a blank world or choose one of the curated Earth and Pangaea templates.</div>
-    <div data-selector="#btn-export">Exports the current view as PNG or heightmap. A different output aspect ratio
-      crops the current view symmetrically instead of revealing extra map area.</div>
+    <div data-selector="#btn-export">Preview and export a PNG, heightmap, GeoPackage, or editable project.
+      PNG options control the grid, plate outlines, geological lines, symbols, labels, and background.
+      Choose the transparent editing preset for borderless artwork, or match the current view proportions to avoid cropping.
+      PNGs are flat images; save an Editable project with Entire Timeline to keep the full history.</div>
     <div data-selector="#btn-export-json">Save either the entire editable timeline or a new project beginning at the
       current time. The latter removes earlier history and shifts retained future events to the new time zero.</div>
     <div data-selector="#btn-import-json">Load a previously saved JSON simulation state.</div>
@@ -180,7 +182,7 @@
       moving plates.</div>
     <div data-selector="#check-future-features">If enabled, shows plate-bound features outside their active lifetime
       as faint previews, including both future and expired features.</div>
-    <div data-selector="#check-show-links">Visualize parent-child kinematic dependencies directly on the map.</div>
+    <div data-selector="#check-show-links">Visualize leader-follower motion relationships directly on the map.</div>
     <div data-selector="#check-prediction-flowlines">Show amber travel arcs while previewing a drag-to-target motion change.</div>
     <div data-selector="#check-velocity-arrows">Show a direction and relative-rate arrow at each visible entity.</div>
     <div data-selector="#check-hover-tooltips">Show entity name, age, and speed while hovering over the map.</div>
@@ -231,11 +233,12 @@
     <div data-selector="#btn-split-cancel">Cancel the current split operation.</div>
 
     <div data-selector="[data-tool='link']"
-      data-nested='{"kinematics": "The child inherits the parent rotation only during the link window."}'>
-      The <strong style="color:var(--accent-primary);">Link Tool</strong> creates a parent/child hierarchical <span
-        class="help-link" data-target="kinematics">kinematic relationship</span> between two plates. Select the parent
-      first and the child second. The link begins at the current time, zeroes the child's independent motion at that
-      point, and leaves its earlier history unchanged.
+      data-nested='{"kinematics": "The follower inherits the leader rotation only during the link window."}'>
+      The <strong style="color:var(--accent-primary);">Link Tool</strong> creates a leader/follower <span
+        class="help-link" data-target="kinematics">kinematic relationship</span> between two plates. Choose the leader
+      on the map or in Explorer, then the follower. Or select a plate and choose <strong>Follow another plate…</strong>
+      in Properties. Review the direction and time before confirming. Unlink preserves earlier linked motion.
+      Replacing a saved follow relationship rewrites that relationship; the confirmation explains this and Undo restores it.
     </div>
     <div data-selector="[data-tool='fuse']">The <strong style="color:var(--accent-primary);">Fuse Tool</strong> merges
       two adjacent plates at the current time. The first selected plate supplies the fused plate's initial motion.
@@ -312,9 +315,13 @@
       subducted.</div>
 
     <!-- Lineage & Flowlines Options -->
-    <div data-selector="#prop-hide-link">Hides the visual dotted line connecting this plate to its kinematic parent.
+    <div data-selector="#plate-motion-links">The motion links card below the plate name shows <strong>Follows</strong>
+      and <strong>Followed by</strong>. Click a plate name to select it. The broken-link button ends that follower's
+      active link at the current time while preserving earlier history. Scheduled and ended links show their dates;
+      only active links can be ended. Unlinking can be undone.</div>
+    <div data-selector="#prop-hide-link">Hides the visual dotted line connecting this plate to its motion leader.
     </div>
-    <div data-selector=".child-link-hide">Hides the visual dotted line connecting this parent plate to a specific child.
+    <div data-selector=".child-link-hide">Hides the visual dotted line connecting this leader to a specific follower.
     </div>
     <div data-selector="#prop-link-time">The timeline year (Ma) when the kinematic link becomes active.</div>
     <div data-selector="#prop-unlink-time">The timeline year (Ma) when the plates severe their kinematic relationship.

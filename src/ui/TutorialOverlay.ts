@@ -1,4 +1,5 @@
 import manualContent from './TutorialManual.html?raw';
+import { restoreDialogFocus } from './DialogSurface';
 
 export interface TutorialEntry {
     text: string;
@@ -116,6 +117,8 @@ export class TutorialOverlay {
     private static svgElement: SVGSVGElement | null = null;
     private static resizeListener: () => void;
     private static keydownListener: (e: KeyboardEvent) => void;
+    private static restoreTarget: HTMLElement | null = null;
+    private static previousInert = false;
 
     /**
      * Toggles the tutorial overlay on or off.
@@ -139,6 +142,13 @@ export class TutorialOverlay {
         // Create overlay container
         this.overlayElement = document.createElement('div');
         this.overlayElement.id = 'tutorial-overlay';
+        this.overlayElement.setAttribute('role', 'dialog');
+        this.overlayElement.setAttribute('aria-modal', 'true');
+        this.overlayElement.setAttribute('aria-label', 'Tutorial and manual');
+        this.restoreTarget = document.activeElement as HTMLElement | null;
+        const app = document.getElementById('app');
+        this.previousInert = app?.inert ?? false;
+        if (app) app.inert = true;
 
         // Prevent clicking through to the app (except the help button, which we will handle via z-index or event listeners in main)
         this.overlayElement.addEventListener('click', (e) => {
@@ -167,7 +177,15 @@ export class TutorialOverlay {
         // Add Escape key listener
         this.keydownListener = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
+                e.preventDefault(); e.stopPropagation();
                 this.hide();
+            } else if (e.key === 'Tab') {
+                const controls = Array.from(this.overlayElement?.querySelectorAll<HTMLElement>('button, a[href], [tabindex="0"]') ?? []);
+                const index = controls.indexOf(document.activeElement as HTMLElement);
+                e.preventDefault();
+                controls[(index + (e.shiftKey ? -1 : 1) + controls.length) % controls.length]?.focus();
+            } else if ((e.key === 'Enter' || e.key === ' ') && (e.target as HTMLElement).classList.contains('help-link')) {
+                e.preventDefault(); (e.target as HTMLElement).click();
             }
         };
         document.addEventListener('keydown', this.keydownListener);
@@ -200,6 +218,7 @@ export class TutorialOverlay {
         document.body.appendChild(this.overlayElement);
 
         this.scanAndRender();
+        this.overlayElement.querySelector<HTMLElement>('.tutorial-close')?.focus();
 
         // Handle window resize dynamically
         this.resizeListener = () => {
@@ -231,6 +250,9 @@ export class TutorialOverlay {
         }
 
         this.isActive = false;
+        const app = document.getElementById('app');
+        if (app) app.inert = this.previousInert;
+        restoreDialogFocus(this.restoreTarget);
     }
 
     private static parsedDictionary: TutorialDictionaryData | null = null;
@@ -297,6 +319,10 @@ export class TutorialOverlay {
         manualDiv.style.height = `${rawRect.height}px`;
 
         this.overlayElement.appendChild(manualDiv);
+        const close = document.createElement('button');
+        close.type = 'button'; close.className = 'btn btn-secondary tutorial-close'; close.textContent = 'Close manual';
+        close.addEventListener('click', () => this.hide());
+        this.overlayElement.appendChild(close);
 
         if (this.parsedDictionary) {
             for (const [selector, entry] of Object.entries(this.parsedDictionary)) {
@@ -344,6 +370,7 @@ export class TutorialOverlay {
         const tooltipText = document.createElement('div');
         tooltipText.classList.add('tutorial-tooltip');
         tooltipText.innerHTML = entry.text;
+        tooltipText.querySelectorAll<HTMLElement>('.help-link').forEach(link => { link.tabIndex = 0; link.setAttribute('role', 'button'); });
 
         tooltipContainer.appendChild(tooltipText);
         this.overlayElement.appendChild(tooltipContainer);
@@ -447,7 +474,7 @@ export class TutorialOverlay {
 
         path.setAttribute('d', d);
         path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', 'var(--accent-danger)');
+        path.setAttribute('stroke', 'var(--accent-primary)');
         path.setAttribute('stroke-width', '2');
         path.setAttribute('stroke-dasharray', '5,5'); // Dotted line effect
         path.setAttribute('filter', 'url(#glow)');
@@ -469,7 +496,11 @@ export class TutorialOverlay {
      */
     private static renderHighlightBox(targetEl: HTMLElement, entry: any, entryKey: string): void {
         const rect = targetEl.getBoundingClientRect();
-        const highlightBox = document.createElement('div');
+        const highlightBox = document.createElement('button');
+        highlightBox.type = 'button';
+        const description = document.createElement('div');
+        description.innerHTML = entry.text;
+        highlightBox.setAttribute('aria-label', description.textContent?.trim() ?? 'Show help');
         highlightBox.classList.add('tutorial-highlight');
         highlightBox.style.position = 'absolute';
         highlightBox.style.left = `${rect.left - 4}px`; // Add some padding
@@ -481,6 +512,7 @@ export class TutorialOverlay {
         highlightBox.addEventListener('mouseenter', (event) => {
             this.showDynamicTooltip(targetEl, entry, entryKey, event.clientX, event.clientY);
         });
+        highlightBox.addEventListener('focus', () => this.showDynamicTooltip(targetEl, entry, entryKey, rect.left, rect.top));
 
         highlightBox.addEventListener('mouseleave', () => {
             this.hideDynamicTooltip();
@@ -532,6 +564,9 @@ export class TutorialOverlay {
      * Utility: Check if an element is currently visible on screen.
      */
     private static isElementVisible(el: HTMLElement): boolean {
+        if (el.closest('[aria-hidden="true"]')) return false;
+        const inertAncestor = el.closest('[inert]');
+        if (inertAncestor && inertAncestor.id !== 'app') return false;
         if (!el.offsetParent && el.tagName !== 'BODY') return false;
 
         const style = window.getComputedStyle(el);

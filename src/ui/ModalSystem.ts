@@ -2,12 +2,14 @@
  * ModalSystem - Generic modal dialog and theme toggle.
  * Extracted from main.ts TectoLiteApp class.
  */
+import { mountDialogSurface } from './DialogSurface';
 import { uiIcon } from './icons';
 
 export interface ModalButton {
     text: string;
     subtext?: string;
     isSecondary?: boolean;
+    danger?: boolean;
     onClick: () => boolean | void;
 }
 
@@ -22,20 +24,6 @@ interface ActiveModal {
     restoreTarget: HTMLElement | null;
     close: (restoreFocus: boolean) => void;
 }
-
-const FOCUSABLE_SELECTOR = [
-    'a[href]',
-    'area[href]',
-    'button:not([disabled])',
-    'input:not([disabled]):not([type="hidden"])',
-    'select:not([disabled])',
-    'textarea:not([disabled])',
-    'iframe',
-    'object',
-    'embed',
-    '[contenteditable="true"]',
-    '[tabindex]:not([tabindex="-1"])'
-].join(',');
 
 let modalId = 0;
 let activeModal: ActiveModal | null = null;
@@ -74,181 +62,69 @@ export function canImplicitlyDismiss(buttons: ModalButton[]): boolean {
     return buttons.some(button => button.isSecondary);
 }
 
-function getCurrentFocusTarget(): HTMLElement | null {
-    return document.activeElement instanceof HTMLElement ? document.activeElement : null;
-}
-
-function getRestoreFocusTarget(element: HTMLElement | null): HTMLElement | null {
-    if (!element) return null;
-    const closedHeaderMenu = element.closest<HTMLElement>('.view-dropdown-menu:not(.show)');
-    if (!closedHeaderMenu) return element;
-
-    const trigger = closedHeaderMenu.parentElement?.querySelector<HTMLElement>(
-        `:scope > button[aria-controls="${closedHeaderMenu.id}"]`
-    );
-    return trigger ?? element;
-}
-
-function isFocusableVisible(element: HTMLElement): boolean {
-    if (element.hasAttribute('hidden') || element.getAttribute('aria-hidden') === 'true') return false;
-    if (element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
-
-    const style = window.getComputedStyle(element);
-    return style.display !== 'none' && style.visibility !== 'hidden';
-}
-
-function getFocusableElements(dialog: HTMLElement): HTMLElement[] {
-    return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(isFocusableVisible);
-}
-
-function focusInitialElement(dialog: HTMLElement, body: HTMLElement, secondaryButtons: HTMLButtonElement[]): void {
-    const autofocusTarget = dialog.querySelector<HTMLElement>('[autofocus]');
-    const bodyTarget = getFocusableElements(body)[0];
-    const safeSecondary = secondaryButtons.find(button => button.dataset.safeDismiss === 'true');
-    const target = autofocusTarget && isFocusableVisible(autofocusTarget)
-        ? autofocusTarget
-        : bodyTarget ?? safeSecondary ?? dialog;
-    target.focus({ preventScroll: true });
-}
-
-/**
- * Shows one accessible modal dialog. Calling showModal while another managed
- * modal is open replaces the old one rather than stacking two modal layers.
- */
+/** Shared shell with explicit compact-action and descriptive-choice variants. */
 export function showModal(options: ModalOptions): void {
-    const restoreTarget = activeModal?.restoreTarget ?? getCurrentFocusTarget();
+    const restoreTarget = activeModal?.restoreTarget ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     activeModal?.close(false);
-
-    const instanceId = ++modalId;
-    const titleId = `app-modal-title-${instanceId}`;
-    const descriptionId = `app-modal-description-${instanceId}`;
-    const previousBodyOverflow = document.body.style.overflow;
-
+    const id = ++modalId;
     const overlay = document.createElement('div');
-    overlay.className = 'app-modal-overlay';
-    overlay.dataset.managedModal = 'true';
-
     const dialog = document.createElement('div');
-    dialog.className = 'app-modal-dialog';
-    dialog.tabIndex = -1;
-    dialog.style.setProperty('--app-modal-width', options.width || '400px');
-    for (const [name, value] of Object.entries(getModalDialogAttributes(titleId, descriptionId))) {
-        dialog.setAttribute(name, value);
-    }
-
+    const primary = options.buttons.filter(button => !button.isSecondary);
+    const choices = primary.length > 1 || options.buttons.some(button => Boolean(button.subtext));
+    dialog.className = choices ? 'app-modal-choices' : 'app-modal-compact';
+    for (const [name, value] of Object.entries(getModalDialogAttributes('app-modal-title-' + id, 'app-modal-description-' + id))) dialog.setAttribute(name, value);
     const title = document.createElement('h3');
-    title.id = titleId;
-    title.className = 'app-modal-title';
+    title.id = 'app-modal-title-' + id;
     title.textContent = options.title;
-
     const body = document.createElement('div');
-    body.id = descriptionId;
+    body.id = 'app-modal-description-' + id;
     body.className = 'app-modal-body';
-    // Modal content is deliberately rich HTML supplied by trusted application
-    // callers. User-controlled values must be escaped by those callers.
+    // Callers escape user-controlled values before supplying rich content.
     body.innerHTML = options.content;
-
-    const buttonContainer = document.createElement('div');
-    buttonContainer.className = 'app-modal-actions';
-
-    dialog.append(title, body, buttonContainer);
+    const actions = document.createElement('div');
+    actions.className = 'app-modal-actions';
+    dialog.append(title, body, actions);
     overlay.appendChild(dialog);
-
-    const primaryButtons = options.buttons.filter(button => !button.isSecondary);
-    const secondaryOptions = options.buttons.filter(button => button.isSecondary);
-    const secondaryElements: HTMLButtonElement[] = [];
+    let closeSurface: (restore?: boolean) => void = () => undefined;
     let closed = false;
-
-    const close = (shouldRestoreFocus: boolean): void => {
+    const close = (restore = true) => {
         if (closed) return;
         closed = true;
-        overlay.remove();
-        document.body.style.overflow = previousBodyOverflow;
+        closeSurface(restore);
         if (activeModal?.close === close) activeModal = null;
-
-        const focusTarget = getRestoreFocusTarget(restoreTarget);
-        if (shouldRestoreFocus && focusTarget?.isConnected) {
-            focusTarget.focus({ preventScroll: true });
+    };
+    const run = (button: ModalButton) => {
+        if (button.onClick() !== false) close();
+    };
+    const ordered = choices ? options.buttons : [...options.buttons.filter(button => button.isSecondary), ...primary];
+    for (const option of ordered) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        const destructive = option.danger ?? /^(delete|remove|discard|erase)\b/i.test(option.text);
+        button.className = 'btn ' + (destructive ? 'btn-danger' : option.isSecondary ? 'btn-secondary' : choices ? 'app-modal-choice' : 'btn-primary');
+        button.dataset.safeDismiss = String(isSafeImplicitDismissAction(option));
+        const label = document.createElement('span');
+        label.textContent = option.text;
+        button.appendChild(label);
+        if (option.subtext) {
+            const detail = document.createElement('span');
+            detail.className = 'app-modal-button-subtext';
+            detail.textContent = option.subtext;
+            button.appendChild(detail);
         }
-    };
-
-    const runAction = (button: ModalButton): void => {
-        const result = button.onClick();
-        if (result !== false) close(true);
-    };
-
-    const createButton = (button: ModalButton, secondary: boolean): HTMLButtonElement => {
-        const element = document.createElement('button');
-        element.type = 'button';
-        element.className = secondary ? 'btn btn-secondary app-modal-secondary' : 'btn app-modal-primary';
-        element.addEventListener('click', () => runAction(button));
-
-        if (secondary) {
-            element.textContent = button.text;
-            element.dataset.safeDismiss = String(isSafeImplicitDismissAction(button));
-        } else {
-            const label = document.createElement('span');
-            label.className = 'app-modal-button-label';
-            label.textContent = button.text;
-            element.appendChild(label);
-
-            if (button.subtext) {
-                const subtext = document.createElement('span');
-                subtext.className = 'app-modal-button-subtext';
-                subtext.textContent = button.subtext;
-                element.appendChild(subtext);
-            }
-        }
-        return element;
-    };
-
-    for (const button of primaryButtons) {
-        buttonContainer.appendChild(createButton(button, false));
+        button.addEventListener('click', () => run(option));
+        actions.appendChild(button);
     }
-
-    if (secondaryOptions.length > 0) {
-        const secondaryRow = document.createElement('div');
-        secondaryRow.className = 'app-modal-secondary-row';
-        for (const button of secondaryOptions) {
-            const element = createButton(button, true);
-            secondaryElements.push(element);
-            secondaryRow.appendChild(element);
+    activeModal = { close, restoreTarget };
+    closeSurface = mountDialogSurface(overlay, dialog, {
+        restoreTarget, width: options.width ?? '480px', canDismiss: canImplicitlyDismiss(options.buttons),
+        initialFocus: body.querySelector<HTMLElement>('input:not(:disabled), textarea, select, button')
+            ?? actions.querySelector<HTMLElement>('[data-safe-dismiss="true"]'),
+        cancel: () => {
+            const safe = options.buttons.find(isSafeImplicitDismissAction);
+            if (safe) run(safe); else close();
         }
-        buttonContainer.appendChild(secondaryRow);
-    }
-
-    const dismissImplicitly = (): void => {
-        if (!canImplicitlyDismiss(options.buttons)) return;
-        const safeAction = secondaryOptions.find(isSafeImplicitDismissAction);
-        if (safeAction) runAction(safeAction);
-        else close(true);
-    };
-
-    overlay.addEventListener('click', event => {
-        if (event.target === overlay) dismissImplicitly();
     });
-
-    overlay.addEventListener('keydown', event => {
-        if (event.key === 'Escape' && canImplicitlyDismiss(options.buttons)) {
-            event.preventDefault();
-            event.stopPropagation();
-            dismissImplicitly();
-            return;
-        }
-
-        if (event.key !== 'Tab') return;
-        const focusable = getFocusableElements(dialog);
-        event.preventDefault();
-        const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
-        const nextIndex = getWrappedFocusIndex(currentIndex, focusable.length, event.shiftKey);
-        if (nextIndex >= 0) focusable[nextIndex].focus({ preventScroll: true });
-        else dialog.focus({ preventScroll: true });
-    });
-
-    activeModal = { restoreTarget, close };
-    document.body.style.overflow = 'hidden';
-    document.body.appendChild(overlay);
-    focusInitialElement(dialog, body, secondaryElements);
 }
 
 /**

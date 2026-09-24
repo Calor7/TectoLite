@@ -41,11 +41,11 @@ export function generateRealWorldPresetList(): string {
     return presets.map((preset, idx) => `
             <div style="display:grid; grid-template-columns: 1fr auto; gap:4px; align-items:center; background:var(--bg-surface); border-radius:var(--radius-sm); padding:4px;">
                 <div style="display:flex; align-items:center; gap:4px; overflow:hidden; cursor:pointer;" class="speed-preset-info" data-idx="${idx}" title="Click for details">
-                    <span style="font-size:11px; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:underline; text-decoration-color: var(--border-default);">${preset.name}</span>
+                    <span style="font-size: 12px; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-decoration:underline; text-decoration-color: var(--border-default);">${preset.name}</span>
                 </div>
                 <button class="speed-preset-apply" data-idx="${idx}" style="
                     background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:3px;
-                    padding:2px 8px; cursor:pointer; color:var(--text-primary); font-size:11px;
+                    padding:2px 8px; cursor:pointer; color:var(--text-primary); font-size: 12px;
                     transition:all 0.2s; min-width:60px;
                 " title="Apply speed">${preset.speed}</button>
             </div>
@@ -62,11 +62,11 @@ export function generateCustomPresetList(ratePresets: number[] | undefined): str
 
     return slots.map((val, idx) => `
                 <div style="display:flex; align-items:center; gap:6px;">
-                     <label style="font-size:10px; color:var(--text-secondary); width:15px;">#${idx + 1}</label>
+                     <label style="font-size: 12px; color:var(--text-secondary); width:15px;">#${idx + 1}</label>
                      <input type="number" class="custom-preset-input property-input" data-idx="${idx}" value="${val}" step="0.1" style="flex:1;">
                      <button class="custom-preset-apply" data-idx="${idx}" style="
                         background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-sm);
-                        padding:4px 8px; cursor:pointer; color:var(--text-primary); font-size:10px;
+                        padding:4px 8px; cursor:pointer; color:var(--text-primary); font-size: 12px;
                      ">Apply</button>
                 </div>
             `).join('');
@@ -119,7 +119,7 @@ export function showPresetInfoDialog(
     dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-lg);padding:20px;max-width:400px;width:90%;color:var(--text-primary);';
     dialog.innerHTML = `
         <h3 style="margin:0 0 8px 0; color:var(--text-primary);">${preset.name}</h3>
-        <div style="font-size:11px; color:var(--text-secondary); margin-bottom:10px;">${preset.type}</div>
+        <div style="font-size: 12px; color:var(--text-secondary); margin-bottom:10px;">${preset.type}</div>
         <div style="font-size:13px; margin-bottom:12px;">${preset.details}</div>
         <div style="background:var(--bg-elevated); padding:8px; border-radius:var(--radius-sm); margin-bottom:16px;">
             <div style="display:flex; justify-content:space-between; font-size:12px;">

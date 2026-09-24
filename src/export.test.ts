@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createExportViewport, createWorldFromCurrentTime } from './export';
-import type { Polygon, TectonicPlate, WorldState } from './types';
+import { createExportViewport, createWorldFromCurrentTime, renderPNGExport, type PNGExportOptions } from './export';
+import { createDefaultWorldState, type AppState, type Polygon, type TectonicPlate, type WorldState } from './types';
 
 describe('createExportViewport', () => {
     it('cover-crops a wider export instead of revealing extra map area', () => {
@@ -86,5 +86,90 @@ describe('createWorldFromCurrentTime', () => {
         expect(result.plates.find(candidate => candidate.id === 'expired')?.linkedToPlateId).toBeUndefined();
         expect(result.plates.find(candidate => candidate.id === 'dangling')?.linkedToPlateId).toBeUndefined();
         expect(result.plates.some(candidate => candidate.id === 'dead-parent')).toBe(false);
+    });
+});
+
+// Record drawing operations while exercising the real projection and export renderer.
+function renderMap(options: Partial<PNGExportOptions> = {}, worldOverrides: Partial<WorldState> = {}) {
+    const operations: { kind: string; color: string; alpha: number; width: number }[] = [];
+    const saved: { fillStyle: string; strokeStyle: string; globalAlpha: number; lineWidth: number }[] = [];
+    const ctx = {
+        fillStyle: '', strokeStyle: '', globalAlpha: 1, lineWidth: 1,
+        save() { saved.push({ fillStyle: this.fillStyle, strokeStyle: this.strokeStyle, globalAlpha: this.globalAlpha, lineWidth: this.lineWidth }); },
+        restore() { Object.assign(this, saved.pop()); },
+        beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, arc() {}, roundRect() {},
+        translate() {}, rotate() {}, setLineDash() {}, clearRect() {},
+        measureText() { return { width: 40 }; },
+        fillText() { operations.push({ kind: 'text', color: this.fillStyle, alpha: this.globalAlpha, width: 0 }); },
+        fill() { operations.push({ kind: 'fill', color: this.fillStyle, alpha: this.globalAlpha, width: 0 }); },
+        fillRect() { operations.push({ kind: 'background', color: this.fillStyle, alpha: this.globalAlpha, width: 0 }); },
+        stroke() { operations.push({ kind: 'stroke', color: this.strokeStyle, alpha: this.globalAlpha, width: this.lineWidth }); },
+    };
+    const state: AppState = {
+        world: { ...createDefaultWorldState(), plates: [plate('land', { color: '#80aa60' })], ...worldOverrides },
+        viewport: { width: 800, height: 400, scale: 120, rotate: [0, 0, 0], translate: [400, 200] },
+        activeTool: 'select', activeFeatureType: 'mountain', drawMode: 'polygon',
+        activeLineType: 'divergent', activePolygonType: 'generic',
+    };
+    const before = structuredClone(state);
+    renderPNGExport(state, {
+        projection: 'equirectangular', waterMode: 'transparent', plateColorMode: 'native',
+        showGrid: false, ...options,
+    }, { width: 1600, height: 800, getContext: () => ctx } as unknown as HTMLCanvasElement);
+    expect(state).toEqual(before);
+    return operations;
+}
+
+describe('PNG export layers', () => {
+    it('draws a visible grid above opaque land by default and honors grid thickness', () => {
+        const operations = renderMap({ showGrid: true, showBorders: false }, {
+            globalOptions: { ...createDefaultWorldState().globalOptions, gridThickness: 3 },
+        });
+        expect(operations.map(op => op.kind)).toEqual(['fill', 'stroke']);
+        expect(operations[1]).toMatchObject({ color: 'rgba(25, 40, 55, 0.4)', width: 6, alpha: 1 });
+    });
+
+    it('can put the grid below land or omit it entirely', () => {
+        expect(renderMap({ showGrid: true, gridOnTop: false, showBorders: false }).map(op => op.kind))
+            .toEqual(['stroke', 'fill']);
+        expect(renderMap({ showGrid: false, showBorders: false }).map(op => op.kind)).toEqual(['fill']);
+    });
+
+    it('exports borderless fills without erasing independent geological lines', () => {
+        const line = plate('line', { type: 'rift', polygons: [{ id: 'line-path', points: [[0, 0], [10, 10]], closed: false }] });
+        const world = { plates: [plate('land'), line] };
+        expect(renderMap({ showBorders: false }, world).map(op => op.kind)).toEqual(['fill', 'stroke']);
+        expect(renderMap({ showBorders: false, includeLines: false }, world).map(op => op.kind)).toEqual(['fill']);
+        expect(renderMap({ includeLines: false }, world).map(op => op.kind)).toEqual(['fill', 'stroke']);
+    });
+
+    it('leaves both ocean and globe background transparent for compositing', () => {
+        expect(renderMap({ projection: 'orthographic', waterMode: 'transparent', showBorders: false }).map(op => op.kind))
+            .toEqual(['fill']);
+        expect(renderMap({ waterMode: 'white', showBorders: false })[0]).toMatchObject({ kind: 'background', color: '#ffffff' });
+    });
+
+    it('honors plate and group opacity without changing the editable project', () => {
+        const operations = renderMap({ showBorders: false }, {
+            plates: [plate('land', { groupId: 'group' })],
+            entityGroups: [{ id: 'group', name: 'Group', opacity: 0.5 }],
+            globalOptions: { ...createDefaultWorldState().globalOptions, plateOpacity: 0.6 },
+        });
+        expect(operations[0].alpha).toBeCloseTo(0.3);
+    });
+
+    it('exports only visible plates alive at the current time', () => {
+        expect(renderMap({ showBorders: false }, {
+            currentTime: 100,
+            plates: [plate('active'), plate('hidden', { visible: false }), plate('future', { birthTime: 101 }), plate('dead', { deathTime: 100 })],
+        }).map(op => op.kind)).toEqual(['fill']);
+    });
+
+    it('omits flag labels when requested', () => {
+        const world: Partial<WorldState> = {
+            labels: [{ id: 'label', title: 'Example', content: '', anchor: [0, 0], anchorTime: 0, offset: [10, 10], color: '#ff0', visible: true, locked: false, expanded: false }],
+        };
+        expect(renderMap({ includeLabels: true }, world).some(op => op.kind === 'text')).toBe(true);
+        expect(renderMap({ includeLabels: false }, world).some(op => op.kind === 'text')).toBe(false);
     });
 });

@@ -1,3 +1,6 @@
+import { mountDialogSurface } from './ui/DialogSurface';
+import { setFieldError } from './ui/Fields';
+import { saveProjectFile, type ProjectSaveResult } from './persistence/ProjectSave';
 // PNG Export functionality
 import { AppState, Feature, WorldState, ProjectionType, CameraView, MapLabel, type Viewport } from './types';
 import { CURRENT_SAVE_VERSION as SAVE_VERSION } from './migration';
@@ -25,7 +28,11 @@ export interface PNGExportOptions {
     waterMode: 'transparent' | 'color' | 'white';
     plateColorMode: 'native' | 'land';
     showGrid: boolean;
+    gridOnTop?: boolean;
+    showBorders?: boolean;
+    includeLines?: boolean;
     includeFeatures?: boolean;
+    includeLabels?: boolean;
 }
 
 /**
@@ -56,8 +63,21 @@ export function exportToPNG(
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
+    renderPNGExport(state, options, canvas);
+
+    // Trigger download
+    const link = document.createElement('a');
+    link.download = `tectolite-export-${Date.now()}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+}
+
+/** Shared by the preview and download so layer choices and cropping stay identical. */
+export function renderPNGExport(state: AppState, options: PNGExportOptions, canvas: HTMLCanvasElement): void {
+    const { width, height } = canvas;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) throw new Error('Could not create the export canvas. Try a smaller resolution.');
+    ctx.clearRect(0, 0, width, height);
 
     // Use a temporary ProjectionManager for rendering
     const pm = new ProjectionManager(ctx);
@@ -92,23 +112,32 @@ export function exportToPNG(
         ctx.fill();
     }
 
-    // 2. Graticule
-    if (options.showGrid) {
-        ctx.strokeStyle = waterMode === 'white' ? 'rgba(0, 0, 0, 0.1)' : 'rgba(255, 255, 255, 0.05)';
-        ctx.lineWidth = 1 * ratio;
+    const drawGrid = () => {
+        ctx.save();
+        ctx.strokeStyle = waterMode === 'color' ? 'rgba(230, 240, 255, 0.4)' : 'rgba(25, 40, 55, 0.4)';
+        ctx.lineWidth = (state.world.globalOptions.gridThickness || 1) * ratio;
         ctx.beginPath();
         path(geoGraticule()());
         ctx.stroke();
-    }
+        ctx.restore();
+    };
+    if (options.showGrid && options.gridOnTop === false) drawGrid();
+
+    const groupOpacity = new Map(state.world.entityGroups.map(group => [group.id, group.opacity ?? 1]));
+    const visiblePlates = sortPlatesForRendering(state.world.plates).filter(plate =>
+        plate.visible && currentTime >= plate.birthTime
+        && (plate.deathTime === null || currentTime < plate.deathTime)
+    );
 
     // 3. Plates
-    for (const plate of sortPlatesForRendering(state.world.plates)) {
-        if (!plate.visible) continue;
-        if (currentTime < plate.birthTime) continue;
-        if (plate.deathTime !== null && currentTime >= plate.deathTime) continue;
+    for (const plate of visiblePlates) {
+        const opacity = plate.groupId ? (groupOpacity.get(plate.groupId) ?? 1) : 1;
+        ctx.save();
 
         // Polygons
         for (const polygon of plate.polygons) {
+            const isLine = plate.type === 'rift' || polygon.closed === false;
+            if (isLine && options.includeLines === false) continue;
             const geojson = toGeoJSON(polygon);
             if (geoArea(geojson) > 2 * Math.PI) geojson.geometry.coordinates[0].reverse();
 
@@ -116,7 +145,9 @@ export function exportToPNG(
             path(geojson);
 
             // Plate Color Logic
-            if (polygon.closed !== false) {
+            if (!isLine) {
+                ctx.globalAlpha = opacity * (state.world.globalOptions.plateOpacity ?? 1)
+                    * (plate.type === 'oceanic' ? (state.world.globalOptions.oceanicCrustOpacity ?? 0.5) : 1);
                 if (plateColorMode === 'land') {
                     ctx.fillStyle = '#C2B280'; // Ecru/Sand Land Color
                 } else {
@@ -125,7 +156,9 @@ export function exportToPNG(
                 ctx.fill();
             }
 
-            // Border
+            ctx.globalAlpha = opacity;
+            // Open geological lines are separate content, not polygon borders.
+            if (!isLine && options.showBorders === false) continue;
             if (plate.type === 'rift') {
                 const style = resolveLineRenderStyle(plate, state.world.globalOptions.lineTypeDefaults);
                 ctx.strokeStyle = style.color;
@@ -138,10 +171,13 @@ export function exportToPNG(
             ctx.stroke();
             ctx.setLineDash([]);
         }
+        ctx.restore();
+    }
 
+    if (options.showGrid && options.gridOnTop !== false) drawGrid();
 
-
-        // Features
+    // Symbols and annotations stay legible above the map and grid.
+    for (const plate of visiblePlates) {
         if (includeFeatures !== false) {
             for (const feature of plate.features) {
                 const opacity = resolveFeatureTimelineOpacity(
@@ -150,16 +186,13 @@ export function exportToPNG(
                     state.world.showFutureFeatures
                 );
                 if (opacity === null) continue;
-                drawFeature(ctx, pm, feature, ratio, opacity);
+                drawFeature(ctx, pm, feature, ratio, opacity * (plate.groupId ? (groupOpacity.get(plate.groupId) ?? 1) : 1));
             }
         }
-
-
     }
 
-    // 4. Flag labels are annotation overlays and intentionally render last.
-    const groupOpacity = new Map(state.world.entityGroups.map(group => [group.id, group.opacity ?? 1]));
-    for (const label of state.world.labels ?? []) {
+    // Flag labels are annotation overlays and intentionally render last.
+    for (const label of options.includeLabels === false ? [] : state.world.labels ?? []) {
         if (!label.visible) continue;
         let position = label.anchor;
         if (label.attachedPlateId) {
@@ -169,12 +202,6 @@ export function exportToPNG(
         }
         drawExportLabel(ctx, pm, label, position, ratio, label.groupId ? (groupOpacity.get(label.groupId) ?? 1) : 1);
     }
-
-    // Trigger download
-    const link = document.createElement('a');
-    link.download = `tectolite-export-${Date.now()}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
 }
 
 function drawExportLabel(
@@ -441,36 +468,26 @@ export function createWorldFromCurrentTime(world: WorldState): WorldState {
     };
 }
 
-export function showExportDialog(): Promise<ExportOptions | null> {
+export function showExportDialog(currentTime = 0): Promise<ExportOptions | null> {
     return new Promise((resolve) => {
         // Create modal overlay
         const overlay = document.createElement('div');
-        overlay.style.cssText = `
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7); z-index: 10000;
-            display: flex; align-items: center; justify-content: center;
-        `;
 
         const dialog = document.createElement('div');
         dialog.setAttribute('role', 'dialog');
         dialog.setAttribute('aria-modal', 'true');
         dialog.setAttribute('aria-labelledby', 'save-export-title');
-        dialog.style.cssText = `
-            background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 24px;
-            min-width: 350px; color: var(--text-primary); font-family: var(--font-family);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        `;
 
-        const currentTime = (window as any).__tectoLiteCurrentTime ?? 0;
 
         dialog.innerHTML = `
-            <h3 id="save-export-title" style="margin: 0 0 16px 0; color: var(--text-primary); display:flex; align-items:center; gap:8px;">${uiIcon('save')} Export save file</h3>
+            <h3 id="save-export-title" style="margin: 0 0 16px 0; color: var(--text-primary); display:flex; align-items:center; gap:8px;">${uiIcon('save')} Save project</h3>
             
             <div style="margin-bottom: 16px;">
                 <label style="display: block; margin-bottom: 8px; font-weight: 500;">File Name:</label>
                 <input type="text" id="export-filename" value="TectoLite-${new Date().toISOString().split('T')[0]}" 
                     style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
                     background: var(--bg-elevated); color: var(--text-primary); box-sizing: border-box;">
+                <p id="save-name-error" class="field-error" role="alert" hidden></p>
             </div>
             
             <div style="margin-bottom: 20px;">
@@ -499,46 +516,43 @@ export function showExportDialog(): Promise<ExportOptions | null> {
                 <button id="export-cancel" style="padding: 8px 16px; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
                     background: var(--bg-elevated); color: var(--text-primary); cursor: pointer;">Cancel</button>
                 <button id="export-confirm" style="padding: 8px 16px; border: none; border-radius: 6px;
-                    background: var(--accent-primary); color: var(--accent-contrast); cursor: pointer; font-weight: 500;">Export</button>
+                    background: var(--accent-primary); color: var(--accent-contrast); cursor: pointer; font-weight: 500;">Save project</button>
             </div>
         `;
 
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
 
-        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         let settled = false;
-        const cleanup = () => {
-            window.removeEventListener('keydown', onKeyDown);
-            overlay.remove();
-            previousFocus?.focus();
-        };
         const cancel = () => {
             if (settled) return;
             settled = true;
             cleanup();
             resolve(null);
         };
-        const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') cancel(); };
-        window.addEventListener('keydown', onKeyDown);
+        const cleanup = mountDialogSurface(overlay, dialog, { cancel, initialFocus: dialog.querySelector<HTMLInputElement>('#export-filename') });
 
         dialog.querySelector('#export-cancel')?.addEventListener('click', () => {
             cancel();
         });
 
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                cancel();
-            }
-        });
 
         dialog.querySelector('#export-confirm')?.addEventListener('click', () => {
             if (settled) return;
             const filename = (dialog.querySelector('#export-filename') as HTMLInputElement).value.trim();
+            if (!filename) {
+                setFieldError(dialog.querySelector<HTMLInputElement>('#export-filename')!, dialog.querySelector<HTMLElement>('#save-name-error')!, 'Enter a project file name.');
+                dialog.querySelector<HTMLInputElement>('#export-filename')!.focus();
+                return;
+            }
             const mode = (dialog.querySelector('input[name="export-mode"]:checked') as HTMLInputElement).value as ExportMode;
             settled = true;
             cleanup();
             resolve(filename ? { mode, filename } : null);
+        });
+
+        dialog.querySelector<HTMLInputElement>('#export-filename')?.addEventListener('input', event => {
+            setFieldError(event.target as HTMLInputElement, dialog.querySelector<HTMLElement>('#save-name-error')!, '');
         });
 
         // Focus the filename input
@@ -546,12 +560,9 @@ export function showExportDialog(): Promise<ExportOptions | null> {
     });
 }
 
-export async function exportToJSON(state: AppState, cameraViews?: CameraView[]): Promise<void> {
-    // Store current time for dialog access
-    (window as any).__tectoLiteCurrentTime = state.world.currentTime;
-
-    const options = await showExportDialog();
-    if (!options) return; // User cancelled
+export async function exportToJSON(state: AppState, cameraViews?: CameraView[]): Promise<ProjectSaveResult> {
+    const options = await showExportDialog(state.world.currentTime);
+    if (!options) return 'cancelled';
 
     let worldToSave = state.world;
 
@@ -575,13 +586,8 @@ export async function exportToJSON(state: AppState, cameraViews?: CameraView[]):
     };
 
     const json = JSON.stringify(saveData, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const link = document.createElement('a');
     const sanitizedName = options.filename.replace(/[^a-zA-Z0-9_-]/g, '_');
-    link.download = `${sanitizedName}.json`;
-    link.href = URL.createObjectURL(blob);
-    link.click();
-    URL.revokeObjectURL(link.href);
+    return saveProjectFile(json, sanitizedName + '.json');
 }
 
 export type ImportMode = 'replace_current' | 'at_beginning' | 'at_current_time';
@@ -590,21 +596,11 @@ export function showImportDialog(filename: string, plateCount: number, currentTi
     return new Promise((resolve) => {
         // Create modal overlay
         const overlay = document.createElement('div');
-        overlay.style.cssText = `
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7); z-index: 10000;
-            display: flex; align-items: center; justify-content: center;
-        `;
 
         const dialog = document.createElement('div');
         dialog.setAttribute('role', 'dialog');
         dialog.setAttribute('aria-modal', 'true');
         dialog.setAttribute('aria-labelledby', 'save-import-title');
-        dialog.style.cssText = `
-            background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 24px;
-            min-width: 350px; color: var(--text-primary); font-family: var(--font-family);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        `;
 
         dialog.innerHTML = `
             <h3 id="save-import-title" style="margin: 0 0 16px 0; color: var(--text-primary); display:flex; align-items:center; gap:8px;">${uiIcon('folder-open')} Import save file</h3>
@@ -623,7 +619,7 @@ export function showImportDialog(filename: string, plateCount: number, currentTi
                         <div>
                             <div style="font-weight: 500; display: flex; align-items: center; gap: 6px;">
                                 ${uiIcon('refresh')} Replace current simulation
-                                <span title="Restore the saved file exactly. Use Import modes below to merge into the current timeline." style="font-size: 11px; color: var(--text-secondary); cursor: help;">(i)</span>
+                                <span class="info-icon" title="Restore the saved file exactly. Use Import modes below to merge into the current timeline." style="font-size: 12px; color: var(--text-secondary); cursor: help;">(i)</span>
                             </div>
                             <div style="font-size: 12px; color: var(--text-secondary);">Fully restore the saved state</div>
                         </div>
@@ -658,31 +654,19 @@ export function showImportDialog(filename: string, plateCount: number, currentTi
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
 
-        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         let settled = false;
-        const cleanup = () => {
-            window.removeEventListener('keydown', onKeyDown);
-            overlay.remove();
-            previousFocus?.focus();
-        };
         const cancel = () => {
             if (settled) return;
             settled = true;
             cleanup();
             resolve(null);
         };
-        const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') cancel(); };
-        window.addEventListener('keydown', onKeyDown);
+        const cleanup = mountDialogSurface(overlay, dialog, { cancel, initialFocus: dialog.querySelector<HTMLInputElement>('input[name="import-mode"]:checked') });
 
         dialog.querySelector('#import-cancel')?.addEventListener('click', () => {
             cancel();
         });
 
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                cancel();
-            }
-        });
 
         dialog.querySelector('#import-confirm')?.addEventListener('click', () => {
             if (settled) return;
@@ -719,7 +703,7 @@ export function parseImportFile(file: File): Promise<{ world: WorldState; viewpo
 }
 
 // Unified Export Dialog (consolidates PNG, Heightmap, and QGIS options)
-export type UnifiedExportFormat = 'png' | 'heightmap' | 'qgis';
+export type UnifiedExportFormat = 'png' | 'heightmap' | 'qgis' | 'project';
 
 export interface UnifiedExportOptions {
     format: UnifiedExportFormat;
@@ -728,16 +712,20 @@ export interface UnifiedExportOptions {
     height?: number;
     includeHeightmap?: boolean;
     showGrid?: boolean;
-    includePaint?: boolean;
+    gridOnTop?: boolean;
+    showBorders?: boolean;
+    waterMode?: PNGExportOptions['waterMode'];
+    plateColorMode?: PNGExportOptions['plateColorMode'];
+    includeLines?: boolean;
     includeFeatures?: boolean;
-    includeLandmasses?: boolean;
+    includeLabels?: boolean;
 }
 
 export function showUnifiedExportDialog(defaults?: {
     projection?: ProjectionType;
     showGrid?: boolean;
     includeFeatures?: boolean;
-}): Promise<UnifiedExportOptions | null> {
+}, previewState?: AppState): Promise<UnifiedExportOptions | null> {
     return new Promise((resolve) => {
         const pngDefaults = {
             projection: defaults?.projection || 'orthographic',
@@ -746,22 +734,11 @@ export function showUnifiedExportDialog(defaults?: {
         };
 
         const overlay = document.createElement('div');
-        overlay.style.cssText = `
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7); z-index: 10000;
-            display: flex; align-items: center; justify-content: center;
-        `;
 
         const dialog = document.createElement('div');
         dialog.setAttribute('role', 'dialog');
         dialog.setAttribute('aria-modal', 'true');
         dialog.setAttribute('aria-labelledby', 'unified-export-title');
-        dialog.style.cssText = `
-            background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: 24px;
-            min-width: 450px; color: var(--text-primary); font-family: var(--font-family);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-            max-height: 80vh; overflow-y: auto;
-        `;
 
         dialog.innerHTML = `
             <h3 id="unified-export-title" style="margin: 0 0 20px 0; color: var(--text-primary); display:flex; align-items:center; gap:8px;">${uiIcon('upload')} Export options</h3>
@@ -769,7 +746,7 @@ export function showUnifiedExportDialog(defaults?: {
             <!-- Format Selector -->
             <div style="margin-bottom: 20px;">
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Export Format:</label>
-                <div style="display: flex; gap: 8px;">
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
                     <button id="fmt-png" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid var(--accent-primary); background: var(--bg-elevated); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; font-weight: 600; display:inline-flex; align-items:center; justify-content:center; gap:7px;">
                         ${uiIcon('image')} PNG image
                     </button>
@@ -779,9 +756,16 @@ export function showUnifiedExportDialog(defaults?: {
                     <button id="fmt-qgis" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid var(--border-default); background: var(--bg-elevated); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; font-weight: 600; display:inline-flex; align-items:center; justify-content:center; gap:7px;">
                         ${uiIcon('globe')} QGIS
                     </button>
+                    <button id="fmt-project" class="format-btn" style="flex: 1; padding: 10px; border: 2px solid var(--border-default); background: var(--bg-elevated); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; font-weight: 600;">
+                        ${uiIcon('save')} Editable project
+                    </button>
                 </div>
             </div>
 
+            <p id="export-format-help" style="font-size: 12px; line-height: 1.5; color: var(--text-secondary);"></p>
+            <p style="font-size: 12px; color: var(--text-secondary);">Export creates a copy. Your open map stays editable.</p>
+
+            <div class="export-png-layout">
             <!-- PNG Options -->
             <div id="options-png" style="display: block; margin-bottom: 20px; padding: 16px; background: var(--bg-elevated); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-primary);">
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Projection:</label>
@@ -797,20 +781,47 @@ export function showUnifiedExportDialog(defaults?: {
                     <option value="custom" selected>Custom</option>
                     <option value="presentation">Presentation (1920×1080)</option>
                     <option value="print">Print (4096×2160)</option>
-                    <option value="gis">GIS Clean (4096×2048)</option>
+                    <option value="editing">Edit in another app (transparent, no borders)</option>
                 </select>
                 <label style="display: block; margin-bottom: 12px; font-weight: 500;">Layers:</label>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
                     <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
                         <input type="checkbox" id="png-show-grid" ${pngDefaults.showGrid ? 'checked' : ''}>
-                        <span>Show Grid</span>
+                        <span>Latitude / longitude grid</span>
                     </label>
                     <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
                         <input type="checkbox" id="png-include-features" ${pngDefaults.includeFeatures ? 'checked' : ''}>
-                        <span>Features</span>
+                        <span>Feature symbols</span>
                     </label>
                 </div>
-                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution:</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                    <label><input type="checkbox" id="png-show-borders" checked> Plate outlines</label>
+                    <label><input type="checkbox" id="png-include-lines" checked> Geological lines</label>
+                    <label><input type="checkbox" id="png-include-labels" checked> Flag labels</label>
+                </div>
+                <p style="font-size: 12px; color: var(--text-secondary);">Turn off plate outlines for borderless land. Geological lines are controlled separately.</p>
+                <div class="export-appearance">
+                    <label>Grid placement
+                        <select id="png-grid-position">
+                            <option value="above">Above land and ocean</option>
+                            <option value="below">Below land</option>
+                        </select>
+                    </label>
+                    <label>Background
+                        <select id="png-background">
+                            <option value="color">Ocean color</option>
+                            <option value="transparent">Transparent</option>
+                            <option value="white">White</option>
+                        </select>
+                    </label>
+                    <label>Land colors
+                        <select id="png-colors">
+                            <option value="native">Plate colors</option>
+                            <option value="land">Single land color</option>
+                        </select>
+                    </label>
+                </div>
+                <label style="display: block; margin-bottom: 12px; font-weight: 500;">Resolution (pixels):</label>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                     <div>
                         <label style="font-size: 12px; color: var(--text-secondary);">Width</label>
@@ -821,7 +832,14 @@ export function showUnifiedExportDialog(defaults?: {
                         <input type="number" id="export-height" value="1080" style="width: 100%; padding: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-dark); color: var(--text-primary);">
                     </div>
                 </div>
-                <div id="export-crop-guidance" role="note" style="font-size: 10px; line-height: 1.35; color: var(--text-secondary); margin-top: 8px;">${EXPORT_CROP_HELP}</div>
+                <button type="button" id="png-match-view" class="export-view-button" ${previewState ? '' : 'hidden'}>Match current view proportions</button>
+                <div id="export-crop-guidance" role="note" style="font-size: 12px; line-height: 1.35; color: var(--text-secondary); margin-top: 8px;">${EXPORT_CROP_HELP}</div>
+            </div>
+
+            <figure id="png-preview-panel" class="export-preview-panel" ${previewState ? '' : 'hidden'}>
+                <div class="export-preview-surface"><canvas id="png-preview" role="img" aria-label="PNG export preview"></canvas></div>
+                <figcaption id="png-preview-caption" style="font-size: 12px; margin-top: 6px; color: var(--text-secondary);"></figcaption>
+            </figure>
             </div>
 
             <!-- Heightmap Options -->
@@ -874,7 +892,8 @@ export function showUnifiedExportDialog(defaults?: {
                 </div>
             </div>
 
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+            <p id="export-error" role="alert" class="field-error" hidden></p>
+            <div class="export-actions">
                 <button id="export-cancel" style="padding: 10px 20px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; font-weight: 500;">Cancel</button>
                 <button id="export-confirm" style="padding: 10px 20px; border: none; border-radius: var(--radius-sm); background: var(--accent-primary); color: var(--accent-contrast); cursor: pointer; font-weight: 600;">Export</button>
             </div>
@@ -889,11 +908,14 @@ export function showUnifiedExportDialog(defaults?: {
         const formatBtns = dialog.querySelectorAll('.format-btn');
         formatBtns.forEach((btn) => {
             btn.addEventListener('click', (e) => {
-                const target = e.target as HTMLElement;
+                const target = e.currentTarget as HTMLElement;
                 const formatId = target.id;
                 const format = formatId.replace('fmt-', '') as UnifiedExportFormat;
 
                 selectedFormat = format;
+                if (format === 'project') {
+                    settled = true; cleanup(); resolve({ format: 'project' }); return;
+                }
 
                 // Update button styles
                 formatBtns.forEach((b) => {
@@ -905,99 +927,137 @@ export function showUnifiedExportDialog(defaults?: {
                 (dialog.querySelector('#options-png') as HTMLElement).style.display = format === 'png' ? 'block' : 'none';
                 (dialog.querySelector('#options-heightmap') as HTMLElement).style.display = format === 'heightmap' ? 'block' : 'none';
                 (dialog.querySelector('#options-qgis') as HTMLElement).style.display = format === 'qgis' ? 'block' : 'none';
+                updateExportDetails();
             });
         });
 
         const select = dialog.querySelector('#export-projection') as HTMLSelectElement | null;
         if (select) select.value = pngDefaults.projection;
 
-        const applyPngPreset = (preset: string) => {
-            const width = dialog.querySelector('#export-width') as HTMLInputElement;
-            const height = dialog.querySelector('#export-height') as HTMLInputElement;
-            const grid = dialog.querySelector('#png-show-grid') as HTMLInputElement;
-            const features = dialog.querySelector('#png-include-features') as HTMLInputElement;
-
-            if (!width || !height || !grid || !features) return;
-
-            if (preset === 'presentation') {
-                width.value = '1920';
-                height.value = '1080';
-                grid.checked = false;
-                features.checked = true;
-            } else if (preset === 'print') {
-                width.value = '4096';
-                height.value = '2160';
-                grid.checked = false;
-                features.checked = true;
-            } else if (preset === 'gis') {
-                width.value = '4096';
-                height.value = '2048';
-                grid.checked = true;
-                features.checked = false;
+        const input = (id: string) => dialog.querySelector<HTMLInputElement>('#' + id)!;
+        const choice = (id: string) => dialog.querySelector<HTMLSelectElement>('#' + id)!;
+        const presetSelect = choice('png-preset');
+        const confirm = dialog.querySelector<HTMLButtonElement>('#export-confirm')!;
+        const error = dialog.querySelector<HTMLElement>('#export-error')!;
+        const preview = dialog.querySelector<HTMLCanvasElement>('#png-preview')!;
+        const readPngOptions = (): PNGExportOptions => ({
+            projection: choice('export-projection').value as ProjectionType,
+            waterMode: choice('png-background').value as PNGExportOptions['waterMode'],
+            plateColorMode: choice('png-colors').value as PNGExportOptions['plateColorMode'],
+            showGrid: input('png-show-grid').checked,
+            gridOnTop: choice('png-grid-position').value === 'above',
+            showBorders: input('png-show-borders').checked,
+            includeLines: input('png-include-lines').checked,
+            includeFeatures: input('png-include-features').checked,
+            includeLabels: input('png-include-labels').checked,
+        });
+        const dimensions = () => {
+            const prefix = selectedFormat === 'png' ? 'export' : selectedFormat === 'heightmap' ? 'hm' : 'qgis';
+            return { width: Number(input(prefix + '-width').value), height: Number(input(prefix + '-height').value) };
+        };
+        const formatHelp: Record<UnifiedExportFormat, string> = {
+            png: 'PNG is a flat image for sharing or painting. Use a transparent background for compositing. To keep plates, motion, and history editable in TectoLite, save an Editable project too.',
+            heightmap: 'Heightmap is a grayscale elevation image for terrain tools. It does not preserve editable plates or timeline history.',
+            qgis: 'QGIS exports a GeoPackage with geographic vector layers and an optional heightmap for GIS editing.',
+            project: 'Save a TectoLite JSON project to reopen plates, features, and motion. Choose Entire Timeline in the next step to preserve all earlier history.',
+        };
+        const updateExportDetails = () => {
+            formatBtns.forEach(button => button.setAttribute('aria-pressed', String(button.id === 'fmt-' + selectedFormat)));
+            dialog.querySelector('#export-format-help')!.textContent = formatHelp[selectedFormat];
+            confirm.textContent = selectedFormat === 'project' ? 'Continue to Save project' : selectedFormat === 'png' ? 'Export PNG' : selectedFormat === 'heightmap' ? 'Export heightmap' : 'Export GeoPackage';
+            dialog.querySelector<HTMLElement>('#png-preview-panel')!.hidden = selectedFormat !== 'png' || !previewState;
+            choice('png-grid-position').disabled = !input('png-show-grid').checked;
+            const { width, height } = selectedFormat === 'project' ? { width: 1, height: 1 } : dimensions();
+            const valid = Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0
+                && width <= 16384 && height <= 16384 && width * height <= 67108864;
+            confirm.disabled = !valid;
+            error.classList.add('field-error');
+            if (selectedFormat !== 'project') {
+                const prefix = selectedFormat === 'png' ? 'export' : selectedFormat === 'heightmap' ? 'hm' : 'qgis';
+                [input(prefix + '-width'), input(prefix + '-height')].forEach(control => {
+                    const value = Number(control.value);
+                    const invalid = !Number.isInteger(value) || value < 1 || value > 16384 || width * height > 67108864;
+                    control.setAttribute('aria-invalid', String(invalid));
+                    control.setAttribute('aria-describedby', 'export-error');
+                });
+            }
+            if (!valid && selectedFormat === 'png') {
+                dialog.querySelector('#png-preview-caption')!.textContent = 'Last valid preview — correct the dimensions to update it.';
+            }
+            error.hidden = valid;
+            error.textContent = valid ? '' : 'Enter whole pixel dimensions from 1 to 16,384, up to 64 megapixels in total.';
+            if (!valid || selectedFormat !== 'png' || !previewState) return;
+            const scale = Math.min(640 / width, 240 / height, 1);
+            preview.width = Math.max(1, Math.round(width * scale));
+            preview.height = Math.max(1, Math.round(height * scale));
+            try {
+                renderPNGExport(previewState, readPngOptions(), preview);
+                dialog.querySelector('#png-preview-caption')!.textContent = width + ' × ' + height + ' px · Current map view · Preview at reduced size';
+            } catch (cause) {
+                error.hidden = false;
+                error.textContent = cause instanceof Error ? cause.message : 'Could not render the preview.';
+                confirm.disabled = true;
             }
         };
-
-        const presetSelect = dialog.querySelector('#png-preset') as HTMLSelectElement | null;
-        presetSelect?.addEventListener('change', () => {
-            applyPngPreset(presetSelect.value);
+        presetSelect.addEventListener('change', () => {
+            const preset = presetSelect.value;
+            if (preset === 'custom') return;
+            input('export-width').value = preset === 'presentation' ? '1920' : '4096';
+            input('export-height').value = preset === 'presentation' ? '1080' : preset === 'print' ? '2160' : '2048';
+            if (preset === 'editing') {
+                choice('png-background').value = 'transparent';
+                for (const id of ['png-show-grid', 'png-show-borders', 'png-include-lines', 'png-include-features', 'png-include-labels']) {
+                    input(id).checked = false;
+                }
+            }
+            updateExportDetails();
         });
+        dialog.querySelector('#png-match-view')?.addEventListener('click', () => {
+            if (!previewState) return;
+            const width = Number(input('export-width').value);
+            input('export-height').value = String(Math.max(1, Math.round(width * previewState.viewport.height / previewState.viewport.width)));
+            presetSelect.value = 'custom';
+            updateExportDetails();
+        });
+        dialog.addEventListener('input', event => {
+            if (event.target === presetSelect) return;
+            if (selectedFormat === 'png') presetSelect.value = 'custom';
+            updateExportDetails();
+        });
+        // Pair visible labels with their inputs, including resolution and projection.
+        dialog.querySelectorAll('input[id], select[id]').forEach(control => {
+            const label = control.previousElementSibling;
+            if (label instanceof HTMLLabelElement) label.htmlFor = control.id;
+        });
+        updateExportDetails();
 
-        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         let settled = false;
-        const cleanup = () => {
-            window.removeEventListener('keydown', onKeyDown);
-            overlay.remove();
-            previousFocus?.focus();
-        };
         const onCancel = () => {
             if (settled) return;
             settled = true;
             cleanup();
             resolve(null);
         };
-        const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancel(); };
-        window.addEventListener('keydown', onKeyDown);
+        const cleanup = mountDialogSurface(overlay, dialog, {
+            cancel: onCancel, width: '980px', initialFocus: dialog.querySelector<HTMLButtonElement>('#fmt-png')
+        });
 
         dialog.querySelector('#export-cancel')?.addEventListener('click', onCancel);
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
 
         dialog.querySelector('#export-confirm')?.addEventListener('click', () => {
-            if (settled) return;
-            let result: UnifiedExportOptions | null = null;
-
-            if (selectedFormat === 'png') {
-                const w = parseInt((dialog.querySelector('#export-width') as HTMLInputElement).value);
-                const h = parseInt((dialog.querySelector('#export-height') as HTMLInputElement).value);
-                const proj = (dialog.querySelector('#export-projection') as HTMLSelectElement).value as ProjectionType;
-                const showGrid = (dialog.querySelector('#png-show-grid') as HTMLInputElement).checked;
-                const includeFeatures = (dialog.querySelector('#png-include-features') as HTMLInputElement).checked;
-                if (w > 0 && h > 0) {
-                    result = {
-                        format: 'png',
-                        projection: proj,
-                        width: w,
-                        height: h,
-                        showGrid,
-                        includeFeatures
-                    };
-                }
-            } else if (selectedFormat === 'heightmap') {
-                const w = parseInt((dialog.querySelector('#hm-width') as HTMLInputElement).value);
-                const h = parseInt((dialog.querySelector('#hm-height') as HTMLInputElement).value);
-                const proj = (dialog.querySelector('#hm-projection') as HTMLSelectElement).value as ProjectionType;
-                if (w > 0 && h > 0) {
-                    result = { format: 'heightmap', projection: proj, width: w, height: h };
-                }
-            } else if (selectedFormat === 'qgis') {
-                const w = parseInt((dialog.querySelector('#qgis-width') as HTMLInputElement).value);
-                const h = parseInt((dialog.querySelector('#qgis-height') as HTMLInputElement).value);
-                const proj = (dialog.querySelector('#qgis-projection') as HTMLSelectElement).value as ProjectionType;
-                const hm = (dialog.querySelector('#qgis-heightmap') as HTMLInputElement).checked;
-                if (w > 0 && h > 0) {
-                    result = { format: 'qgis', projection: proj, width: w, height: h, includeHeightmap: hm };
-                }
-            }
-            if (!result) return;
+            if (settled || confirm.disabled) return;
+            const result: UnifiedExportOptions = selectedFormat === 'project'
+                ? { format: 'project' }
+                : selectedFormat === 'png'
+                    ? { format: 'png', ...readPngOptions(), ...dimensions() }
+                    : selectedFormat === 'heightmap'
+                        ? { format: 'heightmap', projection: choice('hm-projection').value as ProjectionType, ...dimensions() }
+                        : {
+                            format: 'qgis',
+                            projection: choice('qgis-projection').value as ProjectionType,
+                            includeHeightmap: input('qgis-heightmap').checked,
+                            ...dimensions(),
+                        };
             settled = true;
             cleanup();
             resolve(result);

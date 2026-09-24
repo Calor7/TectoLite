@@ -1,6 +1,6 @@
 /** Shared user-facing explanations for workflows whose timeline effects are easy to miss. */
 export const LINK_TOOL_HELP =
-    'Select the parent/anchor first, then the child. The child inherits parent motion from the current timeline time (Hotkey: L).';
+    'Choose the leader on the map or in Explorer, then the follower. The follower inherits leader motion from the current timeline time (Hotkey: L).';
 
 export const FUSE_TOOL_HELP =
     'Merge two plates at the current timeline time. The first-selected plate supplies the new plate\'s initial motion (Hotkey: G).';

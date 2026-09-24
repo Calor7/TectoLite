@@ -3,6 +3,7 @@ import { AppState, TectonicPlate, MotionSegment, GeometryStage, Coordinate, Plat
 import { ensureMotionModel } from '../motion/RotationModel';
 import type { ModalOptions } from '../ui/ModalSystem';
 import { uiIcon, type UiIconName } from '../ui/icons';
+import { prepareFields } from '../ui/Fields';
 // import toDisplayTime, toInternalTime removed
 
 
@@ -52,6 +53,9 @@ export class TimelineSystem {
         if (!this.container) return;
         this.plate = plate;
         this.container.innerHTML = '';
+        const title = document.createElement('h3');
+        title.className = 'timeline-title'; title.textContent = 'Plate History';
+        this.container.appendChild(title);
 
         const list = document.createElement('div');
         list.className = 'timeline-list';
@@ -71,7 +75,7 @@ export class TimelineSystem {
         if (events.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'empty-message';
-            empty.textContent = 'No history recorded.';
+            empty.textContent = plate ? 'No history recorded.' : 'Select a plate to see its history.';
             this.container.appendChild(empty);
             return;
         }
@@ -82,6 +86,7 @@ export class TimelineSystem {
         });
 
         this.container.appendChild(list);
+        prepareFields(this.container);
     }
 
     private buildEventList(plate: TectonicPlate): TimelineEventItem[] {
@@ -309,7 +314,7 @@ export class TimelineSystem {
             cascadeWrapper.style.display = 'flex';
             cascadeWrapper.style.alignItems = 'center';
             cascadeWrapper.style.marginLeft = '8px';
-            cascadeWrapper.style.fontSize = '10px';
+            cascadeWrapper.style.fontSize = '12px';
             cascadeWrapper.style.color = 'var(--text-secondary)';
             cascadeWrapper.title = 'Shift subsequent events';
 

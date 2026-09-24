@@ -1,3 +1,5 @@
+import { setFieldError } from './Fields';
+import { closeFixedDialog } from './DialogSurface';
 /**
  * TimeControls - Time display, parsing, play button, toast notifications,
  * and time transformation utilities.
@@ -26,6 +28,8 @@ export function showToast(message: string, duration: number = 2000): void {
 
     const toast = document.createElement('div');
     toast.id = 'toast-notification';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
     toast.style.cssText = `
         position: fixed;
         bottom: 80px;
@@ -87,8 +91,8 @@ export function updateTimeDisplay(currentTime: number): void {
 export function parseTimeInput(input: string): number | null {
     const trimmed = input.trim();
     if (!trimmed) return null;
-    const parsed = parseFloat(trimmed);
-    return Number.isNaN(parsed) ? null : parsed;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 /**
@@ -124,10 +128,14 @@ export function confirmTimeInput(
     const parsedDisplayTime = parseTimeInput(displayTimeStr);
 
     if (parsedDisplayTime === null) {
-        alert('Please enter a valid time value');
+        const error = document.getElementById('time-input-error');
+        if (error) setFieldError(input, error, 'Enter a finite time of 0 Ma or later.');
+        input.focus();
         return;
     }
 
+    const error = document.getElementById('time-input-error');
+    if (error) setFieldError(input, error, '');
     // Internal time is used directly
     const internalTime = parsedDisplayTime;
 
@@ -136,5 +144,5 @@ export function confirmTimeInput(
     callbacks.updateTimeDisplay();
 
     // Close modal
-    modal.style.display = 'none';
+    closeFixedDialog(modal);
 }

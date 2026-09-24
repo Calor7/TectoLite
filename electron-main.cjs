@@ -97,9 +97,12 @@ function validateAutosaveJson(value) {
 
 function writeAutosaveAtomically(value) {
   validateAutosaveJson(value);
-  const targetPath = getAutosavePath();
+  writeJsonAtomically(getAutosavePath(), value);
+}
+
+function writeJsonAtomically(targetPath, value) {
   const parentDir = path.dirname(targetPath);
-  const temporaryPath = path.join(parentDir, `${AUTOSAVE_FILENAME}.${process.pid}.${Date.now()}.tmp`);
+  const temporaryPath = path.join(parentDir, `${path.basename(targetPath)}.${process.pid}.${Date.now()}.tmp`);
   fs.mkdirSync(parentDir, { recursive: true });
 
   let fileDescriptor;
@@ -184,6 +187,19 @@ function registerIpcHandlers() {
   ipcMain.handle('autosave:write', (event, value) => {
     assertTrustedIpcSender(event);
     writeAutosaveAtomically(value);
+  });
+
+  ipcMain.handle('project:save', async (event, json, filename) => {
+    assertTrustedIpcSender(event);
+    validateAutosaveJson(json);
+    const safeName = typeof filename === 'string' ? path.basename(filename).replace(/[^a-zA-Z0-9_.-]/g, '_') : 'TectoLite.json';
+    const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
+      title: 'Save TectoLite project', defaultPath: safeName,
+      filters: [{ name: 'TectoLite project', extensions: ['json'] }]
+    });
+    if (result.canceled || !result.filePath) return 'cancelled';
+    writeJsonAtomically(result.filePath, json);
+    return 'saved';
   });
 
   ipcMain.handle('autosave:read', (event) => {

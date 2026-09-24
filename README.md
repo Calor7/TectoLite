@@ -41,6 +41,9 @@ npm run smoke:electron-export  # production Electron GeoPackage export smoke tes
 - Save and load TectoLite JSON projects with format migration.
 - Start from blank, modern Earth, or Pangaea templates.
 - Export PNG maps, heightmaps, JSON projects, and GeoPackage data.
+- Preview PNG exports with independent grid, plate-outline, geological-line, feature, and label controls. Grids can render above land.
+- Choose a transparent background or the **Edit in another app** preset for borderless artwork; **Match current view proportions** avoids aspect-ratio cropping.
+- PNGs are flat images. Use **Editable project → Entire Timeline** to keep the complete map and its history editable in TectoLite; use GeoPackage for GIS vector editing.
 
 ## Project layout
 

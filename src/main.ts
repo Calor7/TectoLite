@@ -1,5 +1,11 @@
+import { generatedOperationName } from './ui/EntityNames';
+import { prepareWorkspaceSurfaces, prepareExplorerKeyboard } from './ui/WorkspaceSurfaces';
+import { runProjectSave } from './persistence/ProjectSave';
+import { prepareFields, setFieldError } from './ui/Fields';
+import { openFixedDialog, closeFixedDialog } from './ui/DialogSurface';
 // Main Application - TectoLite Plate Tectonics Simulator
 import './style.css';
+import './ui/controls.css';
 import {
     AppState,
     TectonicPlate,
@@ -35,8 +41,8 @@ import { HistoryManager } from './HistoryManager';
 import { remapImportedWorld } from './importHelpers';
 import { CURRENT_SAVE_VERSION } from './migration';
 import { parseProjectText } from './ProjectIO';
-import { pointPositionAt, ensureMotionModel, getMotionModel, activeEulerPole, rewriteBirthGeometryStage } from './motion/RotationModel';
-import { isMotionLinkActiveAtTime, linkPlateAtTime, wouldCreateMotionLinkCycle } from './motion/LinkModel';
+import { pointPositionAt, ensureMotionModel, activeEulerPole, rewriteBirthGeometryStage } from './motion/RotationModel';
+import { isMotionLinkActiveAtTime, linkPlateAtTime, motionLinkDescendantIds, unlinkPlateAtTime, wouldCreateMotionLinkCycle } from './motion/LinkModel';
 import { HeightmapGenerator } from './systems/HeightmapGenerator';
 import { TimelineSystem } from './systems/TimelineSystem';
 import { geoArea, geoCentroid } from 'd3-geo';
@@ -80,6 +86,7 @@ import { escapeHtml } from './ui/safeHtml';
 import { createAutosaveStore, type AutosaveStore } from './persistence/AutosaveStore';
 import { renderHotkeyGuide } from './ui/hotkeys';
 import { uiIcon } from './ui/icons';
+import { bindMotionLinks, renderMotionLinks } from './ui/MotionLinks';
 import { bindKofiHoverAnimation } from './ui/kofiAnimation';
 import { bindProgressivePropertyPanels } from './ui/ProgressiveDisclosure';
 import { bindDockController, type DockController } from './ui/DockController';
@@ -106,10 +113,12 @@ class TectoLiteApp {
     private timelineSystem: TimelineSystem | null = null;
     private fusionFirstPlateId: string | null = null; // Track first plate for fusion
     private fusionSecondPlateId: string | null = null;
+    private pendingFollowerId: string | null = null;
     private activeLinkSourceId: string | null = null; // Track first plate for linking
     private activeLinkTargetId: string | null = null;
     private splitPreviewActive = false;
     private momentumClipboard: { eulerPole: { position?: Coordinate; rate?: number } } | null = null; // Clipboard for momentum
+    private projectRevision = 0;
     private hasUnsavedChanges: boolean = false; // Tracks edits since last save/load for the close guard
     private explorerFilter: string = ''; // Plate-name filter for the Explorer sidebar
     private explorerSelectionAnchorId: string | null = null;
@@ -243,6 +252,7 @@ class TectoLiteApp {
             (updater) => {
                 this.state = updater(this.state);
                 this.updateTimeDisplay();
+                this.updateMotionLinks();
                 this.canvasManager?.markDirty();
                 // Don't full re-render UI every tick, just canvas
             }
@@ -259,6 +269,8 @@ class TectoLiteApp {
         });
         this.timelineSystem.setContainer(document.getElementById('timeline-panel')!);
 
+        prepareWorkspaceSurfaces();
+        prepareFields(document);
         this.setupEventListeners();
         this.setupHeaderMenus();
         if (perfMonitor.getBenchmarkScale() !== null) {
@@ -491,7 +503,6 @@ class TectoLiteApp {
     private setupHeaderMenus(): void {
         const menus = [
             { button: document.getElementById('btn-file-menu'), menu: document.getElementById('file-dropdown-menu') },
-            { button: document.getElementById('btn-planet'), menu: document.getElementById('planet-dropdown-menu') },
             { button: document.getElementById('btn-view-panels'), menu: document.getElementById('view-dropdown-menu') },
             { button: document.getElementById('btn-help-menu'), menu: document.getElementById('help-dropdown-menu') },
         ];
@@ -579,6 +590,20 @@ class TectoLiteApp {
         }
     }
 
+    private async saveProject(): Promise<void> {
+        // Snapshot before the dialog: later edits must remain unsaved.
+        const revision = this.projectRevision;
+        const snapshot = structuredClone(this.state);
+        const cameraViews = structuredClone(this.cameraBookmarks);
+        await runProjectSave({
+            save: () => exportToJSON(snapshot, cameraViews),
+            saved: () => {
+                if (revision === this.projectRevision) { this.setUnsaved(false); this.clearAutosave(); }
+            },
+            notify: message => this.showToast(message, 4000)
+        });
+    }
+
     private async handleUnifiedExport(): Promise<void> {
         try {
             const smokeOptions = window.__TECTOLITE_SMOKE_EXPORT__ ?? null;
@@ -586,22 +611,33 @@ class TectoLiteApp {
                 window.__TECTOLITE_SMOKE_EXPORT__ = null;
             }
 
+            // Freeze the PNG scene so playback cannot change it between preview and download.
+            const pngState = structuredClone(this.state);
             const options = smokeOptions ?? await showUnifiedExportDialog({
-                projection: this.state.world.projection,
-                showGrid: this.state.world.showGrid,
-                includeFeatures: this.state.world.showFeatures
-            });
+                projection: pngState.world.projection,
+                showGrid: pngState.world.showGrid,
+                includeFeatures: pngState.world.showFeatures
+            }, pngState);
             if (!options) return;
+
+            if (options.format === 'project') {
+                await this.saveProject();
+                return;
+            }
 
             if (options.format === 'png') {
                 const pngOptions = {
                     projection: options.projection || 'orthographic',
-                    waterMode: 'color' as const,
-                    plateColorMode: 'native' as const,
+                    waterMode: options.waterMode ?? 'color',
+                    plateColorMode: options.plateColorMode ?? 'native',
+                    gridOnTop: options.gridOnTop,
+                    showBorders: options.showBorders,
+                    includeLines: options.includeLines,
+                    includeLabels: options.includeLabels,
                     showGrid: options.showGrid ?? this.state.world.showGrid,
                     includeFeatures: options.includeFeatures ?? this.state.world.showFeatures
                 };
-                exportToPNG(this.state, pngOptions, options.width || 1920, options.height || 1080);
+                exportToPNG(pngState, pngOptions, options.width || 1920, options.height || 1080);
                 return;
             }
 
@@ -1288,7 +1324,7 @@ class TectoLiteApp {
             const lblTime = document.getElementById('lbl-current-time');
             if (modal && lblTime) {
                 lblTime.textContent = this.state.world.currentTime.toFixed(1);
-                modal.style.display = 'flex';
+                openFixedDialog(modal, document.getElementById('btn-apply-cancel'));
             }
         });
 
@@ -1356,7 +1392,7 @@ class TectoLiteApp {
 
                 this.canvasManager.cancelEdit();
                 document.getElementById('edit-controls')!.style.display = 'none';
-                document.getElementById('apply-edit-modal')!.style.display = 'none';
+                closeFixedDialog(document.getElementById('apply-edit-modal')!);
 
                 // FORCE SIMULATION UPDATE to reflect changes immediately
                 this.simulation?.setTime(this.state.world.currentTime);
@@ -1368,7 +1404,7 @@ class TectoLiteApp {
         document.getElementById('btn-apply-generation')?.addEventListener('click', () => executeApply('generation'));
         document.getElementById('btn-apply-event')?.addEventListener('click', () => executeApply('event'));
         document.getElementById('btn-apply-cancel')?.addEventListener('click', () => {
-            document.getElementById('apply-edit-modal')!.style.display = 'none';
+            closeFixedDialog(document.getElementById('apply-edit-modal')!);
         });
 
         document.getElementById('btn-edit-cancel')?.addEventListener('click', () => {
@@ -1601,6 +1637,8 @@ class TectoLiteApp {
 
         // Hotkeys
         document.addEventListener('keydown', (e) => {
+            if ((e.target as HTMLElement).closest('[role="dialog"]') || document.getElementById('tutorial-overlay')) return;
+            if ((e.key === ' ' || e.key === 'Enter') && (e.target as HTMLElement).closest('button, select, summary, a')) return;
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
             // Undo/Redo hotkeys
@@ -1686,7 +1724,7 @@ class TectoLiteApp {
                     document.getElementById('planet-dropdown-menu')?.classList.remove('show');
                     document.getElementById('help-dropdown-menu')?.classList.remove('show');
                     const timeModal = document.getElementById('time-input-modal');
-                    if (timeModal) timeModal.style.display = 'none';
+                    if (timeModal) closeFixedDialog(timeModal);
                     break;
                 }
                 case ' ':
@@ -1757,12 +1795,12 @@ class TectoLiteApp {
             const modal = document.getElementById('time-input-modal');
             const input = document.getElementById('time-input-field') as HTMLInputElement;
             if (modal && input) {
-                modal.style.display = 'flex';
-
                 // Pre-populate with current internal time
                 const displayTime = this.state.world.currentTime;
                 input.value = displayTime.toFixed(1);
-                input.focus();
+                const error = document.getElementById('time-input-error');
+                if (error) setFieldError(input, error, '');
+                openFixedDialog(modal, input);
                 input.select();
             }
         });
@@ -1775,7 +1813,7 @@ class TectoLiteApp {
         // Modal cancel button
         document.getElementById('btn-time-input-cancel')?.addEventListener('click', () => {
             const modal = document.getElementById('time-input-modal');
-            if (modal) modal.style.display = 'none';
+            if (modal) closeFixedDialog(modal);
         });
 
         // Allow Enter key to confirm
@@ -1784,7 +1822,7 @@ class TectoLiteApp {
                 this.confirmTimeInput();
             } else if (e.key === 'Escape') {
                 const modal = document.getElementById('time-input-modal');
-                if (modal) modal.style.display = 'none';
+                if (modal) closeFixedDialog(modal);
             }
         });
 
@@ -1826,10 +1864,7 @@ class TectoLiteApp {
 
         // Export/Import JSON buttons
         document.getElementById('btn-export-json')?.addEventListener('click', async () => {
-            await exportToJSON(this.state, this.cameraBookmarks);
-            this.setUnsaved(false);
-            this.clearAutosave(); // saved to disk — stale autosave no longer needed
-            this.showToast('Project saved');
+            await this.saveProject();
         });
 
         document.getElementById('btn-import-json')?.addEventListener('click', () => {
@@ -1979,8 +2014,8 @@ class TectoLiteApp {
         const formHtml = `
             <div style="display:flex;flex-direction:column;gap:12px;">
                 <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-primary);">
-                    Description <span style="color:var(--accent-danger);font-size:11px;">(required)</span>
-                    <textarea id="bug-description" rows="4" style="background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:6px;padding:8px;color:var(--text-primary);font-size:13px;font-family:inherit;resize:vertical;" placeholder="What happened? What did you expect?"></textarea>
+                    Description <span style="color:var(--accent-danger);font-size: 12px;">(required)</span>
+                    <textarea id="bug-description" required rows="4" style="background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:6px;padding:8px;color:var(--text-primary);font-size:13px;font-family:inherit;resize:vertical;" placeholder="What happened? What did you expect?"></textarea><span id="bug-description-error" class="field-error" hidden></span>
                 </label>
                 <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-primary);">
                     Steps to reproduce
@@ -2028,7 +2063,7 @@ class TectoLiteApp {
                         const includeScreenshot = shotEl?.checked ?? false;
 
                         if (!description) {
-                            alert('Please describe the bug before saving.');
+                            if (descEl) { setFieldError(descEl, document.getElementById('bug-description-error')!, 'Describe what happened before saving the report.'); descEl.focus(); }
                             return false;
                         }
 
@@ -2377,6 +2412,7 @@ class TectoLiteApp {
         });
 
         document.getElementById('btn-clear-link-workflow')?.addEventListener('click', () => {
+            this.pendingFollowerId = null;
             const workflowIds = new Set([this.activeLinkSourceId, this.activeLinkTargetId].filter(Boolean));
             this.activeLinkSourceId = null;
             this.activeLinkTargetId = null;
@@ -2384,7 +2420,7 @@ class TectoLiteApp {
                 this.state.world.selectedPlateId = null;
                 this.state.world.selectedPlateIds = [];
             }
-            this.updateHint('Select parent (anchor) plate');
+            this.updateHint('Choose the leader on the map or in Explorer');
             this.updateUI();
             this.canvasManager?.markDirty();
         });
@@ -2436,8 +2472,8 @@ class TectoLiteApp {
         if (centerSelection) centerSelection.disabled = !selectedPlate;
         const splitNameA = document.getElementById('split-name-a') as HTMLInputElement | null;
         const splitNameB = document.getElementById('split-name-b') as HTMLInputElement | null;
-        if (splitNameA) splitNameA.placeholder = selectedPlate ? `${selectedPlate.name} (A)` : 'Automatic (A)';
-        if (splitNameB) splitNameB.placeholder = selectedPlate ? `${selectedPlate.name} (B)` : 'Automatic (B)';
+        if (splitNameA) splitNameA.placeholder = selectedPlate ? generatedOperationName(selectedPlate.name, ' (A)') : 'Automatic (A)';
+        if (splitNameB) splitNameB.placeholder = selectedPlate ? generatedOperationName(selectedPlate.name, ' (B)') : 'Automatic (B)';
         setText('split-workflow-status', this.splitPreviewActive
             ? `Boundary ready at ${this.state.world.currentTime.toFixed(1)} Ma. Review the options and apply.`
             : selectedPlate
@@ -2449,13 +2485,13 @@ class TectoLiteApp {
         const linkSource = plateName(this.activeLinkSourceId);
         const linkTarget = plateName(this.activeLinkTargetId);
         setText('link-workflow-time', `${this.state.world.currentTime.toFixed(1)} Ma`);
-        setText('link-workflow-source', linkSource ?? 'Choose on map');
-        setText('link-workflow-target', linkTarget ?? (linkSource ? 'Choose child on map' : 'Waiting for parent'));
+        setText('link-workflow-source', linkSource ?? 'Choose on map or in Explorer');
+        setText('link-workflow-target', linkTarget ?? (linkSource ? 'Choose on map or in Explorer' : 'Waiting for leader'));
         const sourcePlate = this.state.world.plates.find(plate => plate.id === this.activeLinkSourceId);
         const targetPlate = this.state.world.plates.find(plate => plate.id === this.activeLinkTargetId);
         setText('link-workflow-result', sourcePlate?.type === 'rift' || targetPlate?.type === 'rift'
             ? 'This creates or removes a rift-generation connection; it does not inherit motion.'
-            : `The child follows the parent exactly from ${this.state.world.currentTime.toFixed(1)} Ma.`);
+            : `The follower follows the leader exactly from ${this.state.world.currentTime.toFixed(1)} Ma.`);
 
         const fuseSource = plateName(this.fusionFirstPlateId);
         const fuseTarget = plateName(this.fusionSecondPlateId);
@@ -2464,7 +2500,7 @@ class TectoLiteApp {
         setText('fuse-workflow-target', fuseTarget ?? (fuseSource ? 'Choose other plate on map' : 'Waiting for source'));
         const fuseName = document.getElementById('fuse-result-name') as HTMLInputElement | null;
         if (fuseName) fuseName.placeholder = fuseSource && fuseTarget
-            ? `${fuseSource}-${fuseTarget} (Fused)`
+            ? generatedOperationName(`${fuseSource}-${fuseTarget}`, ' (Fused)')
             : 'Automatic fused name';
 
         setDisplay('navigation-controls', this.state.activeTool === 'pan' || this.state.activeTool === 'view_pan');
@@ -2477,6 +2513,7 @@ class TectoLiteApp {
     }
 
     private setActiveTool(tool: ToolType): void {
+        this.pendingFollowerId = null;
         if (tool !== 'fuse') {
             this.fusionFirstPlateId = null;
             this.fusionSecondPlateId = null;
@@ -2555,7 +2592,7 @@ class TectoLiteApp {
                 hintText = "Select the plate whose motion should be inherited, then select the other plate to fuse at the current time.";
                 break;
             case 'link':
-                hintText = "Select the parent/anchor first, then the child. The child inherits parent motion from the current time.";
+                hintText = 'Choose the leader on the map or in Explorer, then the follower. The follower inherits leader motion from the current time.';
                 break;
             case 'paint':
                 hintText = "Select a plate, then draw on it with the brush. Adjust size and color in Tool Options.";
@@ -3042,7 +3079,7 @@ class TectoLiteApp {
                     },
                     {
                         text: 'Swap Motion Source',
-                        subtext: `${escapeHtml(plate.name)} will supply the fused plate's initial motion instead.`,
+                        subtext: `${plate.name} will supply the fused plate's initial motion instead.`,
                         isSecondary: true,
                         onClick: () => {
                             const previousSourceId = firstPlate.id;
@@ -3068,7 +3105,28 @@ class TectoLiteApp {
         }
     }
 
+    private beginFollowPlate(followerId: string): void {
+        this.setActiveTool('link');
+        this.pendingFollowerId = followerId;
+        this.activeLinkSourceId = null;
+        this.activeLinkTargetId = followerId;
+        this.dockController?.showToolOptions();
+        this.syncToolOptionControls();
+        this.updateHint('Choose the leader on the map or in Explorer. You will review the direction and time before linking.');
+    }
+
     private handleLinkTool(plateId: string): void {
+        if (this.pendingFollowerId) {
+            if (this.pendingFollowerId === plateId) {
+                this.showToast('Choose a different plate as the leader.');
+                return;
+            }
+            const followerId = this.pendingFollowerId;
+            this.pendingFollowerId = null;
+            this.activeLinkSourceId = plateId;
+            this.handleLinkTool(followerId);
+            return;
+        }
         const plate = this.state.world.plates.find(p => p.id === plateId);
         if (!plate) return;
 
@@ -3078,7 +3136,7 @@ class TectoLiteApp {
             this.activeLinkTargetId = null;
             this.state.world.selectedPlateId = plateId;
 
-            this.updateHint(`Selected PARENT (Anchor) ${plate.name} - now select child plate to link to it`);
+            this.updateHint(`Selected LEADER ${plate.name} - now choose the follower on the map or in Explorer`);
 
             this.updateUI();
             this.canvasManager?.render();
@@ -3091,7 +3149,7 @@ class TectoLiteApp {
             this.activeLinkSourceId = null;
             this.activeLinkTargetId = null;
             this.state.world.selectedPlateId = null;
-            this.updateHint("Select parent (anchor) plate");
+            this.updateHint("Choose the leader on the map or in Explorer");
             this.updateUI();
             this.canvasManager?.render();
             return;
@@ -3124,7 +3182,7 @@ class TectoLiteApp {
                 this.showToast("Cannot link two Rifts directly.");
                 this.activeLinkSourceId = null;
                 this.activeLinkTargetId = null;
-                this.updateHint("Select parent (anchor) plate");
+                this.updateHint("Choose the leader on the map or in Explorer");
                 this.syncToolOptionControls();
                 return;
             }
@@ -3219,6 +3277,11 @@ class TectoLiteApp {
 
         // --- END NEW LOGIC (Standard Plate Linking continues below) ---
 
+        const linkTime = this.state.world.currentTime;
+        if ([plate, parentPlate].some(candidate => linkTime < candidate.birthTime || (candidate.deathTime !== null && linkTime >= candidate.deathTime))) {
+            this.showToast('Both leader and follower must be alive at the linking time. Change the time or choose another plate.');
+            return;
+        }
         // Check if already linked
         const isLinked = isMotionLinkActiveAtTime(plate, this.state.world.currentTime, parentId);
 
@@ -3228,85 +3291,28 @@ class TectoLiteApp {
             this.showToast("Cannot create link: it would form a circular motion chain during an overlapping timeline window.");
             this.activeLinkSourceId = null;
             this.activeLinkTargetId = null;
-            this.updateHint("Select parent (anchor) plate");
+            this.updateHint("Choose the leader on the map or in Explorer");
             this.updateUI();
             this.canvasManager?.render();
             return;
         }
 
         if (isLinked) {
-            // Unlink
-            this.showModal({
-                title: `Unlink Plates`,
-                content: `Do you want to <strong>unlink</strong> child plate <strong>${escapeHtml(plate.name)}</strong> from parent <strong>${escapeHtml(parentPlate.name)}</strong>?<br><br>
-                    <small>${escapeHtml(plate.name)} will move independently with the combined motion it currently has.</small>`,
-                buttons: [
-                    {
-                        text: "Unlink",
-                        onClick: () => {
-                            this.pushState();
-
-                            const currentTime = this.state.world.currentTime;
-
-                            // Get parent's current Euler pole
-                            const parentActiveSegment = [...getMotionModel(parentPlate).segments]
-                                .filter(s => s.time <= currentTime)
-                                .sort((a, b) => b.time - a.time)[0];
-                            const parentPole = parentActiveSegment?.eulerPole || { position: [0, 90] as Coordinate, rate: 0, visible: false };
-
-                            this.state.world.plates = this.state.world.plates.map(p => {
-                                if (p.id === childId) {
-                                    // Bake in the parent's motion as the child's new base motion segment
-                                    const updated = { ...p };
-                                    ensureMotionModel(updated);
-                                    const segments = [...updated.motionSegments!]
-                                        .filter(s => Math.abs(s.time - currentTime) > 0.001);
-                                    segments.push({ time: currentTime, eulerPole: parentPole });
-                                    updated.motionSegments = segments.sort((a, b) => a.time - b.time);
-                                    updated.linkedToPlateId = undefined;
-                                    updated.unlinkTime = currentTime;  // Mark when link ended
-                                    return updated;
-                                }
-                                return p;
-                            });
-
-                            this.updateHint(`Unlinked ${plate.name} from ${parentPlate.name} at ${currentTime.toFixed(1)} Ma - motion baked in`);
-                            setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-
-                            this.activeLinkSourceId = null;
-                            this.activeLinkTargetId = null;
-                            this.state.world.selectedPlateId = childId;
-                            this.updateUI();
-                            this.canvasManager?.render();
-                        }
-                    },
-                    {
-                        text: 'Cancel',
-                        isSecondary: true,
-                        onClick: () => {
-                            this.activeLinkSourceId = null;
-                            this.activeLinkTargetId = null;
-                            this.updateHint("Select parent (anchor) plate");
-                            this.updateUI();
-                            this.canvasManager?.render();
-                        }
-                    }
-                ]
-            });
+            this.confirmUnlinkPlate(childId);
         } else {
             // A saved relationship may begin later on the timeline. It is not
             // active yet, so using Link here reschedules its start instead of
             // creating an impossible unlinkTime < linkTime window.
             this.showModal({
                 title: `Link Plates`,
-                content: `Link <strong>${escapeHtml(plate.name)}</strong> (child) to <strong>${escapeHtml(parentPlate.name)}</strong> (parent/anchor) starting at <strong>${this.state.world.currentTime.toFixed(1)} Ma</strong>?<br><br>
-                    <small>The child's independent motion becomes zero at the link time so it follows the parent without retaining old momentum. Earlier history is unchanged.</small>`,
+                content: `Link <strong>${escapeHtml(plate.name)}</strong> (follower) to <strong>${escapeHtml(parentPlate.name)}</strong> (leader) starting at <strong>${linkTime.toFixed(1)} Ma</strong>?<br><br>
+                    <small>The follower’s independent motion becomes zero at the link time so it follows the leader. ${plate.linkedToPlateId ? 'This replaces the saved follow relationship, including earlier linked history. Undo restores it.' : 'Earlier history is unchanged.'}</small>`,
                 buttons: [
                     {
                         text: "Link",
                         onClick: () => {
                             this.pushState();
-                            const currentTime = this.state.world.currentTime;
+                            const currentTime = linkTime;
 
                             this.state.world.plates = this.state.world.plates.map(p =>
                                 p.id === childId ? linkPlateAtTime(p, parentId, currentTime) : p
@@ -3323,8 +3329,8 @@ class TectoLiteApp {
                         }
                     },
                     {
-                        text: 'Swap Parent and Child',
-                        subtext: `${escapeHtml(plate.name)} becomes the parent/anchor instead.`,
+                        text: 'Swap leader and follower',
+                        subtext: `${plate.name} becomes the leader instead.`,
                         isSecondary: true,
                         onClick: () => {
                             this.activeLinkSourceId = childId;
@@ -3339,7 +3345,7 @@ class TectoLiteApp {
                         onClick: () => {
                             this.activeLinkSourceId = null;
                             this.activeLinkTargetId = null;
-                            this.updateHint("Select parent (anchor) plate");
+                            this.updateHint("Choose the leader on the map or in Explorer");
                             this.updateUI();
                             this.canvasManager?.render();
                         }
@@ -3350,6 +3356,41 @@ class TectoLiteApp {
     }
 
 
+
+    private confirmUnlinkPlate(childId: string): void {
+        const child = this.state.world.plates.find(plate => plate.id === childId);
+        const parent = this.state.world.plates.find(plate => plate.id === child?.linkedToPlateId);
+        const time = this.state.world.currentTime;
+        if (!child || !parent || !isMotionLinkActiveAtTime(child, time)) return;
+
+        this.showModal({
+            title: 'Stop following',
+            content: `Stop <strong>${escapeHtml(child.name)}</strong> following <strong>${escapeHtml(parent.name)}</strong> at <strong>${time.toFixed(1)} Ma</strong>?<br><br>
+                <small>Earlier linked motion is preserved. From this time, the plate moves independently. You can undo this change.</small>`,
+            buttons: [
+                {
+                    text: 'Unlink',
+                    onClick: () => {
+                        const currentChild = this.state.world.plates.find(plate => plate.id === childId);
+                        const currentParent = this.state.world.plates.find(plate => plate.id === parent.id);
+                        if (!currentChild || !currentParent || !isMotionLinkActiveAtTime(currentChild, time, parent.id)) return;
+                        this.pushState();
+                        const parentPole = activeEulerPole(currentParent, time);
+                        this.state.world.plates = this.state.world.plates.map(plate =>
+                            plate.id === childId ? unlinkPlateAtTime(plate, time, parentPole) : plate
+                        );
+                        this.activeLinkSourceId = null;
+                        this.activeLinkTargetId = null;
+                        this.simulation?.setTime(this.state.world.currentTime);
+                        this.updateUI();
+                        this.canvasManager?.render();
+                        this.updateHint(`${child.name} stopped following ${parent.name} at ${time.toFixed(1)} Ma.`);
+                    }
+                },
+                { text: 'Cancel', isSecondary: true, onClick: () => undefined }
+            ]
+        });
+    }
 
     private handleSplitApply(points: Coordinate[]): void {
         if (points.length < 2) return;
@@ -3685,7 +3726,7 @@ class TectoLiteApp {
             <div class="plate-item ${selectedIds.has(plate.id) ? 'selected' : ''}"
                  draggable="true" data-plate-id="${plate.id}" title="Shift-click to select a range; drag to another group">
               <span class="plate-color" style="background: ${plate.color}"></span>
-              <span class="plate-name">${escapeHtml(plate.name)}</span>
+              <button type="button" class="plate-name plate-select" data-entity-id="${escapeHtml(plate.id)}" aria-label="Select ${escapeHtml(plate.name)}">${escapeHtml(plate.name)}<span class="entity-short-id">${escapeHtml(plate.id.slice(-6))}</span></button>
               <button class="plate-visibility" data-visible="${plate.visible}" title="Toggle visibility">
                 ${uiIcon(plate.visible ? 'eye' : 'eye-off')}
               </button>
@@ -3723,7 +3764,7 @@ class TectoLiteApp {
         wrapper.innerHTML = labels.map(label => `
             <div class="plate-item ${this.state.world.selectedLabelId === label.id ? 'selected' : ''}" draggable="true" data-label-id="${label.id}" title="Label; drag to another group">
               <span class="plate-color" style="background:${label.color}"></span>
-              <span class="plate-name">${uiIcon('flag')} ${escapeHtml(label.title)}</span>
+              <button type="button" class="plate-name plate-select" data-entity-id="${escapeHtml(label.id)}" aria-label="Select ${escapeHtml(label.title)}">${uiIcon('flag')} ${escapeHtml(label.title)}</button>
               <button class="plate-visibility" data-visible="${label.visible}" title="Toggle visibility">${uiIcon(label.visible ? 'eye' : 'eye-off')}</button>
             </div>
         `).join('');
@@ -3743,6 +3784,7 @@ class TectoLiteApp {
                 event.stopPropagation();
                 const labelId = button.closest<HTMLElement>('[data-label-id]')?.dataset.labelId;
                 if (!labelId) return;
+                this.pushState();
                 this.state.world.labels = this.state.world.labels.map(label => label.id === labelId ? { ...label, visible: !label.visible } : label);
                 this.updateExplorer();
                 this.canvasManager?.render();
@@ -3778,9 +3820,8 @@ class TectoLiteApp {
             const allPlateMembers = this.state.world.plates.filter(plate => (plate.groupId ?? null) === groupId);
             const allLabelMembers = this.state.world.labels.filter(label => (label.groupId ?? null) === groupId);
             const allMembers = [...allPlateMembers, ...allLabelMembers];
-            const groupMatches = !!filterText && name.toLowerCase().includes(filterText);
-            const plateMembers = groupMatches ? allPlateMembers : visiblePlates.filter(plate => (plate.groupId ?? null) === groupId);
-            const labelMembers = groupMatches ? allLabelMembers : visibleLabels.filter(label => (label.groupId ?? null) === groupId);
+            const plateMembers = visiblePlates.filter(plate => (plate.groupId ?? null) === groupId);
+            const labelMembers = visibleLabels.filter(label => (label.groupId ?? null) === groupId);
             if (filterText && plateMembers.length + labelMembers.length === 0) return;
 
             const wrapper = document.createElement('div');
@@ -3794,8 +3835,8 @@ class TectoLiteApp {
             let opacityPopover: HTMLElement | null = null;
             header.innerHTML = `
                 <span class="entity-group-chevron">${uiIcon(collapsed && !filterText ? 'chevron-right' : 'chevron-down')}</span>
-                <span class="entity-group-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
-                <span class="entity-group-count">${allMembers.length}</span>
+                <button type="button" class="entity-group-name" aria-expanded="${!collapsed || !!filterText}" title="${escapeHtml(name)}">${escapeHtml(name)}</button>
+                <span class="entity-group-count">${filterText ? `${plateMembers.length + labelMembers.length} of ` : ''}${allMembers.length}</span>
                 ${editable ? `<span class="entity-group-actions">
                     <button data-action="visibility" title="Show/hide every entity in this group">${uiIcon(allVisible ? 'eye' : 'eye-off')}</button>
                     <button data-action="lock" title="Lock/unlock every entity in this group">${uiIcon(allLocked ? 'lock' : 'unlock')}</button>
@@ -3912,39 +3953,48 @@ class TectoLiteApp {
         const list = document.getElementById('plate-list');
         if (!list) return;
 
-        // Preserve search box focus across re-renders (typing triggers updateExplorer)
-        const searchHadFocus = document.activeElement?.id === 'plate-search';
-        list.innerHTML = '';
-
-        // --- 0. SEARCH / FILTER (shown once the list gets long, or while filtering) ---
+        const focusedEntityId = (document.activeElement as HTMLElement | null)?.dataset.entityId;
+        // Keep the search input connected: replacing it interrupts typing, paste and IME composition.
+        let searchWrap = list.querySelector<HTMLInputElement>('#plate-search')?.parentElement ?? null;
+        for (const child of Array.from(list.children)) if (child !== searchWrap) child.remove();
         const filterText = this.explorerFilter.trim().toLowerCase();
         if (this.state.world.plates.length + this.state.world.labels.length > 5 || filterText) {
-            const searchWrap = document.createElement('div');
-            searchWrap.style.cssText = 'padding: 0 0 8px 0;';
-            searchWrap.innerHTML = '<input type="text" id="plate-search" class="property-input" placeholder="Filter plates…" style="width: 100%; padding: 4px 6px; font-size: 11px;">';
-            list.appendChild(searchWrap);
-            const searchInput = searchWrap.querySelector('input')!;
-            searchInput.value = this.explorerFilter;
-            searchInput.addEventListener('input', () => {
-                this.explorerFilter = searchInput.value;
-                this.updateExplorer();
-            });
-            if (searchHadFocus) {
-                searchInput.focus();
-                const len = searchInput.value.length;
-                searchInput.setSelectionRange(len, len);
+            if (!searchWrap) {
+                searchWrap = document.createElement('div');
+                searchWrap.style.cssText = 'padding: 0 0 8px 0;';
+                searchWrap.innerHTML = '<input type="search" id="plate-search" class="property-input" aria-label="Filter plates" placeholder="Filter plates…" style="width:100%">';
+                list.prepend(searchWrap);
+                const input = searchWrap.querySelector('input')!;
+                input.addEventListener('input', () => { this.explorerFilter = input.value; this.updateExplorer(); });
             }
-        }
+            const input = searchWrap.querySelector('input')!;
+            if (input.value !== this.explorerFilter) input.value = this.explorerFilter;
+        } else { searchWrap?.remove(); }
+        const matchingGroups = new Set(this.state.world.entityGroups.filter(group => group.name.toLowerCase().includes(filterText)).map(group => group.id));
 
         const visiblePlates = filterText
-            ? this.state.world.plates.filter(p => p.name.toLowerCase().includes(filterText))
+            ? this.state.world.plates.filter(p => p.name.toLowerCase().includes(filterText) || p.id.toLowerCase().includes(filterText) || (p.groupId && matchingGroups.has(p.groupId)))
             : this.state.world.plates;
         const visibleLabels = filterText
-            ? this.state.world.labels.filter(label => label.title.toLowerCase().includes(filterText) || label.content.toLowerCase().includes(filterText))
+            ? this.state.world.labels.filter(label => label.title.toLowerCase().includes(filterText) || label.content.toLowerCase().includes(filterText) || (label.groupId && matchingGroups.has(label.groupId)))
             : this.state.world.labels;
 
+        const selectedOutsideFilter = filterText && this.getSelectedEntityIds().some(id => ![...visiblePlates, ...visibleLabels].some(entity => entity.id === id));
+        if (selectedOutsideFilter) {
+            const notice = document.createElement('p');
+            notice.className = 'explorer-filter-notice';
+            notice.textContent = 'Selected entity is outside this filter. ';
+            const clear = document.createElement('button');
+            clear.className = 'btn btn-secondary'; clear.textContent = 'Clear filter';
+            clear.addEventListener('click', () => { this.explorerFilter = ''; this.updateExplorer(); });
+            notice.appendChild(clear); list.appendChild(notice);
+        }
+        if (filterText && !visiblePlates.length && !visibleLabels.length) {
+            const empty = document.createElement('p'); empty.className = 'empty-message';
+            empty.textContent = 'No entities match this filter.'; list.appendChild(empty);
+        }
         // --- 1. ENTITIES / GROUPS SECTION ---
-        const platesSection = this.createExplorerSection('Entities', 'plates', visiblePlates.length + visibleLabels.length);
+        const platesSection = this.createExplorerSection('Entities', 'plates', filterText ? `${visiblePlates.length + visibleLabels.length} of ${this.state.world.plates.length + this.state.world.labels.length}` : visiblePlates.length + visibleLabels.length);
         list.appendChild(platesSection.header);
 
         if (this.explorerState.sections['plates']) {
@@ -4016,7 +4066,7 @@ class TectoLiteApp {
                 wrapper.style.alignItems = 'center';
                 wrapper.style.gap = '6px';
                 wrapper.style.cursor = 'pointer';
-                wrapper.style.fontSize = '11px';
+                wrapper.style.fontSize = '12px';
 
                 const input = document.createElement('input');
                 input.type = 'checkbox';
@@ -4069,14 +4119,17 @@ class TectoLiteApp {
             list.appendChild(actionContent);
         }
 
+        prepareExplorerKeyboard(list, focusedEntityId);
     }
 
 
-    private createExplorerSection(title: string, key: string, count: number): { header: HTMLElement, content: HTMLElement } {
-        const header = document.createElement('div');
+    private createExplorerSection(title: string, key: string, count: number | string): { header: HTMLElement, content: HTMLElement } {
+        const header = document.createElement('button');
+        header.type = 'button';
         header.className = 'explorer-header';
         header.style.marginBottom = '2px';
         const isOpen = this.explorerState.sections[key];
+        header.setAttribute('aria-expanded', String(isOpen));
         header.innerHTML = `<span>${title} (${count})</span> <span>${uiIcon(isOpen ? 'chevron-down' : 'chevron-right')}</span>`;
         header.onclick = () => {
             this.explorerState.sections[key] = !isOpen;
@@ -4089,6 +4142,7 @@ class TectoLiteApp {
     }
 
     private togglePlateVisibility(plateId: string): void {
+        this.pushState();
         this.state = {
             ...this.state,
             world: {
@@ -4114,7 +4168,27 @@ class TectoLiteApp {
      */
 
 
+    private updateMotionLinks(): void {
+        const container = document.getElementById('plate-motion-links');
+        const plate = this.state.world.plates.find(candidate => candidate.id === this.state.world.selectedPlateId);
+        if (!container || !plate) return;
+        const html = renderMotionLinks(plate, this.state.world.plates, this.state.world.currentTime);
+        // Keep keyboard focus and follower-list scroll position during playback.
+        if (container.dataset.markup === html) return;
+        const scrollTop = container.querySelector('.motion-link-followers')?.scrollTop ?? 0;
+        container.innerHTML = html;
+        container.dataset.markup = html;
+        const followers = container.querySelector('.motion-link-followers');
+        if (followers) followers.scrollTop = scrollTop;
+    }
+
     private updatePropertiesPanel(): void {
+        this.renderPropertiesPanel();
+        const panel = document.getElementById('properties-panel');
+        if (panel) prepareFields(panel);
+    }
+
+    private renderPropertiesPanel(): void {
         const content = document.getElementById('properties-content');
         if (!content) return;
         const panel = document.getElementById('properties-panel');
@@ -4134,7 +4208,7 @@ class TectoLiteApp {
             || this.state.world.selectedEdge
             || this.state.world.selectedFeatureId
             || this.state.world.selectedFeatureIds.length
-        ));
+        ), this.state.world.selectedPlateId ?? this.state.world.selectedLabelId ?? this.state.world.selectedFeatureId ?? undefined);
         if (selectedLabel) {
             if (titleEl) titleEl.textContent = 'Label Properties';
             const plateOptions = this.state.world.plates.map(plate =>
@@ -4147,9 +4221,9 @@ class TectoLiteApp {
                 <div class="property-group"><label class="property-label">Title</label><input id="prop-label-title" class="property-input" maxlength="120" value="${escapeHtml(selectedLabel.title)}"></div>
                 <div class="property-group"><label class="property-label">Content</label><textarea id="prop-label-content" class="property-input" rows="6" maxlength="2000">${escapeHtml(selectedLabel.content)}</textarea></div>
                 <div class="property-group"><label class="property-label">System State</label><div style="display:flex; gap:10px;">
-                    <label style="font-size:11px;"><input type="checkbox" id="prop-label-visible" ${selectedLabel.visible ? 'checked' : ''}> Visible</label>
-                    <label style="font-size:11px;"><input type="checkbox" id="prop-label-locked" ${selectedLabel.locked ? 'checked' : ''}> Locked</label>
-                    <label style="font-size:11px;"><input type="checkbox" id="prop-label-expanded" ${selectedLabel.expanded ? 'checked' : ''}> Content pinned</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="prop-label-visible" ${selectedLabel.visible ? 'checked' : ''}> Visible</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="prop-label-locked" ${selectedLabel.locked ? 'checked' : ''}> Locked</label>
+                    <label style="font-size: 12px;"><input type="checkbox" id="prop-label-expanded" ${selectedLabel.expanded ? 'checked' : ''}> Content pinned</label>
                 </div></div>
                 <div class="property-group"><label class="property-label">Color</label><input id="prop-label-color" type="color" value="${selectedLabel.color}" style="width:100%; height:36px;"></div>
                 <div class="property-group"><label class="property-label">Moves with</label><select id="prop-label-attachment" class="property-input">
@@ -4164,8 +4238,9 @@ class TectoLiteApp {
                 </div></div>
                 <button id="btn-delete-label" class="btn btn-danger">Delete Label</button>
             `;
-            const update = (changes: Partial<MapLabel>, refreshExplorer = false) => {
-                this.pushState();
+            let labelColorEdit = false;
+            const update = (changes: Partial<MapLabel>, refreshExplorer = false, record = true) => {
+                if (record) this.pushState();
                 this.state.world.labels = this.state.world.labels.map(label => label.id === selectedLabel.id ? { ...label, ...changes } : label);
                 if (refreshExplorer) this.updateExplorer();
                 this.canvasManager?.render();
@@ -4175,7 +4250,13 @@ class TectoLiteApp {
             document.getElementById('prop-label-visible')?.addEventListener('change', event => update({ visible: (event.target as HTMLInputElement).checked }, true));
             document.getElementById('prop-label-locked')?.addEventListener('change', event => update({ locked: (event.target as HTMLInputElement).checked }, true));
             document.getElementById('prop-label-expanded')?.addEventListener('change', event => update({ expanded: (event.target as HTMLInputElement).checked }));
-            document.getElementById('prop-label-color')?.addEventListener('input', event => update({ color: (event.target as HTMLInputElement).value }, true));
+            const labelColor = document.getElementById('prop-label-color');
+            const applyLabelColor = (event: Event) => {
+                update({ color: (event.target as HTMLInputElement).value }, true, !labelColorEdit);
+                labelColorEdit = true;
+            };
+            labelColor?.addEventListener('input', applyLabelColor);
+            labelColor?.addEventListener('change', event => { applyLabelColor(event); labelColorEdit = false; });
             document.getElementById('prop-label-group')?.addEventListener('change', event => update({ groupId: (event.target as HTMLSelectElement).value || undefined }, true));
             document.getElementById('prop-label-attachment')?.addEventListener('change', event => {
                 let currentAnchor = selectedLabel.anchor;
@@ -4287,6 +4368,7 @@ class TectoLiteApp {
         <label class="property-label">${isRift ? 'Axis Name' : 'Name'}</label>
         <input type="text" id="prop-name" class="property-input" value="${escapeHtml(plate.name)}">
       </div>
+      <div id="plate-motion-links"></div>
       <div class="property-group">
         <label class="property-label">ID</label>
         <input type="text" class="property-input" value="${escapeHtml(plate.id)}" readonly style="background: var(--bg-canvas-base); cursor: text;">
@@ -4295,10 +4377,10 @@ class TectoLiteApp {
       <div class="property-group">
         <label class="property-label">System State</label>
         <div style="display: flex; gap: 10px; align-items: center; margin-top: 5px;">
-           <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
+           <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
               <input type="checkbox" id="prop-visible" ${plate.visible ? 'checked' : ''}> Visible
            </label>
-           <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
+           <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
               <input type="checkbox" id="prop-locked" ${plate.locked ? 'checked' : ''}> Locked 
            </label>
         </div>
@@ -4311,7 +4393,7 @@ class TectoLiteApp {
       <div class="property-group">
         <label class="property-label">Color</label>
         <input type="color" id="prop-color" class="property-color" value="${plate.color}">
-        ${isRift ? `<div style="font-size: 9px; line-height: 1.35; color: var(--text-secondary); margin-top: 4px;">${LINE_COLOR_HELP}</div>` : ''}
+        ${isRift ? `<div style="font-size: 12px; line-height: 1.35; color: var(--text-secondary); margin-top: 4px;">${LINE_COLOR_HELP}</div>` : ''}
       </div>
       
       ${isRift ? `
@@ -4374,7 +4456,7 @@ class TectoLiteApp {
       ${plate.parentPlateId || plate.generatedBy ? `
       <div class="property-group">
          <label class="property-label">Origins</label>
-         <div style="font-size: 11px; color: var(--text-secondary); padding-left: 5px;">
+         <div style="font-size: 12px; color: var(--text-secondary); padding-left: 5px;">
             ${plate.parentPlateId ? `Split from: <b>${escapeHtml(this.state.world.plates.find(p => p.id === plate.parentPlateId)?.name || 'Unknown')}</b><br/>` : ''}
             ${plate.generatedBy ? `Generated by: <b>${escapeHtml(this.state.world.plates.find(p => p.id === plate.generatedBy)?.name || 'Unknown')}</b> at ${plate.age} Ma<br/>` : ''}
          </div>
@@ -4387,16 +4469,16 @@ class TectoLiteApp {
                     const parent = this.state.world.plates.find(p => p.id === plate.linkedToPlateId);
                     linkHtml += `
                  <div style="margin-bottom: 8px; padding: 6px; background: rgba(0,0,0,0.1); border-radius: 4px;">
-                     <div style="font-size: 11px; margin-bottom: 4px;">Parent Link: <b>${escapeHtml(parent?.name || 'Unknown')}</b></div>
-                     <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; margin-bottom: 4px;">
+                     <div style="font-size: 12px; margin-bottom: 4px;">Leader: <b>${escapeHtml(parent?.name || 'Unknown')}</b></div>
+                     <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; margin-bottom: 4px;">
                         <input type="checkbox" id="prop-hide-link" ${plate.hideLinkMarker ? 'checked' : ''}> Hide Link Line
                      </label>
                      <div style="display: flex; gap: 4px;">
                         <input type="number" id="prop-link-time" class="property-input" title="Link Time" value="${this.getDisplayTimeValue(plate.linkTime)}" step="5" style="flex:1">
-                        <span style="font-size:10px; align-self:center;">-</span>
+                        <span style="font-size: 12px; align-self:center;">-</span>
                         <input type="number" id="prop-unlink-time" class="property-input" title="Unlink Time" value="${this.getDisplayTimeValue(plate.unlinkTime) ?? ''}" placeholder="Active" step="5" style="flex:1">
                      </div>
-                     <div style="font-size: 9px; line-height: 1.35; color: var(--text-secondary); margin-top: 4px;">${LINK_WINDOW_HELP}</div>
+                     <div style="font-size: 12px; line-height: 1.35; color: var(--text-secondary); margin-top: 4px;">${LINK_WINDOW_HELP}</div>
                  </div>
               `;
                 }
@@ -4404,12 +4486,12 @@ class TectoLiteApp {
                 const childLinks = this.state.world.plates.filter(p => p.linkedToPlateId === plate.id);
                 if (childLinks.length > 0) {
                     linkHtml += `
-                 <div style="font-size: 11px; margin-bottom: 4px;">Child Links:</div>
+                 <div style="font-size: 12px; margin-bottom: 4px;">Followers:</div>
                  <div style="display: flex; flex-direction: column; gap: 4px;">
               `;
                     childLinks.forEach(child => {
                         linkHtml += `
-                     <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 4px; background: rgba(0,0,0,0.1); border-radius: 2px;">
+                     <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 4px; background: rgba(0,0,0,0.1); border-radius: 2px;">
                         <span>${escapeHtml(child.name)}</span>
                         <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
                             <input type="checkbox" class="child-link-hide" data-id="${child.id}" ${child.hideLinkMarker ? 'checked' : ''}> Hide
@@ -4423,7 +4505,7 @@ class TectoLiteApp {
             })()}
 
       <hr class="property-divider">
-      <h4 class="property-section-title" style="display: flex; justify-content: space-between;">Flowlines <span class="info-icon" style="opacity: ${plate.showFlowlines ? '1' : '0.3'};">${uiIcon('move')}</span></h4>
+      <h4 class="property-section-title" style="display: flex; justify-content: space-between;">Flowlines <span class="info-icon" data-tooltip="Show the path a plate travels over time. Enable trails to configure their duration and fading." style="opacity: ${plate.showFlowlines ? '1' : '0.3'};">${uiIcon('move')}</span></h4>
       
       <div class="property-group">
         <label class="property-label">Enable Trails</label>
@@ -4457,7 +4539,7 @@ class TectoLiteApp {
 
       <div class="property-group">
         <label class="property-label">Stats</label>
-        <div style="background:var(--bg-elevated); padding:8px; border-radius:4px; font-size:11px; color:var(--text-secondary);">
+        <div style="background:var(--bg-elevated); padding:8px; border-radius:4px; font-size: 12px; color:var(--text-secondary);">
            ${(() => {
                 const R = this.state.world.globalOptions.planetRadius || 6371;
                 // Calculate Area
@@ -4524,7 +4606,7 @@ class TectoLiteApp {
       </div>
 
       <!-- Selective Copy Options -->
-      <div style="font-size: 11px; margin-bottom: 4px; display:flex; gap: 8px; align-items: center;">
+      <div style="font-size: 12px; margin-bottom: 4px; display:flex; gap: 8px; align-items: center;">
           <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" title="Include angular rate in copy/paste">
                <input type="checkbox" id="cb-copy-speed" checked> Speed
           </label>
@@ -4542,31 +4624,54 @@ class TectoLiteApp {
       ${this.getFeaturePropertiesHtml(plate)}
     `;
 
+        const motionLinks = document.getElementById('plate-motion-links');
+        if (motionLinks) {
+            this.updateMotionLinks();
+            bindMotionLinks(motionLinks, {
+                selectPlate: id => {
+                    if (!this.state.world.plates.some(candidate => candidate.id === id)) return;
+                    this.setActiveTool('select');
+                    this.handleSelect(id, null);
+                },
+                unlinkPlate: id => this.confirmUnlinkPlate(id),
+                followPlate: () => this.beginFollowPlate(plate.id)
+            });
+        }
+
         // Bind events
         document.getElementById('prop-name')?.addEventListener('change', (e) => {
+            this.pushState();
             plate.name = (e.target as HTMLInputElement).value;
             this.updateExplorer();
+            this.updateMotionLinks();
         });
 
         document.getElementById('prop-visible')?.addEventListener('change', (e) => {
+            this.pushState();
             plate.visible = (e.target as HTMLInputElement).checked;
             this.updateExplorer();
             this.canvasManager?.render();
         });
 
         document.getElementById('prop-locked')?.addEventListener('change', (e) => {
+            this.pushState();
             plate.locked = (e.target as HTMLInputElement).checked;
             this.updateExplorer(); // Could potentially show a lock icon here later
         });
 
         document.getElementById('prop-description')?.addEventListener('change', (e) => {
+            this.pushState();
             plate.description = (e.target as HTMLTextAreaElement).value;
         });
 
 
 
         const propColor = document.getElementById('prop-color') as HTMLInputElement | null;
+        let colorEditStarted = false;
+        const beginColorEdit = () => { if (!colorEditStarted) { this.pushState(); colorEditStarted = true; } };
         propColor?.addEventListener('change', (e) => {
+            beginColorEdit();
+            colorEditStarted = false;
             plate.color = (e.target as HTMLInputElement).value;
             // Mark line entities as color-customized so subsequent settings-
             // default changes don't override the user's manual pick.
@@ -4576,12 +4681,14 @@ class TectoLiteApp {
         });
         // Live feedback while dragging the color picker swatch.
         propColor?.addEventListener('input', (e) => {
+            beginColorEdit();
             plate.color = (e.target as HTMLInputElement).value;
             if (plate.type === 'rift') plate.lineColorCustomized = true;
             this.canvasManager?.render();
         });
 
         document.getElementById('prop-line-type')?.addEventListener('change', (e) => {
+            this.pushState();
             plate.lineType = (e.target as HTMLSelectElement).value as LineType;
             const typeLabel = plate.lineType.charAt(0).toUpperCase() + plate.lineType.slice(1);
             // Auto-update name if it still looks like a default name
@@ -4606,6 +4713,7 @@ class TectoLiteApp {
         });
 
         document.getElementById('prop-polygon-type')?.addEventListener('change', (e) => {
+            this.pushState();
             const val = (e.target as HTMLSelectElement).value as any;
             plate.polygonType = val;
 
@@ -4623,7 +4731,17 @@ class TectoLiteApp {
             this.canvasManager?.render();
         });
 
+        document.getElementById('prop-rift-mode')?.addEventListener('change', event => {
+            const value = (event.target as HTMLSelectElement).value;
+            if (value !== 'default' && value !== 'always' && value !== 'never') return;
+            this.pushState();
+            plate.riftGenerationMode = value;
+            this.simulation?.setTime(this.state.world.currentTime);
+            this.canvasManager?.render();
+        });
+
         document.getElementById('prop-density')?.addEventListener('change', (e) => {
+            this.pushState();
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val)) {
                 plate.density = val;
@@ -4631,11 +4749,13 @@ class TectoLiteApp {
         });
 
         document.getElementById('prop-elevation')?.addEventListener('change', (e) => {
+            this.pushState();
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val)) {
                 plate.elevation = val;
             }
         }); document.getElementById('prop-z-index')?.addEventListener('change', (e) => {
+            this.pushState();
             const val = parseInt((e.target as HTMLInputElement).value);
             if (!isNaN(val)) {
                 plate.zIndex = val;
@@ -4644,18 +4764,23 @@ class TectoLiteApp {
         });
 
         document.getElementById('prop-hide-link')?.addEventListener('change', (e) => {
+            this.pushState();
             plate.hideLinkMarker = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
         });
 
         document.getElementById('prop-link-time')?.addEventListener('change', (e) => {
+            this.pushState();
             const val = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(val)) plate.linkTime = val;
+            this.simulation?.setTime(this.state.world.currentTime);
         });
 
         document.getElementById('prop-unlink-time')?.addEventListener('change', (e) => {
+            this.pushState();
             const val = parseFloat((e.target as HTMLInputElement).value);
             plate.unlinkTime = !isNaN(val) ? val : undefined;
+            this.simulation?.setTime(this.state.world.currentTime);
         });
 
         document.querySelectorAll('.child-link-hide').forEach(el => {
@@ -4665,6 +4790,7 @@ class TectoLiteApp {
                 if (childId) {
                     const child = this.state.world.plates.find(p => p.id === childId);
                     if (child) {
+                        this.pushState();
                         child.hideLinkMarker = target.checked;
                         this.canvasManager?.render();
                     }
@@ -4673,20 +4799,24 @@ class TectoLiteApp {
         });
 
         document.getElementById('prop-flowlines-enable')?.addEventListener('change', (e) => {
+            this.pushState();
             plate.showFlowlines = (e.target as HTMLInputElement).checked;
             const flowlineOptions = document.getElementById('flowline-options');
             if (flowlineOptions) flowlineOptions.hidden = !plate.showFlowlines;
             this.canvasManager?.render();
         });
         document.getElementById('prop-flowlines-top')?.addEventListener('change', (e) => {
+            this.pushState();
             plate.flowlinesOnTop = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
         });
         document.getElementById('prop-flowlines-fade')?.addEventListener('change', (e) => {
+            this.pushState();
             plate.flowlinesFade = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
         });
         document.getElementById('prop-flowlines-duration')?.addEventListener('change', (e) => {
+            this.pushState();
             const val = parseInt((e.target as HTMLInputElement).value);
             if (!isNaN(val) && val > 0) {
                 plate.flowlinesDuration = val;
@@ -4695,6 +4825,7 @@ class TectoLiteApp {
         });
 
         document.getElementById('prop-birth-time')?.addEventListener('change', (e) => {
+            this.pushState();
             const userInput = parseFloat((e.target as HTMLInputElement).value);
             if (!isNaN(userInput)) {
                 // Transform user input (positive or negative) to internal time
@@ -4704,6 +4835,7 @@ class TectoLiteApp {
         });
 
         document.getElementById('prop-death-time')?.addEventListener('change', (e) => {
+            this.pushState();
             const val = (e.target as HTMLInputElement).value;
             if (val) {
                 const userInput = parseFloat(val);
@@ -4730,6 +4862,7 @@ class TectoLiteApp {
             this.addMotionSegment(plate.id, { ...pole, position: [pole.position[0], newLat] });
         });
         document.getElementById('prop-pole-vis')?.addEventListener('change', (e) => {
+            this.pushState();
             pole.visible = (e.target as HTMLInputElement).checked;
             this.canvasManager?.render();
         });
@@ -4822,11 +4955,11 @@ class TectoLiteApp {
         let html = `
             <div class="property-group">
                 <label class="property-label">Plate</label>
-                <div class="property-value" style="font-size: 11px;">${escapeHtml(plate.name)}</div>
+                <div class="property-value" style="font-size: 12px;">${escapeHtml(plate.name)}</div>
             </div>
             <div class="property-group">
                 <label class="property-label">Edge Index</label>
-                <div class="property-value" style="font-size: 11px;">${selectedEdge.vertexIndex} / ${poly.points.length}</div>
+                <div class="property-value" style="font-size: 12px;">${selectedEdge.vertexIndex} / ${poly.points.length}</div>
             </div>
         `;
 
@@ -4834,42 +4967,42 @@ class TectoLiteApp {
             html += `
                 <div class="property-group">
                     <label class="property-label">Edge Type</label>
-                    <div class="property-value" style="font-size: 11px; text-transform: capitalize;">${meta.type || 'Generic'}</div>
+                    <div class="property-value" style="font-size: 12px; text-transform: capitalize;">${meta.type || 'Generic'}</div>
                 </div>
             `;
             if (meta.sourceId) {
                  html += `
                     <div class="property-group">
                         <label class="property-label">Group ID</label>
-                        <div class="property-value" style="font-size: 11px; font-family: monospace;">${meta.sourceId.substring(0, 8)}...</div>
+                        <div class="property-value" style="font-size: 12px; font-family: monospace;">${meta.sourceId.substring(0, 8)}...</div>
                     </div>
                 `;
             }
 
             if (meta.siblings && meta.siblings.length > 0) {
-                html += `<div style="margin-top: 10px; font-weight: 600; font-size: 11px; color: var(--text-secondary); text-transform: uppercase;">Siblings</div>`;
+                html += `<div style="margin-top: 10px; font-weight: 600; font-size: 12px; color: var(--text-secondary); text-transform: uppercase;">Siblings</div>`;
                 meta.siblings.forEach((sib, i) => {
                      const sibPlate = this.state.world.plates.find(p => p.id === sib.siblingPlateId);
                      const sibName = sibPlate ? sibPlate.name : sib.siblingPlateId.substring(0, 8);
                      html += `
                         <div style="background: var(--bg-tertiary); padding: 6px; margin-top: 4px; border-radius: 4px; border: 1px solid var(--border-default);">
-                            <div style="font-size: 10px; display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <div style="font-size: 12px; display: flex; justify-content: space-between; margin-bottom: 4px;">
                                 <span style="font-family: monospace; color: var(--text-secondary);">${sib.groupId.substring(0,8)}...</span>
                                 <span style="font-weight: bold; color: ${sib.frozen ? 'var(--accent-warning)' : 'var(--accent-success)'};">${sib.frozen ? 'FROZEN' : 'ACTIVE'}</span>
                             </div>
-                            <div style="font-size: 11px; color: var(--text-primary);">
+                            <div style="font-size: 12px; color: var(--text-primary);">
                                 Plate: <b>${escapeHtml(sibName)}</b><br/>
                                 Edge: ${sib.siblingEdgeIndex}
                             </div>
-                            <button class="btn btn-danger btn-delete-sibling" data-meta-index="${meta.edgeIndex}" data-sib-index="${i}" style="width: 100%; margin-top: 6px; padding: 2px; font-size: 10px;">Remove</button>
+                            <button class="btn btn-danger btn-delete-sibling" data-meta-index="${meta.edgeIndex}" data-sib-index="${i}" style="width: 100%; margin-top: 6px; padding: 2px; font-size: 12px;">Remove</button>
                         </div>
                      `;
                 });
             } else {
-                 html += `<div style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">No sibling assignments.</div>`;
+                 html += `<div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">No sibling assignments.</div>`;
             }
         } else {
-             html += `<div style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">No metadata for this edge.</div>`;
+             html += `<div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">No metadata for this edge.</div>`;
         }
 
         content.innerHTML = html;
@@ -4926,29 +5059,29 @@ class TectoLiteApp {
             }
 
             // Plate Bound
-            html += '<h5 style="margin:4px 0; font-size: 11px; color:var(--text-secondary);">Plate Bound</h5>';
+            html += '<h5 style="margin:4px 0; font-size: 12px; color:var(--text-secondary);">Plate Bound</h5>';
             const features = plate.features;
             if (features.length > 0) {
                 html += '<div style="max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:2px;">';
                 features.forEach(f => {
                     const name = f.name || this.getFeatureTypeName(f.type);
-                    html += `<div class="feature-list-item" data-id="${f.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size:11px; display:flex; justify-content:space-between;">
+                    html += `<div class="feature-list-item" data-id="${f.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size: 12px; display:flex; justify-content:space-between;">
                         <span>${escapeHtml(name)}</span>
                         <span style="color:var(--text-secondary);">${this.getFeatureTypeName(f.type)}</span>
                     </div>`;
                 });
                 html += '</div>';
             } else {
-                html += '<div style="font-size:10px; color:var(--text-secondary); padding:4px;">None</div>';
+                html += '<div style="font-size: 12px; color:var(--text-secondary); padding:4px;">None</div>';
             }
 
             // Independent fixed hotspots
             const plumes = this.state.world.mantlePlumes || [];
             if (plumes.length > 0) {
-                html += '<h5 style="margin:8px 0 4px 0; font-size: 11px; color:var(--text-secondary);">Independent</h5>';
+                html += '<h5 style="margin:8px 0 4px 0; font-size: 12px; color:var(--text-secondary);">Independent</h5>';
                 html += '<div style="max-height:100px; overflow-y:auto; display:flex; flex-direction:column; gap:2px;">';
                 plumes.forEach(p => {
-                    html += `<div class="plume-list-item" data-id="${p.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size:11px; border-left: 2px solid #f97316; display:flex; justify-content:space-between;">
+                    html += `<div class="plume-list-item" data-id="${p.id}" style="cursor:pointer; padding:4px; background:var(--bg-elevated); border-radius:2px; font-size: 12px; border-left: 2px solid #f97316; display:flex; justify-content:space-between;">
                         <span>Fixed Hotspot</span>
                         <span style="color:var(--text-secondary);">${p.id.substring(0, 6)}</span>
                     </div>`;
@@ -5129,16 +5262,7 @@ class TectoLiteApp {
         // --- 1. Identify Affected Plates (Current & Children) ---
         // We need to know which plates are downstream of this motion change
         // so we can invalidate their generated crust.
-        const getDescendants = (pid: string, allPlates: TectonicPlate[]): string[] => {
-            const children = allPlates.filter(p => p.linkedToPlateId === pid);
-            let descendants = children.map(c => c.id);
-            children.forEach(c => {
-                descendants = [...descendants, ...getDescendants(c.id, allPlates)];
-            });
-            return descendants;
-        };
-
-        const descendantIds = getDescendants(plateId, this.state.world.plates);
+        const descendantIds = motionLinkDescendantIds(this.state.world.plates, plateId);
         const affectedPlateIds = new Set([plateId, ...descendantIds]);
 
         const plates = this.state.world.plates.map(p => {
@@ -5245,17 +5369,16 @@ class TectoLiteApp {
         if (lblWarning) lblWarning.style.display = 'none';
 
         // Show Modal
-        modal.style.display = 'flex';
-        input.focus();
-
         // Reassigned to the real listener-removal below once the listeners exist;
         // close() only runs from those listeners, so it always sees the real one.
         let cleanup: () => void = () => { };
 
         const close = () => {
-            modal.style.display = 'none';
+            closeFixedDialog(modal);
             cleanup();
         };
+
+        openFixedDialog(modal, input, close);
 
         const calculate = () => {
             const val = parseFloat(input.value);
@@ -5343,6 +5466,7 @@ class TectoLiteApp {
      *  Mirrored to a window global so the Electron main process can read it
      *  in its close-confirmation guard (browsers use beforeunload instead). */
     private setUnsaved(value: boolean): void {
+        if (value) this.projectRevision += 1;
         this.hasUnsavedChanges = value;
         window.__TECTOLITE_HAS_UNSAVED__ = value;
     }
@@ -5432,7 +5556,7 @@ class TectoLiteApp {
         container.innerHTML = '';
 
         if (this.cameraBookmarks.length === 0) {
-            container.innerHTML = '<div style="padding: 2px 8px 4px 8px; font-size: 10px; color: var(--text-secondary);">No saved views yet</div>';
+            container.innerHTML = '<div style="padding: 2px 8px 4px 8px; font-size: 12px; color: var(--text-secondary);">No saved views yet</div>';
             return;
         }
 
@@ -5441,7 +5565,7 @@ class TectoLiteApp {
             row.style.cssText = 'padding: 2px 8px; display: flex; align-items: center; gap: 6px;';
 
             const hotkey = document.createElement('span');
-            hotkey.style.cssText = 'font-size: 9px; color: var(--text-secondary); width: 12px; text-align: right;';
+            hotkey.style.cssText = 'font-size: 12px; color: var(--text-secondary); width: 12px; text-align: right;';
             hotkey.textContent = index < 9 ? String(index + 1) : '';
             hotkey.title = index < 9 ? `Hotkey: ${index + 1} recalls, Shift+${index + 1} updates` : '';
 
@@ -5451,7 +5575,7 @@ class TectoLiteApp {
             nameInput.value = bm.name;
             nameInput.title = 'Click to rename';
             nameInput.style.cssText =
-                'flex: 1; min-width: 0; font-size: 11px; background: transparent; ' +
+                'flex: 1; min-width: 0; font-size: 12px; background: transparent; ' +
                 'border: 1px solid transparent; border-radius: 3px; color: var(--text-primary); padding: 1px 4px;';
             nameInput.addEventListener('focus', () => { nameInput.style.borderColor = 'var(--border-default)'; nameInput.select(); });
             nameInput.addEventListener('blur', () => { nameInput.style.borderColor = 'transparent'; });
@@ -5467,14 +5591,14 @@ class TectoLiteApp {
 
             const goBtn = document.createElement('button');
             goBtn.className = 'btn btn-secondary';
-            goBtn.style.cssText = 'font-size: 10px; padding: 2px 8px;';
+            goBtn.style.cssText = 'font-size: 12px; padding: 2px 8px;';
             goBtn.textContent = 'Go';
             goBtn.title = `Jump to "${bm.name}"`;
             goBtn.addEventListener('click', () => this.recallCameraBookmark(index));
 
             const delBtn = document.createElement('button');
             delBtn.className = 'btn btn-secondary';
-            delBtn.style.cssText = 'font-size: 10px; padding: 2px 6px;';
+            delBtn.style.cssText = 'font-size: 12px; padding: 2px 6px;';
             delBtn.title = `Delete "${bm.name}"`;
             delBtn.innerHTML = uiIcon('x');
             delBtn.addEventListener('click', () => this.deleteCameraBookmark(index));
@@ -5550,6 +5674,7 @@ class TectoLiteApp {
         const prevState = this.historyManager.undo(this.state);
         if (prevState) {
             this.state = prevState;
+            this.setUnsaved(true);
             this.updateUI();
             this.canvasManager?.render();
             // Update timeline if visible
@@ -5566,6 +5691,7 @@ class TectoLiteApp {
         const nextState = this.historyManager.redo(this.state);
         if (nextState) {
             this.state = nextState;
+            this.setUnsaved(true);
             this.updateUI();
             this.canvasManager?.render();
             // Update timeline if visible

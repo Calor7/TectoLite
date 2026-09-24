@@ -24,7 +24,7 @@ describe('header menus', () => {
             expect(html.match(new RegExp(`id="${id}"`, 'g'))).toHaveLength(1);
         }
         expect(html).toContain('id="autosave-status"');
-        expect(html).toContain('id="link-refracturedgames-header"');
+        expect(html).toContain('publisher-brand-mark');
         expect(html).toContain('href="https://www.refracturedgames.com"');
         expect(html).toContain('id="link-kofi-header"');
         expect(html).toContain('aria-label="Support TectoLite on Ko-fi"');
@@ -41,7 +41,7 @@ describe('header menus', () => {
 
     it('uses the monochrome SVG icon system instead of decorative emoji', () => {
         const html = renderHeader();
-        expect(html).toContain('data-ui-icon="hexagon"');
+        expect(html).toContain('app-brand-mark');
         expect(html).toContain('data-ui-icon="coffee"');
         for (const emoji of ['☕', '📄', '📂', '📤', '⚙️', '👁️', '🌙', '🎓', '⌨️', '👆', '🔄', '✏️', '✂️', '🔗', '🧬']) {
             expect(html).not.toContain(emoji);

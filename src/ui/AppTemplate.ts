@@ -66,8 +66,8 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <div class="app-container">
                 <header class="app-header">
                     <h1 class="app-title">
-                        <a href="https://github.com/Calor7/TectoLite" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none;">
-                            ${uiIcon('hexagon', 'app-brand-mark')}<span>TectoLite</span>
+                        <a href="https://github.com/Calor7/TectoLite" target="_blank" rel="noopener noreferrer" title="TectoLite by RefracturedGames" style="color: inherit; text-decoration: none;">
+                            <span class="app-brand-mark" aria-hidden="true"></span><span>TectoLite</span>
                         </a>
                         <span class="app-subtitle">by <a href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer">RefracturedGames</a></span>
                     </h1>
@@ -115,7 +115,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     <div class="dropdown-section">
                         <div class="dropdown-header">Timeline &amp; simulation</div>
                         <div style="padding: 8px; display: flex; flex-direction: column; gap: 8px;">
-                            <label style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                            <label style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
                                 <span>Max Duration (Ma)</span>
                                 <input type="number" id="timeline-max-time" class="property-input" value="${g.timelineMaxTime || 500}" step="100" min="100" style="width: 70px; padding: 2px 4px;">
                             </label>
@@ -128,7 +128,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <input type="checkbox" id="check-custom-radius">
                         </label>
                         <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; gap: 6px;">
-                            <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Radius (km)</label>
+                            <label style="font-size: 12px; color: var(--text-secondary); white-space: nowrap;">Radius (km)</label>
                             <input type="number" id="global-planet-radius" class="property-input" value="${g.customRadiusEnabled ? (g.customPlanetRadius || 6371) : 6371}" step="100" style="width: 90px;" disabled>
                         </div>
                     </div>
@@ -145,31 +145,31 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         <div class="experimental-feature-title">Oceanic Crust Generation <span class="info-icon" data-tooltip="Experimental generation options for rifts created by splitting plates">(i)</span></div>
                         
                         <div style="padding: 4px 8px;">
-                            <label for="ocean-crust-strategy" style="display:block; font-size:10px; color:var(--text-secondary); margin-bottom:3px;">Strategy</label>
-                            <select id="ocean-crust-strategy" class="tool-select" style="width:100%; font-size:11px;">
+                            <label for="ocean-crust-strategy" style="display:block; font-size: 12px; color:var(--text-secondary); margin-bottom:3px;">Strategy</label>
+                            <select id="ocean-crust-strategy" class="tool-select" style="width:100%; font-size: 12px;">
                                 <option value="off" ${g.oceanCrustStrategy === 'off' || !g.oceanCrustStrategy ? 'selected' : ''}>Off</option>
                                 <option value="continuous" ${g.oceanCrustStrategy === 'continuous' ? 'selected' : ''}>Continuous Split-Rift Fill</option>
                                 <option value="banded" ${g.oceanCrustStrategy === 'banded' ? 'selected' : ''}>Time-Banded Rift Crust</option>
                             </select>
-                            <div style="font-size:9px; color:var(--text-secondary); margin-top:3px; line-height:1.3;">Continuous uses split-created rift axes. Banded supports sibling and older rift projects and may add many polygons.</div>
+                            <div style="font-size: 12px; color:var(--text-secondary); margin-top:3px; line-height:1.3;">Continuous uses split-created rift axes. Banded supports sibling and older rift projects and may add many polygons.</div>
                         </div>
                         
                         <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; justify-content: space-between;">
-                            <label style="font-size: 10px; color: var(--text-secondary);">Generation Interval (Ma)</label>
+                            <label style="font-size: 12px; color: var(--text-secondary);">Generation Interval (Ma)</label>
                             <input type="number" id="input-oceanic-interval" class="property-input" value="${g.oceanicGenerationInterval || 25}" step="1" min="1" style="width: 50px;">
                         </div>
 
                          <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; justify-content: space-between;">
-                            <label style="font-size: 10px; color: var(--text-secondary);">Creation Color</label>
+                            <label style="font-size: 12px; color: var(--text-secondary);">Creation Color</label>
                             <input type="color" id="input-oceanic-color" value="${g.oceanicCrustColor || '#3b82f6'}" style="width: 24px; height: 16px; border: none; padding: 0; background: none; cursor: pointer;">
                         </div>
 
                          <div style="padding: 2px 8px 4px 8px;">
                              <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <label style="font-size: 10px; color: var(--text-secondary);">Opacity</label>
-                                <span id="lbl-oceanic-opacity" style="font-size: 10px;">${Math.round((g.oceanicCrustOpacity ?? 0.5) * 100)}%</span>
+                                <label style="font-size: 12px; color: var(--text-secondary);">Opacity</label>
+                                <span id="lbl-oceanic-opacity" style="font-size: 12px;">${Math.round((g.oceanicCrustOpacity ?? 0.5) * 100)}%</span>
                              </div>
-                             <input type="range" id="input-oceanic-opacity" min="0" max="100" value="${Math.round((g.oceanicCrustOpacity ?? 0.5) * 100)}" style="width: 100%; height: 4px; display:block; margin-top:4px;">
+                             <input type="range" id="input-oceanic-opacity" aria-label="Oceanic crust opacity" min="0" max="100" value="${Math.round((g.oceanicCrustOpacity ?? 0.5) * 100)}" style="width: 100%; height: 4px; display:block; margin-top:4px;">
                         </div>
                     </div>
 
@@ -188,9 +188,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             const sel = dashIdx >= 0 ? dashIdx : 0;
                             return `
                               <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; justify-content: space-between; gap: 6px;">
-                                <label style="font-size: 10px; color: var(--text-secondary); flex: 1;">${LINE_TYPE_LABELS[lt]}</label>
+                                <label style="font-size: 12px; color: var(--text-secondary); flex: 1;">${LINE_TYPE_LABELS[lt]}</label>
                                 <input type="color" id="input-line-color-${lt}" value="${d.color}" style="width: 24px; height: 16px; border: none; padding: 0; background: none; cursor: pointer;">
-                                <select id="select-line-dash-${lt}" class="tool-select" style="width: 90px; font-size: 10px; padding: 1px;">
+                                <select id="select-line-dash-${lt}" aria-label="${LINE_TYPE_LABELS[lt]} line pattern" class="tool-select" style="width: 90px; font-size: 12px; padding: 1px;">
                                   ${DASH_PRESETS.map((p, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${p.label}</option>`).join('')}
                                 </select>
                               </div>
@@ -246,7 +246,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     <div class="dropdown-section" style="border-top: 1px solid var(--border-default); margin-top: 4px; padding-top: 4px;">
                         <div class="dropdown-header">Projection <span class="info-icon" data-tooltip="Choose map projection">(i)</span></div>
                         <div style="padding: 4px 8px;">
-                            <select id="projection-select" class="tool-select" style="width:100%;">
+                            <select id="projection-select" aria-label="Projection" class="tool-select" style="width:100%;">
                                 <option value="orthographic">Globe (Orthographic)</option>
                                 <option value="equirectangular">Equirectangular</option>
                                 <option value="mercator">Mercator</option>
@@ -263,41 +263,41 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <input type="checkbox" id="check-show-overlay"> Show selected <span class="info-icon" data-tooltip="Show or hide the selected reference image">(i)</span>
                         </label>
                         <div style="padding: 2px 8px 4px 28px; display: flex; flex-direction: column; gap: 4px;">
-                            <select id="overlay-select" class="tool-select" aria-label="Selected reference image" style="width: 100%; font-size: 11px;">
+                            <select id="overlay-select" class="tool-select" aria-label="Selected reference image" style="width: 100%; font-size: 12px;">
                                 <option value="">No reference images</option>
                             </select>
-                            <button id="btn-upload-overlay" class="btn btn-secondary" title="Large images are resized and compressed automatically" style="font-size: 11px; padding: 4px 8px;">
+                            <button id="btn-upload-overlay" class="btn btn-secondary" title="Large images are resized and compressed automatically" style="font-size: 12px; padding: 4px 8px;">
                                 + Add Image
                             </button>
-                            <label style="font-size: 10px; display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                            <label style="font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer;">
                                 <input type="checkbox" id="check-edit-overlay"> Move / resize on canvas
                             </label>
                             <div style="display: flex; align-items: center; gap: 4px;">
-                                <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Opacity:</label>
+                                <label style="font-size: 12px; color: var(--text-secondary); white-space: nowrap;">Opacity:</label>
                                 <input type="range" id="overlay-opacity-slider" min="0" max="100" value="50" style="flex: 1; height: 4px;">
-                                <span id="overlay-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 30px;">50%</span>
+                                <span id="overlay-opacity-value" style="font-size: 12px; color: var(--text-secondary); min-width: 30px;">50%</span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 4px;">
-                                <label style="font-size: 10px; color: var(--text-secondary); white-space: nowrap;">Size:</label>
+                                <label style="font-size: 12px; color: var(--text-secondary); white-space: nowrap;">Size:</label>
                                 <input type="range" id="overlay-size-slider" min="5" max="1000" value="100" style="flex: 1; height: 4px;">
-                                <span id="overlay-size-value" style="font-size: 10px; color: var(--text-secondary); min-width: 34px;">100%</span>
+                                <span id="overlay-size-value" style="font-size: 12px; color: var(--text-secondary); min-width: 34px;">100%</span>
                             </div>
                             <div style="display: grid; grid-template-columns: auto 1fr auto 1fr; align-items: center; gap: 3px;">
-                                <label for="overlay-x-input" style="font-size: 10px; color: var(--text-secondary);">X</label>
-                                <input id="overlay-x-input" type="number" value="0" step="1" class="tool-input" style="width: 54px; font-size: 10px;">
-                                <label for="overlay-y-input" style="font-size: 10px; color: var(--text-secondary);">Y</label>
-                                <input id="overlay-y-input" type="number" value="0" step="1" class="tool-input" style="width: 54px; font-size: 10px;">
+                                <label for="overlay-x-input" style="font-size: 12px; color: var(--text-secondary);">X</label>
+                                <input id="overlay-x-input" type="number" value="0" step="1" class="tool-input" style="width: 54px; font-size: 12px;">
+                                <label for="overlay-y-input" style="font-size: 12px; color: var(--text-secondary);">Y</label>
+                                <input id="overlay-y-input" type="number" value="0" step="1" class="tool-input" style="width: 54px; font-size: 12px;">
                             </div>
                             <div style="display: flex; align-items: center; gap: 4px;">
-                                <label for="overlay-rotation-input" style="font-size: 10px; color: var(--text-secondary);">Rotation</label>
-                                <input id="overlay-rotation-input" type="number" value="0" step="1" class="tool-input" style="width: 58px; font-size: 10px;">
-                                <span style="font-size: 10px; color: var(--text-secondary);">°</span>
+                                <label for="overlay-rotation-input" style="font-size: 12px; color: var(--text-secondary);">Rotation</label>
+                                <input id="overlay-rotation-input" type="number" value="0" step="1" class="tool-input" style="width: 58px; font-size: 12px;">
+                                <span style="font-size: 12px; color: var(--text-secondary);">°</span>
                             </div>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
-                                <button id="btn-overlay-back" class="btn btn-secondary" style="font-size: 10px; padding: 3px;">Send Back</button>
-                                <button id="btn-overlay-front" class="btn btn-secondary" style="font-size: 10px; padding: 3px;">Bring Front</button>
-                                <button id="btn-reset-overlay" class="btn btn-secondary" style="font-size: 10px; padding: 3px;">Reset</button>
-                                <button id="btn-clear-overlay" class="btn btn-secondary" style="font-size: 10px; padding: 3px;">Remove</button>
+                                <button id="btn-overlay-back" class="btn btn-secondary" style="font-size: 12px; padding: 3px;">Send Back</button>
+                                <button id="btn-overlay-front" class="btn btn-secondary" style="font-size: 12px; padding: 3px;">Bring Front</button>
+                                <button id="btn-reset-overlay" class="btn btn-secondary" style="font-size: 12px; padding: 3px;">Reset</button>
+                                <button id="btn-clear-overlay" class="btn btn-secondary" style="font-size: 12px; padding: 3px;">Remove</button>
                             </div>
                         </div>
                     </div>
@@ -307,7 +307,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         <div class="dropdown-header">Camera Views <span class="info-icon" data-tooltip="Store and recall camera positions (hotkeys: Shift+1..9 to save, 1..9 to recall)">(i)</span></div>
                         <div id="camera-views-list" style="max-height: 160px; overflow-y: auto;"></div>
                         <div style="padding: 2px 8px 4px 8px;">
-                            <button id="btn-view-save-new" class="btn btn-secondary" style="width: 100%; font-size: 10px; padding: 3px 8px;">+ Save Current View</button>
+                            <button id="btn-view-save-new" class="btn btn-secondary" style="width: 100%; font-size: 12px; padding: 3px 8px;">+ Save Current View</button>
                         </div>
                     </div>
 
@@ -318,7 +318,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <input type="checkbox" id="check-grid" checked> Show Grid <span class="info-icon" data-tooltip="Toggle the latitude/longitude grid">(i)</span>
                         </label>
                          <div style="padding: 2px 8px 4px 28px;">
-                             <select id="grid-thickness-select" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
+                             <select id="grid-thickness-select" class="tool-select" style="width: 100%; font-size: 12px; padding: 2px;">
                                 <option value="0.5">Thin (0.5px)</option>
                                 <option value="1.0" selected>Medium (1.0px)</option>
                                 <option value="2.0">Thick (2.0px)</option>
@@ -362,10 +362,10 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                         </label>
                         
                         <div style="padding: 4px 8px; border-top: 1px dotted var(--border-default); margin-top: 4px;">
-                             <label style="font-size: 11px; white-space: nowrap; font-weight: 600;">Plate Opacity <span class="info-icon" data-tooltip="Adjust transparency of tectonic plates">(i)</span></label>
+                             <label style="font-size: 12px; white-space: nowrap; font-weight: 600;">Plate Opacity <span class="info-icon" data-tooltip="Adjust transparency of tectonic plates">(i)</span></label>
                              <div style="display: flex; align-items: center; gap: 4px;">
                                  <input type="range" id="plate-opacity-slider" min="0" max="100" value="${(g.plateOpacity ?? 1.0) * 100}" style="flex: 1; height: 4px;">
-                                 <span id="plate-opacity-value" style="font-size: 10px; color: var(--text-secondary); min-width: 35px;">${Math.round((g.plateOpacity ?? 1.0) * 100)}%</span>
+                                 <span id="plate-opacity-value" style="font-size: 12px; color: var(--text-secondary); min-width: 35px;">${Math.round((g.plateOpacity ?? 1.0) * 100)}%</span>
                              </div>
                         </div>
 
@@ -402,29 +402,26 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                     <button id="btn-hotkey-help" class="view-dropdown-item header-menu-action" title="Show keyboard shortcuts"><span>${uiIcon('keyboard')} Keyboard shortcuts</span><kbd>?</kbd></button>
                     <button id="btn-report-bug" class="view-dropdown-item header-menu-action" title="Report a Bug"><span>${uiIcon('flag')} Report a bug</span></button>
                     <a class="view-dropdown-item header-menu-action" href="https://github.com/Calor7/TectoLite" target="_blank" rel="noopener noreferrer"><span>${uiIcon('external-link')} Source and issues</span></a>
-                    <a class="view-dropdown-item header-menu-action" href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer"><span>${uiIcon('globe')} Refractured Games</span></a>
+                    <a class="view-dropdown-item header-menu-action" href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer"><span><span class="app-brand-mark publisher-brand-mark" aria-hidden="true"></span> Refractured Games</span></a>
                     <a class="view-dropdown-item header-menu-action" href="https://refracturedgames.eo.page/zcyvj" target="_blank" rel="noopener noreferrer" id="link-subscribe"><span>${uiIcon('mail')} Subscribe to updates</span></a>
-                    <div class="app-version">TectoLite v${APP_VERSION}</div>
-                </div>
-            </div>
 
-            <a id="link-refracturedgames-header" class="btn btn-secondary header-support-link" href="https://www.refracturedgames.com" target="_blank" rel="noopener noreferrer" aria-label="Visit Refractured Games" title="Visit Refractured Games">
-                ${uiIcon('external-link')}
-                <span class="header-label">Refractured Games</span>
-            </a>
 
-            <a id="link-kofi-header" class="btn btn-secondary header-support-link" href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" aria-label="Support TectoLite on Ko-fi" title="Support TectoLite on Ko-fi">
+            <a id="link-kofi-header" class="view-dropdown-item header-menu-action" href="https://ko-fi.com/refracturedgames" target="_blank" rel="noopener noreferrer" aria-label="Support TectoLite on Ko-fi" title="Support TectoLite on Ko-fi">
                 <span class="kofi-icon-slot" aria-hidden="true">
                     ${uiIcon('coffee', 'ui-icon kofi-static-icon')}
                     <img class="kofi-animated-icon" data-kofi-animated-icon data-animated-src="./coffee-mug-flaticon.gif" alt="">
                 </span>
-                <span class="header-label">Ko-fi</span>
+                <span class="header-label">Support TectoLite</span>
             </a>
 
-            <a id="link-download-windows" class="btn btn-primary header-download-link" href="${WINDOWS_PORTABLE_DOWNLOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Download the portable Windows app" title="Download the portable Windows app">
+            <a id="link-download-windows" class="view-dropdown-item header-menu-action" href="${WINDOWS_PORTABLE_DOWNLOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Download the portable Windows app" title="Download the portable Windows app">
                 ${uiIcon('download')}
                 <span class="header-label">Download app</span>
             </a>
+<div class="app-version">TectoLite v${APP_VERSION}</div>
+                </div>
+            </div>
+
             <input type="file" id="file-import" accept=".json" style="display: none;">
             <input type="file" id="file-overlay-upload" accept="image/*" multiple style="display: none;">
           </div>
@@ -440,7 +437,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <div class="tool-group">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                 <h3 id="title-interaction" class="tool-group-title" style="margin: 0;">Interaction</h3>
-                <label style="font-size: 10px; display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-secondary);" title="Toggle on-canvas tooltips">
+                <label style="font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-secondary);" title="Toggle on-canvas tooltips">
                   <input type="checkbox" id="check-show-hints" ${g.showHints !== false ? 'checked' : ''}> Hints
                 </label>
               </div>
@@ -561,40 +558,40 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                  </div>
 
                  <div id="feature-selector" style="display: none; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px;">
-                     <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px;">Feature Type</div>
+                     <div style="font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px;">Feature Type</div>
                      <div class="feature-grid">
                          ${FEATURE_TOOL_TYPES.map(type => {
                            const feature = FEATURE_ICON_CATALOG[type];
                            return `<button class="feature-btn${type === 'mountain' ? ' active' : ''}" data-feature="${type}" title="${feature.description}">${featureToolIcon(type)}<span>${feature.label}</span></button>`;
                          }).join('')}
                      </div>
-                     <div style="font-size: 9px; line-height: 1.35; color: var(--text-secondary); margin-top: 6px;">Select a plate before placing plate-bound features. Hotspots are manually placed fixed markers.</div>
+                     <div style="font-size: 12px; line-height: 1.35; color: var(--text-secondary); margin-top: 6px;">Select a plate before placing plate-bound features. Hotspots are manually placed fixed markers.</div>
                  </div>
 
                  <!-- Draw Mode Controls (visible when Draw tool is active) -->
                  <div id="draw-mode-controls" style="display: none; flex-direction: column; gap: 6px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px;">
-                     <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">Draw Mode</div>
+                     <div style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">Draw Mode</div>
                      <div style="display: flex; gap: 8px; align-items: center;">
-                         <label style="font-size: 11px; display: flex; align-items: center; gap: 3px; cursor: pointer;">
+                         <label style="font-size: 12px; display: flex; align-items: center; gap: 3px; cursor: pointer;">
                              <input type="radio" name="draw-mode" id="draw-mode-polygon" value="polygon" checked> Polygon
                          </label>
-                         <label style="font-size: 11px; display: flex; align-items: center; gap: 3px; cursor: pointer;">
+                         <label style="font-size: 12px; display: flex; align-items: center; gap: 3px; cursor: pointer;">
                              <input type="radio" name="draw-mode" id="draw-mode-line" value="line"> Line
                          </label>
                      </div>
                      <div id="line-type-group" style="display: none;">
-                         <label style="font-size: 10px; color: var(--text-secondary);">Line Type</label>
-                         <select id="draw-line-type" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
+                         <label style="font-size: 12px; color: var(--text-secondary);">Line Type</label>
+                         <select id="draw-line-type" class="tool-select" style="width: 100%; font-size: 12px; padding: 2px;">
                              <option value="divergent">Divergent</option>
                              <option value="convergent">Convergent</option>
                              <option value="transform">Transform</option>
                              <option value="generic">Generic</option>
                          </select>
-                         <div style="font-size: 9px; line-height: 1.3; color: var(--text-secondary); margin-top: 3px;">Lines render above landmasses by default. Their individual color can be overridden after creation.</div>
+                         <div style="font-size: 12px; line-height: 1.3; color: var(--text-secondary); margin-top: 3px;">Lines render above landmasses by default. Their individual color can be overridden after creation.</div>
                      </div>
                      <div id="polygon-type-group" style="display: block;">
-                         <label style="font-size: 10px; color: var(--text-secondary);">Polygon Type</label>
-                         <select id="draw-polygon-type" class="tool-select" style="width: 100%; font-size: 11px; padding: 2px;">
+                         <label style="font-size: 12px; color: var(--text-secondary);">Polygon Type</label>
+                         <select id="draw-polygon-type" class="tool-select" style="width: 100%; font-size: 12px; padding: 2px;">
                              <option value="generic">Generic</option>
                              <option value="continental_crust">Continental Crust</option>
                              <option value="island">Island</option>
@@ -603,7 +600,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                              <option value="craton">Craton</option>
                          </select>
                      </div>
-                     <label style="font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer; margin-top: 2px;">
+                     <label style="font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer; margin-top: 2px;">
                          <input type="checkbox" id="check-vertex-snap"> Vertex Snap
                          <span class="info-icon" data-tooltip="Snap to existing plate vertices while drawing">(i)</span>
                      </label>
@@ -627,9 +624,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                  <div id="link-controls" class="tool-option-card" style="display:none; flex-direction:column; gap:8px;">
                      <div class="tool-option-card-title">Link workflow</div>
                      <div class="tool-workflow-row"><span>Starts at</span><strong id="link-workflow-time">0 Ma</strong></div>
-                     <div class="tool-workflow-slot"><span>Parent / anchor</span><strong id="link-workflow-source">Choose on map</strong></div>
-                     <div class="tool-workflow-slot"><span>Child / target</span><strong id="link-workflow-target">Waiting for parent</strong></div>
-                     <div id="link-workflow-result" class="tool-option-note">The child follows the parent exactly from the current timeline time.</div>
+                     <div class="tool-workflow-slot"><span>Leader</span><strong id="link-workflow-source">Choose on map</strong></div>
+                     <div class="tool-workflow-slot"><span>Follower</span><strong id="link-workflow-target">Waiting for leader</strong></div>
+                     <div id="link-workflow-result" class="tool-option-note">The follower follows the leader exactly from the current timeline time.</div>
                      <button id="btn-clear-link-workflow" class="btn btn-secondary">${uiIcon('x')} Clear selection</button>
                  </div>
 
@@ -646,13 +643,13 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
 
                  <div id="motion-controls" style="display: none; flex-direction:column; gap:4px;">
-                      <div style="font-size: 11px; color: var(--text-secondary);">Confirm Motion?</div>
+                      <div style="font-size: 12px; color: var(--text-secondary);">Confirm Motion?</div>
                       <button class="btn btn-success" id="btn-motion-apply">${uiIcon('check')} Apply</button>
                       <button class="btn btn-secondary" id="btn-motion-cancel">${uiIcon('x')} Cancel</button>
                  </div>
 
                  <div id="edit-controls" style="display: none; flex-direction:column; gap:4px; margin-top: 8px; border-top: 1px solid var(--border-default); padding-top: 8px;">
-                     <div style="align-self: center; font-size: 11px; color: var(--text-secondary); font-weight: bold;">Apply Changes?</div>
+                     <div style="align-self: center; font-size: 12px; color: var(--text-secondary); font-weight: bold;">Apply Changes?</div>
                      <div style="display:flex; gap: 4px;">
                          <button class="btn btn-success" id="btn-edit-apply" style="flex:1;">${uiIcon('check')} Apply</button>
                          <button class="btn btn-secondary" id="btn-edit-cancel" style="flex:1;">${uiIcon('x')} Cancel</button>
@@ -663,10 +660,9 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
                  <!-- Select Mode Controls (visible when Select tool is active) -->
                  <div id="select-mode-controls" style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--border-default); border-radius: 4px; flex: 1; min-height: 0;">
-                     <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">Select Options</div>
                      
                      <div>
-                        <label class="property-label" style="font-size:11px;">Interaction Mode <span class="info-icon" data-tooltip="Classic (Pole) vs Dragging">(i)</span></label>
+                        <label class="property-label" style="font-size: 12px;">Interaction Mode <span class="info-icon" data-tooltip="Classic (Pole) vs Dragging">(i)</span></label>
                         <select id="motion-mode-select" class="tool-select" style="width:100%;">
                             <option value="classic">Classic (Fixed Pole)</option>
                             <option value="dynamic_pole">Dynamic Direction</option>
@@ -677,27 +673,27 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                      <hr class="property-divider" style="margin: 4px 0;">
 
                      <div style="margin-bottom:6px;">
-                        <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Simulation Speed</div>
+                        <div style="font-size: 12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">Simulation Speed</div>
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             <div style="display:flex; align-items:center; gap:6px;">
-                                <input type="number" id="speed-input-cm" class="property-input" step="0.05" style="width:70px;" disabled>
+                                <input type="number" id="speed-input-cm" aria-label="Plate speed in centimeters per year" class="property-input" step="0.05" style="width:70px;" disabled>
                                 <span class="motion-unit">cm/yr</span>
                             </div>
                             <div style="display:flex; align-items:center; gap:6px;">
-                                <input type="number" id="speed-input-deg" class="property-input" step="0.05" style="width:70px;" disabled>
+                                <input type="number" id="speed-input-deg" aria-label="Plate speed in degrees per million years" class="property-input" step="0.05" style="width:70px;" disabled>
                                 <span class="motion-unit">deg/Ma</span>
                             </div>
                         </div>
                         <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
-                            <button id="btn-reposition-pole-north" class="btn btn-secondary" style="width:100%; font-size:10px;">Reposition Pole to North</button>
-                            <button id="btn-reposition-pole-south" class="btn btn-secondary" style="width:100%; font-size:10px;">Reposition Pole to South</button>
+                            <button id="btn-reposition-pole-north" class="btn btn-secondary" style="width:100%; font-size: 12px;">Reposition Pole to North</button>
+                            <button id="btn-reposition-pole-south" class="btn btn-secondary" style="width:100%; font-size: 12px;">Reposition Pole to South</button>
                         </div>
                     </div>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                      <div style="font-size:11px; font-weight:600; color:var(--text-secondary);">
+                      <div style="font-size: 12px; font-weight:600; color:var(--text-secondary);">
                         Speed Presets
                       </div>
-                      <label style="display:flex; align-items:center; gap:4px; font-size:10px; cursor:pointer;" title="Switch between real-world examples and custom preset values">
+                      <label style="display:flex; align-items:center; gap:4px; font-size: 12px; cursor:pointer;" title="Switch between real-world examples and custom preset values">
                           <input type="checkbox" id="check-use-custom-presets"> Custom 
                       </label>
                     </div>
@@ -730,7 +726,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
           <main class="canvas-container" style="flex:1; display:flex; position: relative;">
             <canvas id="main-canvas" style="flex:1;"></canvas>
             <div class="canvas-hint" id="canvas-hint"></div>
-            <div id="cursor-coords" style="position: absolute; bottom: 6px; right: 10px; font-family: monospace; font-size: 11px; color: var(--text-secondary); background: rgba(0,0,0,0.35); padding: 2px 6px; border-radius: 3px; pointer-events: none;"></div>
+            <div id="cursor-coords" style="position: absolute; bottom: 6px; right: 10px; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-secondary); background: rgba(0,0,0,0.35); padding: 2px 6px; border-radius: 3px; pointer-events: none;"></div>
           </main>
           
           <div class="resizer-x" id="resizer-right" style="position: relative; width: 4px; cursor: col-resize; background-color: var(--bg-tertiary); z-index: 10;"></div>
@@ -774,7 +770,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <input type="range" id="time-slider" class="time-slider" min="0" max="500" value="0" title="Scrub time (←/→ keys step ±1 Ma, Shift = ±10 Ma)">
             <div class="time-display">
               <div class="time-controls-row">
-                <span id="current-time" class="current-time-display" style="cursor: pointer; font-weight: 600;" title="Click to set current time">0</span>
+                <button type="button" id="current-time" class="current-time-display" aria-label="Set current time" title="Set current time">0</button>
                 <span id="time-mode-label">Ma</span>
 
               </div>
@@ -788,7 +784,8 @@ export function getAppHTML(opts: AppTemplateOptions): string {
         <div id="time-input-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="time-input-title" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
           <div class="modal-content" style="background: var(--bg-secondary); border: 2px solid var(--border-default); border-radius: 4px; padding: 16px; min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
             <h3 id="time-input-title" style="margin-top: 0; color: var(--text-primary);">Set Current Time</h3>
-            <input type="number" id="time-input-field" class="property-input" style="width: 100%; padding: 8px; margin-bottom: 12px; font-size: 14px;" placeholder="Enter time value">
+            <label for="time-input-field">Time (Ma)</label><p id="time-input-error" class="field-error" hidden></p>
+            <input type="number" min="0" id="time-input-field" class="property-input" style="width: 100%; padding: 8px; margin-bottom: 12px; font-size: 14px;" placeholder="Enter time value">
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
               <button id="btn-time-input-cancel" class="btn btn-secondary" style="padding: 6px 12px;">Cancel</button>
               <button id="btn-time-input-confirm" class="btn btn-primary" style="padding: 6px 12px;">Confirm</button>
@@ -804,12 +801,12 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <div style="display: flex; flex-direction: column; gap: 8px;">
                 <button id="btn-apply-generation" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
                     <span style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--color-primary);">Apply at Generation (Rewrite History)</span>
-                    <span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Modifies the plate's base shape from birth. The change propagates through all time.</span>
+                    <span style="font-size: 12px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Modifies the plate's base shape from birth. The change propagates through all time.</span>
                 </button>
                 
                 <button id="btn-apply-event" class="btn" style="text-align: left; padding: 12px; display: flex; flex-direction: column; background: var(--bg-tertiary); border: 1px solid var(--border-default); transition: all 0.2s;">
                     <span style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: var(--color-success);">Insert Event at Current Time</span>
-                    <span style="font-size: 11px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Creates a new 'Edit' event at <span id="lbl-current-time" style="color:var(--text-primary); font-weight:bold;">0</span> Ma. The shape changes only from this point forward.</span>
+                    <span style="font-size: 12px; opacity: 0.7; font-weight: normal; color: var(--text-secondary);">Creates a new 'Edit' event at <span id="lbl-current-time" style="color:var(--text-primary); font-weight:bold;">0</span> Ma. The shape changes only from this point forward.</span>
                 </button>
             </div>
             
@@ -826,7 +823,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             
             <div style="display: flex; flex-direction: column; gap: 5px;">
                 <label style="color: var(--text-secondary); font-size: 12px; text-transform: uppercase; font-weight: 600;">Current Time</label>
-                <div id="drag-target-current-time" style="color: var(--text-primary); font-weight: bold; font-family: monospace; font-size: 14px;">0 Ma</div>
+                <div id="drag-target-current-time" style="color: var(--text-primary); font-weight: bold; font-variant-numeric: tabular-nums; font-size: 14px;">0 Ma</div>
             </div>
 
             <div style="display: flex; flex-direction: column; gap: 5px;">
@@ -835,19 +832,19 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             </div>
 
             <div style="background: var(--bg-elevated); padding: 12px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border-muted);">
-                 <label style="color: var(--text-muted); font-size: 10px; letter-spacing: 0.5px; font-weight: bold;">ESTIMATED VELOCITY</label>
+                 <label style="color: var(--text-muted); font-size: 12px; letter-spacing: 0.5px; font-weight: bold;">ESTIMATED VELOCITY</label>
                  
                  <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div style="display: flex; align-items: baseline; gap: 6px;">
-                        <span id="drag-target-speed-deg" style="color: var(--accent-primary); font-size: 20px; font-weight: bold; font-family: monospace;">--</span>
+                        <span id="drag-target-speed-deg" style="color: var(--accent-primary); font-size: 20px; font-weight: bold; font-variant-numeric: tabular-nums;">--</span>
                         <span class="motion-unit motion-unit-modal">deg/Ma</span>
                     </div>
                     <div style="display: flex; align-items: baseline; gap: 6px;">
-                        <span id="drag-target-speed-cm" style="color: var(--accent-success); font-size: 16px; font-weight: bold; font-family: monospace;">--</span>
+                        <span id="drag-target-speed-cm" style="color: var(--accent-success); font-size: 16px; font-weight: bold; font-variant-numeric: tabular-nums;">--</span>
                         <span class="motion-unit motion-unit-modal">cm/yr</span>
                     </div>
                  </div>
-                 <div id="drag-target-warning" style="font-size: 11px; color: var(--accent-warning); display: none;">Warning: Excessive velocity detected!</div>
+                 <div id="drag-target-warning" style="font-size: 12px; color: var(--accent-warning); display: none;">Warning: Excessive velocity detected!</div>
             </div>
 
             <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">

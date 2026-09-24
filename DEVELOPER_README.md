@@ -78,6 +78,8 @@ src/
 - Oceanic crust generation is the only remaining opt-in geometry automation. It is mutually exclusive, disabled by default, and presented under **Settings → Experimental**.
 - `TimeControls.ts` handles display/input time; the legacy "Ago" checkbox and `TimeMode` toggle have been removed from the UI (a deprecated `TimeMode` union remains in `types.ts` for save-file migration only).
 - Heightmap and GeoPackage exports are active code paths.
+- PNG preview and download share renderPNGExport in src/export.ts. Export options are local to the dialog; rendering leaves the project and live view unchanged.
+- The unified export dialog also routes to the existing JSON save workflow for editable projects.
 
 ## Architecture Principles
 

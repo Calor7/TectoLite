@@ -20,7 +20,7 @@ import {
 } from './utils/sphericalMath';
 import { derivePlateGeometry, pointPositionAt, activeEulerPole } from './motion/RotationModel';
 import { isMotionLinkActiveAtTime } from './motion/LinkModel';
-import { generatedNameWithSuffix } from './nameLimits';
+import { generatedOperationName } from './ui/EntityNames';
 
 // Legacy interface for start/end splits
 interface SplitLine {
@@ -980,7 +980,7 @@ export function splitPlate(
     const leftPlate: TectonicPlate = {
         ...plateToSplit,
         id: leftPlateId,
-        name: options.resultNames?.[0]?.trim() || generatedNameWithSuffix(plateToSplit.name, ' (A)'),
+        name: options.resultNames?.[0]?.trim() || generatedOperationName(plateToSplit.name, ' (A)'),
         description: inheritedDescription,
         polygons: leftPolygons,
         features: leftFeatures,
@@ -1008,7 +1008,7 @@ export function splitPlate(
         ...plateToSplit,
         id: rightPlateId,
         description: inheritedDescription,
-        name: options.resultNames?.[1]?.trim() || generatedNameWithSuffix(plateToSplit.name, ' (B)'),
+        name: options.resultNames?.[1]?.trim() || generatedOperationName(plateToSplit.name, ' (B)'),
         polygons: rightPolygons,
         features: rightFeatures,
         motionSegments: [{ time: currentTime, eulerPole: { ...inheritedPole } }],
@@ -1112,7 +1112,7 @@ export function splitPlate(
                 processedChildren.push({
                     ...child,
                     id: childLeftPlateId,
-                    name: generatedNameWithSuffix(child.name, ' (A)'),
+                    name: generatedOperationName(child.name, ' (A)'),
                     polygons: childLeftPolys,
                     initialPolygons: childLeftPolys,
                     features: childLeftFeatures,
@@ -1133,7 +1133,7 @@ export function splitPlate(
                 processedChildren.push({
                     ...child,
                     id: childRightPlateId,
-                    name: generatedNameWithSuffix(child.name, ' (B)'),
+                    name: generatedOperationName(child.name, ' (B)'),
                     polygons: childRightPolys,
                     initialPolygons: childRightPolys,
                     features: childRightFeatures,

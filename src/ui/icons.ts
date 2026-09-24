@@ -2,14 +2,15 @@ export type UiIconName =
     | 'book-open' | 'check' | 'chevron-down' | 'chevron-right' | 'clipboard' | 'coffee' | 'edit'
     | 'download' | 'external-link' | 'eye' | 'eye-off' | 'fast-forward' | 'file'
     | 'file-plus' | 'flag' | 'folder-open' | 'globe' | 'help-circle'
-    | 'hexagon' | 'history' | 'image' | 'keyboard' | 'link' | 'lock'
+    | 'hexagon' | 'history' | 'image' | 'info' | 'keyboard' | 'link' | 'lock'
     | 'mail' | 'map' | 'maximize' | 'merge' | 'moon' | 'mountain'
     | 'move' | 'mouse-pointer' | 'orbit' | 'palette' | 'pause' | 'pencil'
     | 'play' | 'redo' | 'refresh' | 'rewind' | 'rotate-ccw' | 'save'
-    | 'scissors' | 'settings' | 'sun' | 'trash' | 'undo' | 'unlock'
+    | 'scissors' | 'settings' | 'sun' | 'trash' | 'undo' | 'unlink' | 'unlock'
     | 'upload' | 'volcano' | 'x';
 
 const ICON_PATHS: Record<UiIconName, string> = {
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
     'book-open': '<path d="M3 5.5A3.5 3.5 0 0 1 6.5 2H11v17H6.5A3.5 3.5 0 0 0 3 22Z"/><path d="M21 5.5A3.5 3.5 0 0 0 17.5 2H13v17h4.5A3.5 3.5 0 0 1 21 22Z"/>',
     check: '<path d="m5 12 4 4L19 6"/>',
     'chevron-down': '<path d="m7 10 5 5 5-5"/>',
@@ -57,6 +58,7 @@ const ICON_PATHS: Record<UiIconName, string> = {
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     trash: '<path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/>',
     undo: '<path d="m7 6-4 4 4 4"/><path d="M21 18v-2a6 6 0 0 0-6-6H3"/>',
+    unlink: '<path d="m3 3 18 18M10.5 5.5l1-1a5 5 0 0 1 7.1 7.1l-1 1M6.4 11.4l-1 1a5 5 0 0 0 7.1 7.1l1-1M8 2v2M2 8h2M16 20v2M20 16h2"/>',
     unlock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 7.5-2"/>',
     upload: '<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 17v4h16v-4"/>',
     volcano: '<path d="m3 20 6-12 3 5 3-5 6 12Z"/><path d="M10 6c0-2 2-2 2-4M14 6c0-2 2-2 2-4"/>',
