@@ -400,34 +400,57 @@ class TectoLiteApp {
         if (this.state.world.plates.length || this.state.world.labels.length || this.state.world.imageOverlays.length) return;
         if (localStorage.getItem('tectolite-show-welcome') === 'false') return;
 
+        this.showWelcomeChoices();
+    }
+
+    private showWelcomeChoices(): void {
         const rememberPreference = () => {
             const checkbox = document.getElementById('welcome-show-startup') as HTMLInputElement | null;
             localStorage.setItem('tectolite-show-welcome', checkbox?.checked === false ? 'false' : 'true');
         };
         this.showModal({
             title: 'Welcome to TectoLite',
-            content: `Choose a starting point. You can reopen these choices from <strong>File → New Project</strong>.
-                <label class="welcome-preference"><input id="welcome-show-startup" type="checkbox" checked> Show this welcome screen on startup</label>`,
+            content: `Start drawing, explore a reconstructed world, or open a saved project. You can return here from <strong>File → New Project</strong>.
+                <label class="welcome-preference"><input id="welcome-show-startup" type="checkbox" ${localStorage.getItem('tectolite-show-welcome') === 'false' ? '' : 'checked'}> Show this welcome screen on startup</label>`,
             buttons: [
                 {
-                    text: 'Create Blank World',
-                    subtext: 'Start drawing on an empty sphere.',
+                    text: 'Draw a new world',
+                    subtext: 'Start on an empty globe with the Draw tool ready.',
+                    featured: true,
                     onClick: () => { rememberPreference(); this.createNewProject(); }
                 },
-                ...PROJECT_TEMPLATES.filter(template => template.id !== 'blank').map(template => ({
-                    text: template.name,
-                    subtext: template.description,
-                    onClick: () => { rememberPreference(); void this.createProjectFromTemplate(template); }
-                })),
                 {
-                    text: 'Load Existing Project',
-                    subtext: 'Open a TectoLite JSON save from your computer.',
+                    text: 'Explore example worlds',
+                    subtext: 'Choose Earth or Pangaea, with editable landmasses and optional motion plates.',
+                    onClick: () => {
+                        rememberPreference();
+                        this.showTemplateChoices(() => this.showWelcomeChoices());
+                    }
+                },
+                {
+                    text: 'Open a saved project',
+                    subtext: 'Continue from a TectoLite JSON file on your computer.',
                     onClick: () => {
                         rememberPreference();
                         window.setTimeout(() => document.getElementById('file-import')?.click(), 0);
                     }
                 },
                 { text: 'Not now', isSecondary: true, onClick: rememberPreference }
+            ]
+        });
+    }
+
+    private showTemplateChoices(goBack: () => void): void {
+        this.showModal({
+            title: 'Choose an example world',
+            content: 'Covers are editable landmasses. “Covers + Plates” also includes simplified continental plates and cratons for exploring motion; oceanic plates are omitted.',
+            buttons: [
+                ...PROJECT_TEMPLATES.filter(template => template.id !== 'blank').map(template => ({
+                    text: template.name,
+                    subtext: template.description,
+                    onClick: () => { void this.createProjectFromTemplate(template); }
+                })),
+                { text: 'Back', isSecondary: true, onClick: goBack }
             ]
         });
     }
@@ -3844,35 +3867,45 @@ class TectoLiteApp {
             const allLocked = allMembers.length > 0 && allMembers.every(plate => plate.locked);
             const opacity = groupId ? (groups.find(group => group.id === groupId)?.opacity ?? 1) : 1;
             let opacityPopover: HTMLElement | null = null;
+            let actionsMenu: HTMLElement | null = null;
             header.innerHTML = `
                 <span class="entity-group-chevron">${uiIcon(collapsed && !filterText ? 'chevron-right' : 'chevron-down')}</span>
                 <button type="button" class="entity-group-name" aria-expanded="${!collapsed || !!filterText}" title="${escapeHtml(name)}">${escapeHtml(name)}</button>
                 <span class="entity-group-count">${filterText ? `${plateMembers.length + labelMembers.length} of ` : ''}${allMembers.length}</span>
                 ${editable ? `<span class="entity-group-actions">
-                    <button data-action="visibility" title="Show/hide every entity in this group">${uiIcon(allVisible ? 'eye' : 'eye-off')}</button>
-                    <button data-action="lock" title="Lock/unlock every entity in this group">${uiIcon(allLocked ? 'lock' : 'unlock')}</button>
-                    <button data-action="opacity" title="Group transparency (${Math.round((1 - opacity) * 100)}%)">◐</button>
-                    <button data-action="color" title="Set one color for every entity in this group">${uiIcon('palette')}</button>
-                    <button data-action="rename" title="Rename group">${uiIcon('edit')}</button>
-                    <button data-action="ungroup" title="Delete group but keep its entities">×</button>
-                    <button data-action="delete" title="Delete every entity in this group">${uiIcon('trash')}</button>
+                    <button type="button" data-action="visibility" aria-label="${allVisible ? 'Hide' : 'Show'} all entities in ${escapeHtml(name)}" title="${allVisible ? 'Hide' : 'Show'} group">${uiIcon(allVisible ? 'eye' : 'eye-off')}</button>
+                    <button type="button" data-action="lock" aria-label="${allLocked ? 'Unlock' : 'Lock'} all entities in ${escapeHtml(name)}" title="${allLocked ? 'Unlock' : 'Lock'} group">${uiIcon(allLocked ? 'lock' : 'unlock')}</button>
+                    <button type="button" data-action="more" aria-label="More actions for ${escapeHtml(name)}" aria-expanded="false" title="More group actions">${uiIcon('more')}</button>
                 </span>` : ''}
             `;
+            const runGroupAction = (action: string) => {
+                if (!groupId) return;
+                if (action === 'more') {
+                    if (actionsMenu) {
+                        actionsMenu.hidden = !actionsMenu.hidden;
+                        header.querySelector('[data-action="more"]')?.setAttribute('aria-expanded', String(!actionsMenu.hidden));
+                    }
+                    return;
+                }
+                if (actionsMenu) actionsMenu.hidden = true;
+                header.querySelector('[data-action="more"]')?.setAttribute('aria-expanded', 'false');
+                if (action === 'visibility') this.toggleEntityGroupVisibility(groupId);
+                if (action === 'lock') this.toggleEntityGroupLocked(groupId);
+                if (action === 'opacity') {
+                    const wasOpen = opacityPopover?.classList.contains('show') ?? false;
+                    content.querySelectorAll('.entity-group-opacity-popover.show').forEach(popover => popover.classList.remove('show'));
+                    if (!wasOpen) opacityPopover?.classList.add('show');
+                }
+                if (action === 'color') this.recolorEntityGroup(groupId);
+                if (action === 'rename') this.renameEntityGroup(groupId);
+                if (action === 'ungroup') this.removeEntityGroup(groupId);
+                if (action === 'delete') this.deleteEntityGroupMembers(groupId);
+            };
             header.addEventListener('click', event => {
                 const action = (event.target as HTMLElement).closest<HTMLButtonElement>('button')?.dataset.action;
                 if (action && groupId) {
                     event.stopPropagation();
-                    if (action === 'visibility') this.toggleEntityGroupVisibility(groupId);
-                    if (action === 'lock') this.toggleEntityGroupLocked(groupId);
-                    if (action === 'opacity') {
-                        const wasOpen = opacityPopover?.classList.contains('show') ?? false;
-                        content.querySelectorAll('.entity-group-opacity-popover.show').forEach(popover => popover.classList.remove('show'));
-                        if (!wasOpen) opacityPopover?.classList.add('show');
-                    }
-                    if (action === 'color') this.recolorEntityGroup(groupId);
-                    if (action === 'rename') this.renameEntityGroup(groupId);
-                    if (action === 'ungroup') this.removeEntityGroup(groupId);
-                    if (action === 'delete') this.deleteEntityGroupMembers(groupId);
+                    runGroupAction(action);
                     return;
                 }
                 if (groupId) this.toggleEntityGroupCollapsed(groupId);
@@ -3905,6 +3938,34 @@ class TectoLiteApp {
                 if (plateIds.length) this.assignEntitiesToGroup(plateIds, groupId);
             });
             wrapper.appendChild(header);
+
+            if (editable && groupId) {
+                actionsMenu = document.createElement('div');
+                actionsMenu.className = 'entity-group-menu';
+                actionsMenu.id = `group-actions-${groupId}`;
+                actionsMenu.hidden = true;
+                actionsMenu.innerHTML = `
+                    <button type="button" data-action="opacity">Transparency · ${Math.round((1 - opacity) * 100)}%</button>
+                    <button type="button" data-action="color">Set group color</button>
+                    <button type="button" data-action="rename">Rename group</button>
+                    <button type="button" data-action="ungroup">Remove group, keep entities</button>
+                    <button type="button" data-action="delete" class="entity-group-delete">Delete group entities</button>
+                `;
+                header.querySelector('[data-action="more"]')?.setAttribute('aria-controls', actionsMenu.id);
+                actionsMenu.addEventListener('click', event => {
+                    const action = (event.target as HTMLElement).closest<HTMLButtonElement>('button')?.dataset.action;
+                    if (action) runGroupAction(action);
+                });
+                actionsMenu.addEventListener('keydown', event => {
+                    if (event.key !== 'Escape') return;
+                    event.stopPropagation();
+                    actionsMenu!.hidden = true;
+                    const trigger = header.querySelector<HTMLButtonElement>('[data-action="more"]');
+                    trigger?.setAttribute('aria-expanded', 'false');
+                    trigger?.focus();
+                });
+                wrapper.appendChild(actionsMenu);
+            }
 
             if (editable && groupId) {
                 opacityPopover = document.createElement('div');
@@ -5728,18 +5789,19 @@ class TectoLiteApp {
             title: hasDocumentContent ? 'Start a new project?' : 'Choose a starting point',
             content: hasDocumentContent
                 ? 'This replaces the current world. Save it first if you want to keep your work.'
-                : 'Begin with a blank sphere or a small playable example.',
+                : 'Start drawing or choose an example world to explore.',
             buttons: [
                 {
-                    text: 'Create Blank World',
-                    subtext: 'Start from an empty sphere.',
+                    text: 'Draw a new world',
+                    subtext: 'Start on an empty globe with the Draw tool ready.',
+                    featured: true,
                     onClick: () => this.createNewProject()
                 },
-                ...PROJECT_TEMPLATES.filter(template => template.id !== 'blank').map(template => ({
-                    text: template.name,
-                    subtext: template.description,
-                    onClick: () => this.createProjectFromTemplate(template)
-                })),
+                {
+                    text: 'Explore example worlds',
+                    subtext: 'Choose Earth or Pangaea, with editable landmasses and optional motion plates.',
+                    onClick: () => this.showTemplateChoices(() => this.requestNewProject())
+                },
                 {
                     text: 'Cancel',
                     isSecondary: true,
@@ -5750,7 +5812,7 @@ class TectoLiteApp {
     }
 
     private createNewProject(): void {
-        this.replaceProject(createDefaultAppState(), [], 'New blank project created', false);
+        this.replaceProject(createDefaultAppState(), [], 'Blank world ready — draw your first plate.', false, 'draw');
     }
 
     private async createProjectFromTemplate(template: ProjectTemplate): Promise<void> {
@@ -5759,7 +5821,7 @@ class TectoLiteApp {
         this.replaceProject(nextState, [], `${template.name} template loaded`, true);
     }
 
-    private replaceProject(nextState: AppState, cameraBookmarks: CameraView[], message: string, unsaved: boolean): void {
+    private replaceProject(nextState: AppState, cameraBookmarks: CameraView[], message: string, unsaved: boolean, initialTool: ToolType = 'select'): void {
         this.simulation?.stop();
         this.historyManager.clear();
         this.clearAutosave();
@@ -5778,7 +5840,7 @@ class TectoLiteApp {
         this.updateUI();
         this.syncUIToState();
         this.timelineSystem?.render(null);
-        this.setActiveTool('select');
+        this.setActiveTool(initialTool);
         this.canvasManager?.markDirty();
         this.simulation?.setTime(this.state.world.currentTime);
         this.showToast(message);

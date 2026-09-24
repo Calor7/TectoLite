@@ -8,6 +8,7 @@ import { uiIcon } from './icons';
 export interface ModalButton {
     text: string;
     subtext?: string;
+    featured?: boolean;
     isSecondary?: boolean;
     danger?: boolean;
     onClick: () => boolean | void;
@@ -102,6 +103,7 @@ export function showModal(options: ModalOptions): void {
         button.type = 'button';
         const destructive = option.danger ?? /^(delete|remove|discard|erase)\b/i.test(option.text);
         button.className = 'btn ' + (destructive ? 'btn-danger' : option.isSecondary ? 'btn-secondary' : choices ? 'app-modal-choice' : 'btn-primary');
+        if (option.featured) button.classList.add('app-modal-choice-featured');
         button.dataset.safeDismiss = String(isSafeImplicitDismissAction(option));
         const label = document.createElement('span');
         label.textContent = option.text;

@@ -4,6 +4,16 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.12 - 2026-09-24
+
+### Improved
+
+- Blank projects open with Draw ready, and the welcome screen presents three clear starting paths before example details.
+- Link and Fuse show their workflow options while temporarily clearing the Properties panel from the map.
+- Explorer group controls use a compact, named action menu with larger touch targets.
+- Small-screen tool options appear as a bottom sheet; notifications no longer cover map guidance or the tool rail.
+- Help stays labeled at desktop widths, and the timeline explains Ma.
+
 ## 1.0.11 - 2026-09-24
 
 ### Changed

@@ -19,7 +19,7 @@ export function updatePlayButton(isPlaying: boolean): void {
 }
 
 /**
- * Shows a brief toast notification at the bottom of the screen.
+ * Shows a brief toast above the timeline, away from the centered map hint.
  */
 export function showToast(message: string, duration: number = 2000): void {
     // Remove existing toast if any
@@ -32,9 +32,8 @@ export function showToast(message: string, duration: number = 2000): void {
     toast.setAttribute('aria-live', 'polite');
     toast.style.cssText = `
         position: fixed;
-        bottom: 80px;
-        left: 50%;
-        transform: translateX(-50%);
+        bottom: calc(var(--timeline-height) + 16px);
+        right: 16px;
         background: color-mix(in srgb, var(--bg-surface) 95%, transparent);
         color: var(--text-primary);
         padding: 10px 16px;
@@ -54,12 +53,12 @@ export function showToast(message: string, duration: number = 2000): void {
         style.id = 'toast-styles';
         style.textContent = `
             @keyframes toastFadeIn {
-                from { opacity: 0; transform: translateX(-50%) translateY(10px); }
-                to { opacity: 1; transform: translateX(-50%) translateY(0); }
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
             }
             @keyframes toastFadeOut {
-                from { opacity: 1; transform: translateX(-50%) translateY(0); }
-                to { opacity: 0; transform: translateX(-50%) translateY(10px); }
+                from { opacity: 1; transform: translateY(0); }
+                to { opacity: 0; transform: translateY(10px); }
             }
             @media (prefers-reduced-motion: reduce) {
                 @keyframes toastFadeIn { from { opacity: 1; } to { opacity: 1; } }

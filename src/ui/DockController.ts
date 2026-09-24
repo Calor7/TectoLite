@@ -17,7 +17,7 @@ export type ToolSurfaceAction =
     | { type: 'set-names-visible'; value: boolean }
     | { type: 'require-actions' };
 
-const REQUIRED_ACTION_IDS = ['split-controls', 'motion-controls', 'edit-controls'];
+const REQUIRED_ACTION_IDS = ['split-controls', 'motion-controls', 'edit-controls', 'link-controls', 'fuse-controls'];
 const TOOL_NAMES_STORAGE_KEY = 'tectolite-show-tool-names';
 const TOOL_OPTIONS_STORAGE_KEY = 'tectolite-tool-options-open';
 
@@ -99,6 +99,7 @@ export function bindDockController(
     let explorerEnabled = explorerCheck?.checked ?? false;
     let propertiesEnabled = propertiesCheck?.checked ?? false;
     let historyOpen = historyCheck?.checked ?? false;
+    let restorePropertiesAfterOperation = false;
     let savedToolOptionsOpen = false;
     let savedToolNames = true;
     try {
@@ -266,6 +267,7 @@ export function bindDockController(
         setExplorer(visible); refresh();
     });
     bind(inspectorButton, 'click', () => {
+        restorePropertiesAfterOperation = false;
         propertiesEnabled = narrow.matches ? activeSheet !== 'properties' : !propertiesEnabled;
         if (narrow.matches) activeSheet = propertiesEnabled ? 'properties' : null;
         refresh();
@@ -278,6 +280,7 @@ export function bindDockController(
     bind(toolsCheck, 'change', event => setToolbar((event.target as HTMLInputElement).checked));
     bind(explorerCheck, 'change', event => { const visible = (event.target as HTMLInputElement).checked; if (narrow.matches) activeSheet = visible ? 'explorer' : null; setExplorer(visible); refresh(); });
     bind(propertiesCheck, 'change', event => {
+        restorePropertiesAfterOperation = false;
         propertiesEnabled = (event.target as HTMLInputElement).checked;
         if (narrow.matches) activeSheet = propertiesEnabled ? 'properties' : null;
         refresh();
@@ -309,7 +312,19 @@ export function bindDockController(
 
     return {
         setTool(tool: string) {
+            const wasOperation = toolState.activeTool === 'link' || toolState.activeTool === 'fuse';
+            const isOperation = tool === 'link' || tool === 'fuse';
+            if (!wasOperation && isOperation) {
+                restorePropertiesAfterOperation = propertiesEnabled;
+                propertiesEnabled = false;
+                if (narrow.matches && activeSheet === 'properties') activeSheet = 'tools';
+            } else if (wasOperation && !isOperation) {
+                if (restorePropertiesAfterOperation) propertiesEnabled = true;
+                restorePropertiesAfterOperation = false;
+            }
             dispatchToolState({ type: 'select-tool', tool });
+            if (isOperation) dispatchToolState({ type: 'require-actions' });
+            syncRightDock();
             if (narrow.matches) root.querySelector<HTMLElement>(`.tool-btn[data-tool="${tool}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         },
         showToolOptions() {
@@ -318,7 +333,8 @@ export function bindDockController(
             refresh();
         },
         syncInspectorSelection(nextHasSelection: boolean, nextId?: string) {
-            if (nextHasSelection && (!hasSelection || nextId !== selectionId)) {
+            if (nextHasSelection && (!hasSelection || nextId !== selectionId)
+                && toolState.activeTool !== 'link' && toolState.activeTool !== 'fuse') {
                 propertiesEnabled = true;
                 if (narrow.matches) activeSheet = 'properties';
             }

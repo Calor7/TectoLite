@@ -395,7 +395,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
             <div class="view-dropdown-container">
                 <button id="btn-help-menu" class="btn btn-secondary" title="Help and information" aria-controls="help-dropdown-menu" aria-expanded="false" aria-haspopup="true">
-                    <span class="icon">${uiIcon('help-circle')}</span><span class="header-label header-collapse-label">Help</span>
+                    <span class="icon">${uiIcon('help-circle')}</span><span class="header-label">Help</span>
                 </button>
                 <div id="help-dropdown-menu" class="view-dropdown-menu header-compact-menu">
                     <button id="btn-tutorial-help" class="view-dropdown-item header-menu-action" title="Show Tutorial"><span>${uiIcon('book-open')} Tutorial and manual</span></button>
@@ -771,7 +771,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
             <div class="time-display">
               <div class="time-controls-row">
                 <button type="button" id="current-time" class="current-time-display" aria-label="Set current time" title="Set current time">0</button>
-                <span id="time-mode-label">Ma</span>
+                <abbr id="time-mode-label" title="Million years ago; 0 Ma is the present">Ma</abbr>
 
               </div>
             </div>

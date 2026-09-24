@@ -951,7 +951,7 @@ body {
 .entity-group-actions {
   display: flex;
   flex-shrink: 0;
-  opacity: 0.25;
+  opacity: 0.65;
   transition: opacity 0.15s ease;
 }
 
@@ -961,8 +961,8 @@ body {
 }
 
 .entity-group-actions button {
-  width: 19px;
-  height: 19px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 0;
   border-radius: 3px;
@@ -970,13 +970,45 @@ body {
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
-  line-height: 19px;
+  line-height: 26px;
 }
 
 .entity-group-actions button:hover {
   background: var(--bg-elevated);
   color: var(--text-primary);
 }
+
+.entity-group-actions button:focus-visible,
+.entity-group-menu button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.entity-group-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  margin: 0 0 4px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+.entity-group-menu[hidden] { display: none; }
+
+.entity-group-menu button {
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.entity-group-menu button:hover { background: var(--bg-hover); }
+.entity-group-menu .entity-group-delete { color: var(--accent-danger); }
 
 .entity-group-members {
   display: flex;
@@ -2607,6 +2639,12 @@ body {
     border-right: 1px solid var(--border-default);
   }
 
+  .entity-group-actions button {
+    width: 44px;
+    height: 44px;
+    line-height: 44px;
+  }
+
   .right-sidebar {
     right: 0;
     border-left: 1px solid var(--border-default);
@@ -2682,6 +2720,20 @@ body {
 
   .tutorial-tooltip {
     max-width: min(250px, calc(100vw - 24px));
+  }
+}
+
+@media (max-width: 480px) {
+  .tool-options-sidebar {
+    top: auto;
+    right: 0;
+    bottom: 66px;
+    left: 0;
+    width: 100%;
+    height: min(42dvh, 340px);
+    border-top: 1px solid var(--border-default);
+    border-right: 0;
+    box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.34);
   }
 }
 

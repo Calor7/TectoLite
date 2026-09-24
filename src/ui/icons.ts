@@ -3,7 +3,7 @@ export type UiIconName =
     | 'download' | 'external-link' | 'eye' | 'eye-off' | 'fast-forward' | 'file'
     | 'file-plus' | 'flag' | 'folder-open' | 'globe' | 'help-circle'
     | 'hexagon' | 'history' | 'image' | 'info' | 'keyboard' | 'link' | 'lock'
-    | 'mail' | 'map' | 'maximize' | 'merge' | 'moon' | 'mountain'
+    | 'mail' | 'map' | 'maximize' | 'merge' | 'moon' | 'more' | 'mountain'
     | 'move' | 'mouse-pointer' | 'orbit' | 'palette' | 'pause' | 'pencil'
     | 'play' | 'redo' | 'refresh' | 'rewind' | 'rotate-ccw' | 'save'
     | 'scissors' | 'settings' | 'sun' | 'trash' | 'undo' | 'unlink' | 'unlock'
@@ -40,6 +40,7 @@ const ICON_PATHS: Record<UiIconName, string> = {
     maximize: '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>',
     merge: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M8 5c5 0 3 7 8 7M8 19c5 0 3-7 8-7"/>',
     moon: '<path d="M20.5 14.5A8 8 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
     mountain: '<path d="m3 20 6-12 4 7 2-4 6 9Z"/>',
     move: '<path d="M12 2v20M2 12h20"/><path d="m8 6 4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>',
     'mouse-pointer': '<path d="m5 3 13 9-6 1-3 6Z"/>',

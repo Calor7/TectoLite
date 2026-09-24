@@ -39,6 +39,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .ui-control:focus-
 .app-modal-dialog .btn { min-height: 36px; padding: 8px 16px; border-radius: var(--radius-sm); font-size: 14px; }
 .app-modal-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; background: var(--bg-elevated); border: 1px solid var(--border-default); color: var(--text-primary); }
 .app-modal-choice:hover { border-color: var(--accent-primary); }
+.app-modal-choice-featured { border-color: var(--accent-primary); background: var(--bg-hover); }
 .app-modal-actions .btn:has(.app-modal-button-subtext) { flex-direction: column; align-items: flex-start; text-align: left; }
 .app-modal-button-subtext { font-size: 12px; line-height: 1.5; opacity: 1; white-space: normal; }
 .app-modal-body textarea { font: inherit; }
@@ -77,6 +78,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .ui-control:focus-
 #toast-notification { max-width: calc(100vw - 24px); width: max-content; }
 @media (max-width: 760px) {
   :root { --timeline-height: 92px; }
+  #toast-notification { top: calc(var(--header-height) + 8px); bottom: auto !important; }
   .dock-close { display: block; align-self: flex-end; margin: 8px 12px 0; min-height: 36px; }
   .tool-menu-trigger { display: inline-flex; flex: 0 0 auto; flex-direction: column; justify-content: center; position: sticky; left: 0; z-index: 2; height: 50px; background: var(--bg-surface); box-shadow: 4px 0 8px var(--bg-surface); }
   .toolbar > .tool-names-toggle { display: none; }
@@ -94,4 +96,8 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .ui-control:focus-
   .motion-link-target, .motion-link-unlink, .follow-another-plate, .tutorial-close, .app-modal-dialog .btn { min-height: 44px; }
   .motion-link-unlink { min-width: 44px; }
   .app-modal-dialog { max-height: calc(100dvh - 16px); }
+}
+
+@media (max-width: 480px) {
+  .tool-options-sidebar { width: 100%; }
 }
