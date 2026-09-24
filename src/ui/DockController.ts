@@ -8,17 +8,14 @@ export interface DockController {
 export interface ToolSurfaceState {
     activeTool: string;
     open: boolean;
-    showToolNames: boolean;
 }
 
 export type ToolSurfaceAction =
     | { type: 'select-tool'; tool: string }
     | { type: 'toggle-surface' }
-    | { type: 'set-names-visible'; value: boolean }
     | { type: 'require-actions' };
 
 const REQUIRED_ACTION_IDS = ['split-controls', 'motion-controls', 'edit-controls', 'link-controls', 'fuse-controls'];
-const TOOL_NAMES_STORAGE_KEY = 'tectolite-show-tool-names';
 const TOOL_OPTIONS_STORAGE_KEY = 'tectolite-tool-options-open';
 
 const TOOL_NAMES: Record<string, string> = {
@@ -45,8 +42,6 @@ export function reduceToolSurfaceState(state: ToolSurfaceState, action: ToolSurf
             };
         case 'toggle-surface':
             return { ...state, open: !state.open };
-        case 'set-names-visible':
-            return { ...state, showToolNames: action.value };
         case 'require-actions':
             return { ...state, open: true };
     }
@@ -85,7 +80,6 @@ export function bindDockController(
     const propertiesCheck = root.getElementById('check-view-props') as HTMLInputElement | null;
     const historyCheck = root.getElementById('check-view-history') as HTMLInputElement | null;
     const timelineCheck = root.getElementById('check-view-timeline') as HTMLInputElement | null;
-    const showNamesCheck = root.getElementById('check-show-tool-names') as HTMLInputElement | null;
     const optionsButton = root.getElementById('btn-toggle-tool-options');
     const explorerButton = root.getElementById('btn-toggle-explorer-dock');
     const inspectorButton = root.getElementById('btn-toggle-inspector-dock');
@@ -101,18 +95,14 @@ export function bindDockController(
     let historyOpen = historyCheck?.checked ?? false;
     let restorePropertiesAfterOperation = false;
     let savedToolOptionsOpen = false;
-    let savedToolNames = true;
     try {
         savedToolOptionsOpen = view.localStorage.getItem(TOOL_OPTIONS_STORAGE_KEY) === 'true';
-        const storedNames = view.localStorage.getItem(TOOL_NAMES_STORAGE_KEY);
-        savedToolNames = storedNames === null ? true : storedNames !== 'false';
     } catch {
         // Storage can be unavailable in privacy-restricted browser contexts.
     }
     let toolState: ToolSurfaceState = {
         activeTool: 'select',
-        open: savedToolOptionsOpen,
-        showToolNames: savedToolNames
+        open: savedToolOptionsOpen
     };
 
     const notifyLayout = () => {
@@ -135,7 +125,6 @@ export function bindDockController(
     const renderToolState = () => {
         const wasOpen = Boolean(toolSurface && !toolSurface.classList.contains('collapsed'));
         toolbar?.classList.toggle('tool-options-open', toolState.open);
-        toolbar?.classList.toggle('tool-names-hidden', !toolState.showToolNames);
         if (toolbar) toolbar.dataset.activeTool = toolState.activeTool;
         const visible = toolState.open && (!narrow.matches || activeSheet === 'tools');
         toolSurface?.classList.toggle('collapsed', !visible);
@@ -143,7 +132,6 @@ export function bindDockController(
         toolSurface?.setAttribute('aria-hidden', String(!visible));
         if (toolSurface) toolSurface.inert = !visible;
         setPressed(optionsButton, visible);
-        if (showNamesCheck) showNamesCheck.checked = toolState.showToolNames;
         if (toolSurfaceTitle) toolSurfaceTitle.textContent = `${TOOL_NAMES[toolState.activeTool] ?? 'Tool'} Options`;
         view.requestAnimationFrame(syncToolSurfaceContent);
         if (wasOpen !== toolState.open) notifyLayout();
@@ -251,15 +239,6 @@ export function bindDockController(
         } catch {
             // Keep the in-memory dock state when persistence is unavailable.
         }
-    });
-    bind(showNamesCheck, 'change', event => {
-        const value = (event.target as HTMLInputElement).checked;
-        try {
-            view.localStorage.setItem(TOOL_NAMES_STORAGE_KEY, String(value));
-        } catch {
-            // Keep the in-memory preference when persistence is unavailable.
-        }
-        dispatchToolState({ type: 'set-names-visible', value });
     });
     bind(explorerButton, 'click', () => {
         const visible = Boolean(explorer?.classList.contains('collapsed'));

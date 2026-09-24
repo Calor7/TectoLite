@@ -546,31 +546,8 @@ body {
   padding: 4px 3px;
 }
 
-.toolbar.tool-names-hidden .tool-label {
-  display: none;
-}
-
 .toolbar .tool-btn .info-icon {
   display: none !important;
-}
-
-.tool-names-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  width: 74px;
-  padding: 5px 4px 7px;
-  border-bottom: 1px solid var(--border-default);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.2;
-  cursor: pointer;
-}
-
-.tool-names-toggle input {
-  margin-top: 1px;
-  accent-color: var(--accent-primary);
 }
 
 .tool-options-sidebar {
@@ -2590,16 +2567,6 @@ body {
     min-width: 58px;
     min-height: 50px;
     flex-basis: 58px !important;
-  }
-
-  .tool-names-toggle {
-    flex: 0 0 80px;
-    width: 80px;
-    min-height: 50px;
-    align-items: center;
-    padding: 5px;
-    border-bottom: 0;
-    border-right: 1px solid var(--border-default);
   }
 
   .toolbar.collapsed {

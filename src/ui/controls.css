@@ -81,7 +81,6 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .ui-control:focus-
   #toast-notification { top: calc(var(--header-height) + 8px); bottom: auto !important; }
   .dock-close { display: block; align-self: flex-end; margin: 8px 12px 0; min-height: 36px; }
   .tool-menu-trigger { display: inline-flex; flex: 0 0 auto; flex-direction: column; justify-content: center; position: sticky; left: 0; z-index: 2; height: 50px; background: var(--bg-surface); box-shadow: 4px 0 8px var(--bg-surface); }
-  .toolbar > .tool-names-toggle { display: none; }
   .toolbar .tool-btn { scroll-margin-inline: 80px 8px; }
   .timeline-bar { display: grid; grid-template-columns: auto 1fr auto auto; grid-template-rows: 42px 30px; gap: 4px 8px; padding: 6px 8px; height: var(--timeline-height); min-height: var(--timeline-height); }
   .timeline-bar .timeline { display: contents; }

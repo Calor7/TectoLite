@@ -429,10 +429,6 @@ export function getAppHTML(opts: AppTemplateOptions): string {
         
         <div class="main-content">
           <aside class="toolbar" id="toolbar" aria-label="Map tools">
-            <label class="tool-names-toggle" title="Show or hide the names beneath tool icons">
-                <input type="checkbox" id="check-show-tool-names" checked>
-                <span>Show tool names</span>
-            </label>
             <!-- 1. TOOLS GROUP -->
             <div class="tool-group">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">

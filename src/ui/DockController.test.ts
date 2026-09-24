@@ -7,8 +7,7 @@ import {
 
 const initialState: ToolSurfaceState = {
     activeTool: 'select',
-    open: true,
-    showToolNames: true
+    open: true
 };
 
 describe('tool surface state', () => {
@@ -20,8 +19,7 @@ describe('tool surface state', () => {
 
         expect(result).toEqual({
             activeTool: 'view_pan',
-            open: true,
-            showToolNames: true
+            open: true
         });
     });
 
@@ -33,13 +31,8 @@ describe('tool surface state', () => {
         expect(closed.open).toBe(false);
     });
 
-    it('show tool names changes labels without changing the options dock', () => {
-        const hiddenNames = reduceToolSurfaceState(initialState, { type: 'set-names-visible', value: false });
-        expect(hiddenNames).toEqual({ ...initialState, showToolNames: false });
-    });
-
     it('allows required apply and cancel actions to open the surface', () => {
-        const hidden = { ...initialState, open: false, showToolNames: false };
+        const hidden = { ...initialState, open: false };
         expect(reduceToolSurfaceState(hidden, { type: 'require-actions' }).open).toBe(true);
     });
 

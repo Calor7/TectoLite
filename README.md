@@ -12,7 +12,7 @@ The retired guided-event automation prototype, mesh runtime, and unused elevatio
 
 ## Download
 
-[Download the latest portable Windows app](https://github.com/Calor7/TectoLite/releases/latest/download/TectoLite-Portable-1.0.12-x64.exe), or browse [all TectoLite releases](https://github.com/Calor7/TectoLite/releases).
+[Download the latest portable Windows app](https://github.com/Calor7/TectoLite/releases/latest/download/TectoLite-Portable-1.0.13-x64.exe), or browse [all TectoLite releases](https://github.com/Calor7/TectoLite/releases).
 
 ## Development
 

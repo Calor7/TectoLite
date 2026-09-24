@@ -4,6 +4,12 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.0.13 - 2026-09-24
+
+### Changed
+
+- Tool names are always visible in the toolbar. Removed the Show tool names toggle and its saved preference.
+
 ## 1.0.12 - 2026-09-24
 
 ### Improved

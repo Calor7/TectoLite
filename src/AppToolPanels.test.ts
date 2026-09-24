@@ -18,8 +18,9 @@ describe('contextual tool panels', () => {
         expect(html).toContain('id="fuse-controls"');
         expect(html).toContain('id="check-navigation-reachable"');
         expect(html).toContain('id="fuse-result-name"');
-        expect(html).toContain('id="check-show-tool-names" checked');
-        expect(html).toContain('<span>Show tool names</span>');
+        expect(html).not.toContain('id="check-show-tool-names"');
+        expect(html).toContain('<span class="tool-label">Select</span>');
+        expect(html).toContain('<span class="tool-label">Link</span>');
         expect(html).not.toContain('Show tool actions');
         expect(html).toContain('class="motion-unit">cm/yr</span>');
         expect(html).toContain('id="check-use-default-ui-colors" checked');
