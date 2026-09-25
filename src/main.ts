@@ -376,6 +376,7 @@ class TectoLiteApp {
                             this.updateExplorer();
                             this.updateUI();
                             this.syncUIToState();
+                            this.canvasManager?.resizeCanvas();
                             this.simulation?.setTime(this.state.world.currentTime);
                             this.canvasManager?.render();
                             this.setUnsaved(true); // restored content is not on disk yet
@@ -1940,6 +1941,7 @@ class TectoLiteApp {
                         this.updateExplorer();
                         this.updateUI();
                         this.syncUIToState();
+                        this.canvasManager?.resizeCanvas();
                         this.simulation?.setTime(this.state.world.currentTime);
                         this.canvasManager?.render();
 
@@ -1997,6 +1999,7 @@ class TectoLiteApp {
                     this.updateExplorer();
                     this.updateUI();
                     this.syncUIToState();
+                    this.canvasManager?.resizeCanvas();
                     this.canvasManager?.render();
 
                     // Merge import: append the file's camera views (cheap to delete if unwanted)
@@ -5868,6 +5871,7 @@ class TectoLiteApp {
         this.syncUIToState();
         this.timelineSystem?.render(null);
         this.setActiveTool(initialTool);
+        this.canvasManager?.resizeCanvas();
         this.canvasManager?.markDirty();
         this.simulation?.setTime(this.state.world.currentTime);
         this.showToast(message);

@@ -4,6 +4,13 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.1.2 - 2026-09-25
+
+### Fixed
+
+- Loading a project now adapts its saved camera to the current canvas size, keeping centered globes centered while preserving saved pan, zoom and rotation. This also applies to merged imports, recovered sessions and starting templates.
+- Viewport reconciliation no longer skips a newly loaded camera when the canvas backing store already has the correct dimensions.
+
 ## 1.1.1 - 2026-09-24
 
 - First published geological-timeline release. Run template validation per variant so Windows coverage instrumentation does not exhaust a shared five-second timeout. Includes all v1.1.0 functionality below.

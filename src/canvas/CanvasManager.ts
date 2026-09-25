@@ -9,7 +9,7 @@ import { perfMonitor } from '../utils/PerfMonitor';
 import { resolveFeatureTimelineOpacity, resolveLineRenderStyle, sortPlatesForRendering } from './renderStyles';
 import { FEATURE_ICON_DRAWERS } from './featureIcons';
 import { isMotionLinkActiveAtTime } from '../motion/LinkModel';
-import { resizeViewportAroundCanvasCenter } from './viewportResize';
+import { resizeCanvasToViewport } from './viewportResize';
 import { constrainViewTranslation, rotateViewport, translateViewport, type NavigationOptions } from './NavigationOptions';
 
 import { InputTool } from './tools/InputTool';
@@ -402,28 +402,10 @@ export class CanvasManager {
     }
 
     public resizeCanvas(): void {
-        const container = this.canvas.parentElement;
-        if (!container) return;
-        const rect = container.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        const nextWidth = Math.max(1, Math.floor(rect.width * dpr));
-        const nextHeight = Math.max(1, Math.floor(rect.height * dpr));
-        this.canvas.style.width = `${rect.width}px`;
-        this.canvas.style.height = `${rect.height}px`;
-        // Assigning either canvas dimension clears the backing store, even when
-        // the assigned value is unchanged. ResizeObserver can report many
-        // fractional layout steps while docks animate, so ignore no-op pixel
-        // sizes instead of repeatedly exposing a cleared canvas.
-        if (this.canvas.width === nextWidth && this.canvas.height === nextHeight) return;
-        this.canvas.width = nextWidth;
-        this.canvas.height = nextHeight;
-        this.ctx.scale(dpr, dpr);
-        this.setState(s => ({
-            ...s,
-            // Preserve the user's screen-space view offset when panels or the
-            // window resize, relative to the old and new canvas centers.
-            viewport: resizeViewportAroundCanvasCenter(s.viewport, rect.width, rect.height)
-        }));
+        const viewport = this.getState().viewport;
+        const resized = resizeCanvasToViewport(this.canvas, this.ctx, viewport, window.devicePixelRatio || 1);
+        if (!resized) return;
+        if (resized !== viewport) this.setState(s => ({ ...s, viewport: resized }));
         // Paint in the same task that cleared the backing store. Deferring this
         // to the next animation frame produces a visible black flash while a
         // sidebar is sliding.
