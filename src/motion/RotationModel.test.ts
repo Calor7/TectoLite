@@ -172,6 +172,56 @@ describe('segmentsRotation', () => {
 });
 
 describe('plateRotation', () => {
+    it('keeps a later-created slab aligned with a leader that has relative motion', () => {
+        const carrier = makePlate('carrier', { motionSegments: [seg(0, NORTH, 1)] });
+        const leader = makePlate('leader', {
+            linkedToPlateId: carrier.id, linkTime: 10,
+            motionSegments: [seg(0, [0, 0], 0.7), seg(35, [40, 20], 1.2)],
+        });
+        const plates = [carrier, leader];
+        const origin: Coordinate = [25, 30];
+        const at30 = pointPositionAt(leader, plates, origin, 10, 30);
+        const shape = { id: 'slab-shape', closed: true, points: [at30] };
+        const slab = makePlate('slab', {
+            birthTime: 30, linkedToPlateId: leader.id, linkTime: 30,
+            geometryStages: [{ time: 30, polygons: [shape], features: [] }],
+        });
+        plates.push(slab);
+        for (const time of [35, 50, 70]) {
+            const expected = pointPositionAt(leader, plates, origin, 10, time);
+            expectCoord(derivePlateGeometry(slab, plates, time).polygons[0].points[0], expected, 8);
+            expectCoord(pointPositionAt(leader, plates, expected, time, 30), at30, 8);
+        }
+    });
+
+    it('does not reset the linked reference frame when a geometry stage is inserted', () => {
+        const carrier = makePlate('carrier', { motionSegments: [seg(0, NORTH, 1)] });
+        const shape = { id: 'shape', closed: true, points: [[25, 30] as Coordinate] };
+        const leader = makePlate('leader', {
+            linkedToPlateId: carrier.id, linkTime: 0, unlinkTime: 60,
+            motionSegments: [seg(0, [0, 0], 0.7)],
+            geometryStages: [{ time: 0, polygons: [shape], features: [] }],
+        });
+        const plates = [carrier, leader];
+        const snapshot = derivePlateGeometry(leader, plates, 30);
+        const edited = { ...leader, geometryStages: [...leader.geometryStages, { time: 30, ...snapshot }] };
+        for (const time of [30, 50, 60, 70]) {
+            expectCoord(derivePlateGeometry(edited, [carrier, edited], time).polygons[0].points[0],
+                derivePlateGeometry(leader, plates, time).polygons[0].points[0], 8);
+        }
+    });
+
+    it('does not choose an arbitrary split child as the retired motion source', () => {
+        const retired = makePlate('retired', { deathTime: 20, motionSegments: [seg(0, NORTH, 1)] });
+        const children = [2, 3].map((rate, i) => makePlate(`child-${i}`, {
+            birthTime: 20, parentPlateId: retired.id, parentPlateIds: [retired.id],
+            motionSegments: [seg(20, NORTH, rate)],
+        }));
+        for (const ordered of [children, [...children].reverse()]) {
+            expectCoord(rotateCoordByQuat([0, 0], plateRotation(retired, [retired, ...ordered], 20, 30)), [10, 0]);
+        }
+    });
+
     it('delegates pre-birth time to the parent plate', () => {
         // Parent moves +1°/Ma from 0; child born at 50 moves +2°/Ma on its own.
         const parent = makePlate('parent', {

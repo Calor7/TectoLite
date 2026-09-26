@@ -4,6 +4,13 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.1.3 - 2026-09-26
+
+### Fixed
+
+- Ocean slabs added later stay aligned with linked leaders that combine inherited and relative motion. Inserting a geometry stage no longer resets the linked rotation frame.
+- Motion links to retired plates no longer choose an arbitrary split child as a fusion successor.
+
 ## 1.1.2 - 2026-09-25
 
 ### Fixed

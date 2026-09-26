@@ -289,6 +289,7 @@ export function plateRotation(
         if (plate.deathTime !== null && t1 > plate.deathTime + EPS) {
             const successor = allPlates.find(candidate =>
                 candidate.id !== plate.id
+                && (candidate.parentPlateIds?.length ?? 0) > 1
                 && candidate.parentPlateIds?.includes(plate.id)
                 && Math.abs(candidate.birthTime - plate.deathTime!) < EPS
             );
@@ -329,9 +330,20 @@ export function plateRotation(
             const qOwn = segmentsRotation(segments, undefined, from, to);
             const midpoint = from + (to - from) / 2;
             const inherits = midpoint + EPS >= linkStart && midpoint < linkEnd - EPS;
-            const qChunk = inherits
-                ? quatMultiply(plateRotation(linkParent, allPlates, from, to, visited), qOwn)
-                : qOwn;
+            let qChunk = qOwn;
+            if (inherits && qOwn === QUAT_IDENTITY) {
+                // Pure followers need only the parent's interval rotation.
+                qChunk = plateRotation(linkParent, allPlates, from, to, visited);
+            } else if (inherits) {
+                // Relative axes belong to the frame at link start (or birth
+                // for an inherited/undated link), not at the requested from.
+                // P(to) · O(from→to) · inverse(P(from)) preserves that frame
+                // when a slab, feature or geometry stage is anchored later.
+                const anchor = Math.max(plate.birthTime, linkStart);
+                const parentFrom = plateRotation(linkParent, allPlates, anchor, from, visited);
+                const parentTo = plateRotation(linkParent, allPlates, anchor, to, visited);
+                qChunk = quatMultiply(parentTo, quatMultiply(qOwn, quatConjugate(parentFrom)));
+            }
             q = quatMultiply(qChunk, q);
         }
         return q;
