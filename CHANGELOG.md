@@ -4,6 +4,16 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.1.4 - 2026-10-01
+
+### Fixed
+
+- Selecting or clearing selection in large projects no longer constructs thousands of hidden history editors. History and Explorer Actions show 50 entries per page, preserving access to the complete saved history.
+- Selection, import, undo/redo, and camera resizing avoid duplicate panel rebuilds.
+- Timeline scrubbing checks geometry without formatting every historical coordinate. Small geometry and motion edits now invalidate the derivation cache correctly.
+- Long motion histories advance through segments once instead of repeatedly rescanning earlier segments; rotation calculations no longer sort unrelated geometry stages.
+- Updated Electron and compatible dependency patches to pass the release security audit.
+
 ## 1.1.3 - 2026-09-26
 
 ### Fixed

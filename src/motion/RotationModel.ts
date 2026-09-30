@@ -217,18 +217,15 @@ export function segmentsRotation(
 
     let q = QUAT_IDENTITY;
     let t = t0;
+    let segmentIndex = 0;
     while (t < t1 - EPS) {
         // Active segment: last with time <= t (first segment extends backwards)
-        let active = sorted[0];
-        let next = t1;
-        for (const seg of sorted) {
-            if (seg.time <= t + EPS) {
-                active = seg;
-            } else {
-                next = Math.min(next, seg.time);
-                break;
-            }
+        // Walk forward once instead of rescanning every earlier segment.
+        while (segmentIndex + 1 < sorted.length && sorted[segmentIndex + 1].time <= t + EPS) {
+            segmentIndex++;
         }
+        const active = sorted[segmentIndex];
+        const next = Math.min(t1, sorted[segmentIndex + 1]?.time ?? t1);
         const dt = next - t;
         if (dt > EPS && active.eulerPole.rate !== 0) {
             const qSeg = quatFromAxisAngle(
@@ -305,7 +302,7 @@ export function plateRotation(
             }
         }
 
-        const { segments } = getMotionModel(plate);
+        const segments = plate.motionSegments;
         const linkParent = plate.linkedToPlateId
             ? allPlates.find(p => p.id === plate.linkedToPlateId)
             : undefined;

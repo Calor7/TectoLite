@@ -84,6 +84,7 @@ import { updateScenarioGuide } from './ui/ScenarioGuide';
 import { branchScenario } from './scenarios/ScenarioTimeline';
 import { bindProjectSettings, syncProjectSettings, type ProjectSettingEffect } from './ui/SettingsBindings';
 import { selectExplorerRange } from './ui/ExplorerSelection';
+import { collectExplorerActions, ExplorerActions } from './ui/ExplorerActions';
 import { escapeHtml } from './ui/safeHtml';
 import { createAutosaveStore, type AutosaveStore } from './persistence/AutosaveStore';
 import { renderHotkeyGuide } from './ui/hotkeys';
@@ -124,6 +125,7 @@ class TectoLiteApp {
     private hasUnsavedChanges: boolean = false; // Tracks edits since last save/load for the close guard
     private explorerFilter: string = ''; // Plate-name filter for the Explorer sidebar
     private explorerSelectionAnchorId: string | null = null;
+    private readonly explorerActions = new ExplorerActions();
     private cameraBookmarks: CameraView[] = [];
     private imageOverlayEditMode = false;
     private dockController: DockController | null = null;
@@ -193,8 +195,11 @@ class TectoLiteApp {
             canvas,
             () => this.state,
             (updater) => {
+                const previous = this.state;
                 this.state = updater(this.state);
-                this.updateUI(); // Centralized UI update
+                // Camera changes (including every frame of a dock resize) do
+                // not change Explorer, Properties or History.
+                if (this.state.world !== previous.world) this.updateUI();
                 this.canvasManager?.markDirty();
             },
             {
@@ -204,7 +209,7 @@ class TectoLiteApp {
                 onLabelSelect: (labelId, toggleContent) => this.handleLabelSelect(labelId, toggleContent),
                 onLabelMove: (labelId, offset) => this.handleLabelMove(labelId, offset),
                 onLabelAnchorMove: (labelId, anchor) => this.handleLabelAnchorMove(labelId, anchor),
-                onSelect: (plateId, featureId, featureIds, plumeId) => this.handleSelect(plateId, featureId, featureIds, plumeId),
+                onSelect: (plateId, featureId, featureIds, plumeId, edge) => this.handleSelect(plateId, featureId, featureIds, plumeId, edge),
                 onSplitApply: (points) => this.handleSplitApply(points),
                 onSplitPreviewChange: (active) => this.handleSplitPreviewChange(active),
                 onMotionChange: (plateId, pole, rate) => this.handleMotionChange(plateId, pole, rate),
@@ -373,7 +378,6 @@ class TectoLiteApp {
                                 this.cameraBookmarks = data.cameraViews;
                                 this.renderCameraViews();
                             }
-                            this.updateExplorer();
                             this.updateUI();
                             this.syncUIToState();
                             this.canvasManager?.resizeCanvas();
@@ -1938,7 +1942,6 @@ class TectoLiteApp {
                             activeFeatureType: (activeFeatureType as FeatureType) ?? this.state.activeFeatureType
                         };
 
-                        this.updateExplorer();
                         this.updateUI();
                         this.syncUIToState();
                         this.canvasManager?.resizeCanvas();
@@ -1996,7 +1999,6 @@ class TectoLiteApp {
                         this.state.viewport = importedViewport;
                     }
 
-                    this.updateExplorer();
                     this.updateUI();
                     this.syncUIToState();
                     this.canvasManager?.resizeCanvas();
@@ -2975,7 +2977,6 @@ class TectoLiteApp {
             : `Selected ${label.title}. Use the circle on its title to pin or collapse content.`);
         this.updateUI();
         this.canvasManager?.render();
-        this.timelineSystem?.render(null);
     }
 
     private handleLabelMove(labelId: string, offset: [number, number]): void {
@@ -3006,7 +3007,7 @@ class TectoLiteApp {
         this.canvasManager?.render();
     }
 
-    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null): void {
+    private handleSelect(plateId: string | null, featureId: string | null, featureIds: string[] = [], plumeId: string | null = null, edge: AppState['world']['selectedEdge'] = null): void {
         // Reset fusion/link state if switching away
         if (this.state.activeTool !== 'fuse') {
             this.fusionFirstPlateId = null;
@@ -3041,6 +3042,7 @@ class TectoLiteApp {
         }
 
         this.state.world.selectedLabelId = null;
+        this.state.world.selectedEdge = edge;
         if (plumeId) {
             this.state.world.selectedPlateId = null;
             this.state.world.selectedPlateIds = [];
@@ -3056,13 +3058,6 @@ class TectoLiteApp {
 
         this.updateUI();
         this.canvasManager?.render();
-
-        const plate = plateId ? this.state.world.plates.find(p => p.id === plateId) : null;
-        if (plate) {
-            this.timelineSystem?.render(plate);
-        } else {
-            this.timelineSystem?.render(null);
-        }
     }
 
 
@@ -3748,8 +3743,6 @@ class TectoLiteApp {
         this.updateHint(`Selected ${selectedIds.length} entities.`);
         this.updateUI();
         this.canvasManager?.render();
-        const plate = this.state.world.plates.find(candidate => candidate.id === targetId) ?? null;
-        this.timelineSystem?.render(plate);
     }
 
     private setEntityGroupOpacity(groupId: string, opacity: number): void {
@@ -4085,116 +4078,13 @@ class TectoLiteApp {
             list.appendChild(content);
         }
 
-        // --- 2. ACTIONS SECTION (Previously Events) ---
-        // Aggregate all plate events + user actions
-        const allEvents: { time: number, desc: string, plateName: string, plateId: string, type: string }[] = [];
-
-        const addAction = (time: number | undefined, desc: string, plate: TectonicPlate, type: string) => {
-            if (time === undefined || isNaN(time)) return;
-            allEvents.push({ time, desc, plateName: plate.name, plateId: plate.id, type });
-        };
-
-        this.state.world.plates.forEach(p => {
-            if (p.events) {
-                p.events.forEach(ev => {
-                    let desc: string = ev.type;
-                    if (ev.type === 'motion_change') desc = 'Motion Change';
-                    if (ev.type === 'split') desc = 'Plate Split';
-                    if (ev.type === 'fusion') desc = 'Fusion';
-                    addAction(ev.time, desc, p, ev.type);
-                });
-            }
-            // Also add creation time as event
-            addAction(p.birthTime, 'Created', p, 'created');
-
-            // Feature placements
-            p.features.forEach(f => {
-                if (typeof f.generatedAt === 'number') {
-                    const label = f.name ? `Feature Placed: ${f.name}` : `Feature Placed: ${f.type}`;
-                    addAction(f.generatedAt, label, p, 'feature');
-                }
-            });
-
-            // Plate edits: geometry stages after birth (keyframe-less model)
-            p.geometryStages?.slice(1).forEach(stage => {
-                addAction(stage.time, 'Plate Edited', p, 'plate_edit');
-            });
-
-
-        });
-
-        // Sort by time
-        allEvents.sort((a, b) => a.time - b.time);
-
-        const actionSection = this.createExplorerSection('Actions', 'events', allEvents.length);
+        const actions = collectExplorerActions(this.state.world.plates);
+        const actionSection = this.createExplorerSection('Actions', 'events', actions.length);
         list.appendChild(actionSection.header);
-
         if (this.explorerState.sections['events']) {
-            const actionContent = actionSection.content;
-            const filters = this.explorerState.actionFilters;
-            const filterRow = document.createElement('div');
-            filterRow.style.display = 'grid';
-            filterRow.style.gridTemplateColumns = '1fr 1fr';
-            filterRow.style.gap = '4px';
-            filterRow.style.marginBottom = '6px';
-
-            const createFilter = (key: string, label: string) => {
-                const wrapper = document.createElement('label');
-                wrapper.style.display = 'flex';
-                wrapper.style.alignItems = 'center';
-                wrapper.style.gap = '6px';
-                wrapper.style.cursor = 'pointer';
-                wrapper.style.fontSize = '12px';
-
-                const input = document.createElement('input');
-                input.type = 'checkbox';
-                input.checked = !!filters[key];
-                input.addEventListener('change', () => {
-                    this.explorerState.actionFilters[key] = input.checked;
-                    this.updateExplorer();
-                });
-
-                const span = document.createElement('span');
-                span.textContent = label;
-
-                wrapper.appendChild(input);
-                wrapper.appendChild(span);
-                filterRow.appendChild(wrapper);
-            };
-
-            createFilter('created', 'Created');
-            createFilter('motion_change', 'Motion');
-            createFilter('split', 'Split');
-            createFilter('fusion', 'Fusion');
-            createFilter('feature', 'Features');
-            createFilter('landmass_create', 'Landmass+');
-            createFilter('landmass_edit', 'Landmass Edit');
-            createFilter('plate_edit', 'Plate Edit');
-
-            actionContent.appendChild(filterRow);
-
-            const filteredEvents = allEvents.filter(ev => filters[ev.type] !== false);
-            if (filteredEvents.length === 0) {
-                const empty = document.createElement('p');
-                empty.className = 'empty-message';
-                empty.textContent = 'No actions recorded';
-                actionContent.appendChild(empty);
-            } else {
-                filteredEvents.forEach(ev => {
-                    const row = document.createElement('div');
-                    row.className = 'paint-stroke-item';
-                    row.style.cursor = 'pointer';
-                    row.innerText = `${ev.time.toFixed(1)} Ma: ${ev.desc} (${ev.plateName})`;
-
-                    // Click to select the plate involved in the action
-                    row.onclick = () => {
-                        this.handleSelect(ev.plateId, null);
-                    };
-
-                    actionContent.appendChild(row);
-                });
-            }
-            list.appendChild(actionContent);
+            this.explorerActions.render(actionSection.content, actions, this.explorerState.actionFilters,
+                plateId => this.handleSelect(plateId, null));
+            list.appendChild(actionSection.content);
         }
 
         prepareExplorerKeyboard(list, focusedEntityId);
@@ -4264,6 +4154,8 @@ class TectoLiteApp {
         this.renderPropertiesPanel();
         const panel = document.getElementById('properties-panel');
         if (panel) prepareFields(panel);
+        const plate = this.state.world.plates.find(candidate => candidate.id === this.state.world.selectedPlateId) ?? null;
+        this.timelineSystem?.render(plate);
     }
 
     private renderPropertiesPanel(): void {
@@ -4995,11 +4887,6 @@ class TectoLiteApp {
 
         // Bind feature property events
         this.bindFeatureEvents();
-
-        // Update Timeline Panel
-        if (this.timelineSystem) {
-            this.timelineSystem.render(plate);
-        }
     }
 
     private updateEdgePropertiesPanel(): void {
@@ -5758,7 +5645,6 @@ class TectoLiteApp {
             world: { ...this.state.world, plates: [...this.state.world.plates, dup] }
         };
         this.handleSelect(dup.id, null);
-        this.updateExplorer();
         this.updateUI();
         this.canvasManager?.render();
         this.showToast(`Duplicated "${plate.name}"`);
@@ -5772,11 +5658,6 @@ class TectoLiteApp {
             this.setUnsaved(true);
             this.updateUI();
             this.canvasManager?.render();
-            // Update timeline if visible
-            if (this.state.world.selectedPlateId) {
-                const p = this.state.world.plates.find(pl => pl.id === this.state.world.selectedPlateId);
-                this.timelineSystem?.render(p || null);
-            }
         }
         this.updateUndoRedoButtons();
     }
@@ -5789,11 +5670,6 @@ class TectoLiteApp {
             this.setUnsaved(true);
             this.updateUI();
             this.canvasManager?.render();
-            // Update timeline if visible
-            if (this.state.world.selectedPlateId) {
-                const p = this.state.world.plates.find(pl => pl.id === this.state.world.selectedPlateId);
-                this.timelineSystem?.render(p || null);
-            }
         }
         this.updateUndoRedoButtons();
     }
@@ -5869,7 +5745,6 @@ class TectoLiteApp {
         this.updateUndoRedoButtons();
         this.updateUI();
         this.syncUIToState();
-        this.timelineSystem?.render(null);
         this.setActiveTool(initialTool);
         this.canvasManager?.resizeCanvas();
         this.canvasManager?.markDirty();

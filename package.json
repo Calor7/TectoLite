@@ -1,7 +1,7 @@
 {
   "name": "tectolite",
   "private": true,
-  "version": "1.1.3",
+  "version": "1.1.4",
   "productName": "TectoLite",
   "description": "Tectonic Plate Simulation Engine",
   "author": "TectoLite Team",
@@ -36,7 +36,7 @@
     "@types/d3-geo": "^3.1.0",
     "@vitest/coverage-v8": "^4.1.11",
     "concurrently": "^9.2.1",
-    "electron": "^43.4.1",
+    "electron": "^43.7.7",
     "electron-builder": "^26.15.3",
     "eslint": "^10.4.1",
     "typescript": "~5.9.3",

@@ -11,6 +11,7 @@ import { FEATURE_ICON_DRAWERS } from './featureIcons';
 import { isMotionLinkActiveAtTime } from '../motion/LinkModel';
 import { resizeCanvasToViewport } from './viewportResize';
 import { constrainViewTranslation, rotateViewport, translateViewport, type NavigationOptions } from './NavigationOptions';
+import { dispatchSelection, type SelectEntity } from './SelectionDispatch';
 
 import { InputTool } from './tools/InputTool';
 import { PathInputTool } from './tools/PathInputTool';
@@ -25,7 +26,7 @@ export interface CanvasManagerCallbacks {
     onLabelSelect: (labelId: string, toggleContent: boolean) => void;
     onLabelMove: (labelId: string, offset: [number, number]) => void;
     onLabelAnchorMove: (labelId: string, anchor: Coordinate) => void;
-    onSelect: (plateId: string | null, featureId: string | null, featureIds?: string[], plumeId?: string | null) => void;
+    onSelect: SelectEntity;
     onSplitApply: (points: Coordinate[]) => void;
     onSplitPreviewChange: (active: boolean) => void;
     onMotionChange: (plateId: string, pole: Coordinate, rate: number) => void;
@@ -224,24 +225,7 @@ export class CanvasManager {
             return;
         }
 
-        if (mod.ctrl && hit?.featureId) {
-            const currentIds = state.world.selectedFeatureIds || [];
-            if (currentIds.includes(hit.featureId)) {
-                this.callbacks.onSelect(hit.plateId ?? state.world.selectedPlateId, null, currentIds.filter(id => id !== hit.featureId));
-            } else {
-                this.callbacks.onSelect(hit.plateId ?? state.world.selectedPlateId, null, [...currentIds, hit.featureId]);
-            }
-        } else if (state.activeTool === 'select' && hit && 'plumeId' in hit && hit.plumeId) {
-            this.callbacks.onSelect(null, null, [], hit.plumeId);
-        } else {
-            if (hit?.plateId) {
-                this.callbacks.onSelect(hit.plateId, hit.featureId ?? null);
-                this.setState(s => ({ ...s, world: { ...s.world, selectedEdge: hit.edge || null } }));
-            } else {
-                this.callbacks.onSelect(null, null);
-                this.setState(s => ({ ...s, world: { ...s.world, selectedEdge: null } }));
-            }
-        }
+        dispatchSelection(state, hit, mod.ctrl, this.callbacks.onSelect);
     }
 
     private handleBoxSelection(start: Point, end: Point, _mod: { shift: boolean }) {

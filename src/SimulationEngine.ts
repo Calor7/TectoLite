@@ -9,6 +9,7 @@ import {
 } from './utils/sphericalMath';
 import { pointPositionAt, derivePlateGeometry } from './motion/RotationModel';
 import { BoundarySystem } from './BoundarySystem';
+import { derivationStateSignature } from './motion/DerivationSignature';
 import { perfMonitor } from './utils/PerfMonitor';
 
 type DerivedPlatePayload = Pick<TectonicPlate, 'polygons' | 'features' | 'center'>;
@@ -61,7 +62,7 @@ export class SimulationEngine {
         const simSample = perfMonitor.beginPhase('sim');
         this.setState(state => {
             const { globalOptions } = state.world;
-            const derivationSignature = this.getDerivationStateSignature(state.world.plates);
+            const derivationSignature = derivationStateSignature(state.world.plates);
             // Recalculate ALL plates at the new time
             const deriveSample = perfMonitor.beginPhase('derive');
             let newPlates = state.world.plates.map(plate => {
@@ -141,7 +142,7 @@ export class SimulationEngine {
         this.setState(state => {
             const { globalOptions } = state.world;
             const newTime = state.world.currentTime + deltaMa;
-            const derivationSignature = this.getDerivationStateSignature(state.world.plates);
+            const derivationSignature = derivationStateSignature(state.world.plates);
 
             // Re-calculate ALL plates based on absolute time
             // This enables scrubbing/resetting.
@@ -1764,80 +1765,6 @@ export class SimulationEngine {
             if (oldestKey !== undefined) this.derivationCache.delete(oldestKey);
         }
         return result;
-    }
-
-    private getDerivationStateSignature(plates: TectonicPlate[]): string {
-        let hash = 2166136261;
-        const mixText = (value: string | undefined | null) => {
-            const text = value ?? '';
-            for (let i = 0; i < text.length; i++) {
-                hash ^= text.charCodeAt(i);
-                hash = Math.imul(hash, 16777619);
-            }
-        };
-        const mixNumber = (value: number | undefined | null) => {
-            mixText(value === undefined || value === null || !Number.isFinite(value) ? '' : value.toFixed(4));
-        };
-        const mixCoord = (coord: Coordinate | undefined | null) => {
-            if (!coord) {
-                mixText('');
-                return;
-            }
-            mixNumber(coord[0]);
-            mixNumber(coord[1]);
-        };
-        const mixCoords = (coords: Coordinate[] | undefined) => {
-            mixNumber(coords?.length ?? 0);
-            for (const coord of coords ?? []) mixCoord(coord);
-        };
-        const mixFeature = (feature: Feature) => {
-            mixText(feature.id);
-            mixText(feature.type);
-            mixCoord(feature.position);
-            mixCoord(feature.originalPosition);
-            mixNumber(feature.generatedAt);
-            mixNumber(feature.deathTime);
-            mixNumber(feature.rotation);
-            mixNumber(feature.scale);
-            mixText(feature.fillColor);
-            mixCoords(feature.polygon);
-        };
-
-        for (const plate of plates) {
-            mixText(plate.id);
-            mixText(plate.parentPlateId);
-            for (const parentId of plate.parentPlateIds ?? []) mixText(parentId);
-            mixText(plate.linkedToPlateId);
-            mixNumber(plate.linkTime);
-            mixNumber(plate.unlinkTime);
-            mixCoord(plate.relativeEulerPole?.position);
-            mixNumber(plate.relativeEulerPole?.rate);
-            mixNumber(plate.birthTime);
-            mixNumber(plate.deathTime);
-            mixNumber(plate.motionSegments.length);
-            for (const segment of plate.motionSegments) {
-                mixNumber(segment.time);
-                mixCoord(segment.eulerPole.position);
-                mixNumber(segment.eulerPole.rate);
-            }
-            mixNumber(plate.geometryStages.length);
-            for (const stage of plate.geometryStages) {
-                mixNumber(stage.time);
-                mixText(stage.interpolation);
-                mixNumber(stage.polygons.length);
-                for (const polygon of stage.polygons) {
-                    mixText(polygon.id);
-                    mixText(String(polygon.closed));
-                    mixCoords(polygon.points);
-                }
-                mixNumber(stage.features.length);
-                for (const feature of stage.features) mixFeature(feature);
-            }
-            mixNumber(plate.features.length);
-            for (const feature of plate.features) mixFeature(feature);
-        }
-
-        return (hash >>> 0).toString(36);
     }
 
     public calculatePlateAtTime(plate: TectonicPlate, time: number, allPlates: TectonicPlate[] = []): TectonicPlate {

@@ -40,9 +40,12 @@ const EVENT_ICONS: Record<TimelineEventItem['type'], UiIconName> = {
     shape: 'edit'
 };
 
+const EVENTS_PER_PAGE = 50;
+
 export class TimelineSystem {
     private container: HTMLElement | null = null;
     private plate: TectonicPlate | null = null;
+    private page = 0;
 
     constructor(private host: TimelineHost) { }
 
@@ -52,6 +55,7 @@ export class TimelineSystem {
 
     public render(plate: TectonicPlate | null) {
         if (!this.container) return;
+        if (plate?.id !== this.plate?.id) this.page = 0;
         this.plate = plate;
         this.container.innerHTML = '';
         const title = document.createElement('h3');
@@ -68,12 +72,13 @@ export class TimelineSystem {
             // Show all events from all plates
             const allPlates = this.host.getState().world.plates;
             allPlates.forEach((p: TectonicPlate) => {
-                events.push(...this.buildEventList(p));
+                for (const event of this.buildEventList(p)) events.push(event);
             });
             events.sort((a, b) => a.time - b.time);
         }
 
         if (events.length === 0) {
+            this.page = 0;
             const empty = document.createElement('div');
             empty.className = 'empty-message';
             empty.textContent = plate ? 'No history recorded.' : 'Select a plate to see its history.';
@@ -81,13 +86,39 @@ export class TimelineSystem {
             return;
         }
 
-        events.forEach(event => {
+        // Clearing a selection shows world history, which can contain tens of
+        // thousands of events. Keep the DOM bounded even when History is hidden.
+        this.page = Math.min(this.page, Math.ceil(events.length / EVENTS_PER_PAGE) - 1);
+        const start = this.page * EVENTS_PER_PAGE;
+        if (events.length > EVENTS_PER_PAGE) {
+            const navigation = document.createElement('nav');
+            navigation.className = 'timeline-pagination';
+            navigation.setAttribute('aria-label', 'History pages');
+            const previous = document.createElement('button');
+            previous.type = 'button';
+            previous.className = 'btn btn-secondary';
+            previous.textContent = 'Previous';
+            previous.disabled = this.page === 0;
+            previous.onclick = () => { this.page--; this.render(this.plate); };
+            const status = document.createElement('span');
+            status.textContent = `${start + 1}–${Math.min(start + EVENTS_PER_PAGE, events.length)} of ${events.length}`;
+            status.setAttribute('aria-live', 'polite');
+            const next = document.createElement('button');
+            next.type = 'button';
+            next.className = 'btn btn-secondary';
+            next.textContent = 'Next';
+            next.disabled = start + EVENTS_PER_PAGE >= events.length;
+            next.onclick = () => { this.page++; this.render(this.plate); };
+            navigation.append(previous, status, next);
+            this.container.appendChild(navigation);
+        }
+
+        events.slice(start, start + EVENTS_PER_PAGE).forEach(event => {
             const item = this.createEventItem(event);
             list.appendChild(item);
         });
 
         this.container.appendChild(list);
-        prepareFields(this.container);
     }
 
     private buildEventList(plate: TectonicPlate): TimelineEventItem[] {
@@ -208,7 +239,37 @@ export class TimelineSystem {
         header.appendChild(timeBadge);
         header.appendChild(label);
 
-        // Controls (Expandable)
+        if (event.isDeletable) {
+            const delBtn = document.createElement('button');
+            delBtn.className = 'btn-tiny-danger';
+            delBtn.textContent = '×';
+            delBtn.title = 'Delete Event';
+            delBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.deleteEvent(event);
+            };
+            header.appendChild(delBtn);
+        }
+
+        item.appendChild(header);
+        // Most history rows stay collapsed. Build and label their form controls
+        // only when opened, before mounting them into the live document.
+        let content: HTMLElement | null = null;
+        header.onclick = (e) => {
+            if ((e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).tagName !== 'INPUT') {
+                if (!content) {
+                    content = this.createEventContent(event);
+                    prepareFields(content);
+                    item.appendChild(content);
+                }
+                item.classList.toggle('expanded');
+            }
+        };
+
+        return item;
+    }
+
+    private createEventContent(event: TimelineEventItem): HTMLElement {
         const content = document.createElement('div');
         content.className = 'timeline-content';
 
@@ -278,30 +339,7 @@ export class TimelineSystem {
             content.appendChild(poleRow);
         }
 
-        // Delete Button
-        if (event.isDeletable) {
-            const delBtn = document.createElement('button');
-            delBtn.className = 'btn-tiny-danger';
-            delBtn.textContent = '×';
-            delBtn.title = 'Delete Event';
-            delBtn.onclick = (e) => {
-                e.stopPropagation();
-                this.deleteEvent(event);
-            };
-            header.appendChild(delBtn);
-        }
-
-        item.appendChild(header);
-        item.appendChild(content);
-
-        // Click to expand/collapse
-        header.onclick = (e) => {
-            if ((e.target as HTMLElement).tagName !== 'BUTTON' && (e.target as HTMLElement).tagName !== 'INPUT') {
-                item.classList.toggle('expanded');
-            }
-        };
-
-        return item;
+        return content;
     }
 
     private createInputRow(label: string, value: number, onChange: (val: number, cascade: boolean) => void, step = 1, showCascade = false): HTMLElement {
@@ -584,7 +622,6 @@ export class TimelineSystem {
         // rebaking — re-derive the world at the current time and re-render.
         this.host.setTime(this.host.getState().world.currentTime);
         this.host.updateUI();
-        this.render(this.plate);
     }
 
 }

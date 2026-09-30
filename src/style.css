@@ -1576,6 +1576,46 @@ body {
   border-bottom: 1px solid var(--border-default);
 }
 
+.timeline-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.explorer-action-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.explorer-action-filters label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.explorer-action {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.timeline-pagination .btn {
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
 .timeline-list {
   padding: var(--space-sm);
   display: flex;

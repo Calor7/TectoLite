@@ -48,6 +48,27 @@ const expectCoord = (actual: Coordinate, expected: Coordinate, digits = 6) => {
     expect(actual[1]).toBeCloseTo(expected[1], digits);
 };
 
+describe('long segment histories', () => {
+    it('visits motion boundaries without repeatedly scanning the full prefix', () => {
+        let timeReads = 0;
+        const count = 1000;
+        const segments = Array.from({ length: count }, (_, time) => ({
+            get time() { timeReads++; return time; },
+            eulerPole: { position: NORTH, rate: 0.01 },
+        }));
+        const rotation = segmentsRotation(segments, undefined, 0, count);
+        expectCoord(rotateCoordByQuat([0, 0], rotation), [10, 0]);
+        expect(timeReads).toBeLessThan(count * 25);
+    });
+
+    it('preserves last-wins duplicate boundaries, unsorted input and backwards motion', () => {
+        const segments = [seg(10, NORTH, 2), seg(0, NORTH, 1), seg(10, NORTH, 3), seg(20, NORTH, 4)];
+        expectCoord(rotateCoordByQuat([0, 0], segmentsRotation(segments, undefined, -5, 25)), [65, 0]);
+        expectCoord(rotateCoordByQuat([65, 0], segmentsRotation(segments, undefined, 25, -5)), [0, 0]);
+        expect(segments.map(segment => segment.time)).toEqual([10, 0, 10, 20]);
+    });
+});
+
 describe('quaternion path matches Rodrigues rotation', () => {
     it('rotateCoordByQuat equals rotatePoint for the same axis/angle', () => {
         const p: Coordinate = [25, -40];
