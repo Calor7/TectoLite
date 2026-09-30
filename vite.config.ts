@@ -8,6 +8,15 @@ export default defineConfig({
     define: {
         __APP_VERSION__: JSON.stringify(pkg.version)
     },
+    server: {
+        // Generated saves and Windows packages can be huge or temporarily locked.
+        // They are not source files and must not trigger reloads or watcher crashes.
+        watch: { ignored: ['**/output/**', '**/release/**'] }
+    },
+    optimizeDeps: {
+        // The default HTML crawl also traverses packaged Chromium licenses.
+        entries: ['index.html']
+    },
     build: {
         outDir: 'dist',
         assetsDir: 'assets',
