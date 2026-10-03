@@ -1,7 +1,7 @@
 {
   "name": "tectolite",
   "private": true,
-  "version": "1.1.4",
+  "version": "1.1.5",
   "productName": "TectoLite",
   "description": "Tectonic Plate Simulation Engine",
   "author": "TectoLite Team",
@@ -13,9 +13,9 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "check:electron": "node --check electron-main.cjs && node --check preload.cjs",
-    "test": "vitest run",
+    "test": "vitest run src",
     "test:coverage": "vitest run --config vitest.release.config.ts --coverage",
-    "test:watch": "vitest",
+    "test:watch": "vitest src",
     "lint": "eslint src",
     "build": "tsc && vite build",
     "verify": "npm run lint && npm run typecheck && npm run check:electron && npm run test:scenario-data && npm run test && npm run build",
@@ -51,5 +51,10 @@
     "d3-geo-projection": "^4.0.0",
     "polygon-clipping": "^0.15.7",
     "sql.js": "^1.10.3"
+  },
+  "overrides": {
+    "app-builder-lib": {
+      "@electron/get": "^5.1.0"
+    }
   }
 }

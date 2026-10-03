@@ -5,6 +5,7 @@ export default defineConfig({
         __APP_VERSION__: JSON.stringify('test')
     },
     test: {
+        include: ['src/**/*.test.ts'],
         // .agent contains its own utility test harness, not TectoLite tests.
         exclude: ['**/.agent/**', '**/node_modules/**', '**/dist/**'],
         coverage: {

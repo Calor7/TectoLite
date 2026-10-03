@@ -2,6 +2,8 @@
 
 Tagged pushes (`v*`) verify the application on Windows, macOS, and Linux, then publish the supported Windows packages. The workflow audits the complete npm dependency tree, creates an unpacked Electron app on every platform, and smoke-tests an export from the packaged Linux app. Windows release files must be non-empty and receive a SHA-256 manifest before they are uploaded.
 
+The packaging downloader override requires Node.js 22.12 or newer. It removes the obsolete cached HTTP downloader from electron-builder; keep the override until its upstream dependency is updated.
+
 ## Package targets
 
 - Windows: NSIS installer and portable executable

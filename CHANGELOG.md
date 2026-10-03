@@ -4,6 +4,14 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+## 1.1.5 - 2026-10-03
+
+### Fixed
+
+- Lines and polygons can follow each other with the Link tool and Motion links controls. Linked objects inherit their leader's motion, including later motion edits.
+- Restored the Follow control for all drawn line types. Experimental ocean crust connections remain a separate optional action.
+- Removed the vulnerable cached-download dependency from the Windows packaging toolchain, and limited application test discovery to source tests.
+
 ## 1.1.4 - 2026-10-01
 
 ### Fixed
