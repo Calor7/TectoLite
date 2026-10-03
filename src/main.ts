@@ -2529,11 +2529,7 @@ class TectoLiteApp {
         setText('link-workflow-time', `${this.state.world.currentTime.toFixed(1)} Ma`);
         setText('link-workflow-source', linkSource ?? 'Choose on map or in Explorer');
         setText('link-workflow-target', linkTarget ?? (linkSource ? 'Choose on map or in Explorer' : 'Waiting for leader'));
-        const sourcePlate = this.state.world.plates.find(plate => plate.id === this.activeLinkSourceId);
-        const targetPlate = this.state.world.plates.find(plate => plate.id === this.activeLinkTargetId);
-        setText('link-workflow-result', sourcePlate?.type === 'rift' || targetPlate?.type === 'rift'
-            ? 'This creates or removes a rift-generation connection; it does not inherit motion.'
-            : `The follower follows the leader exactly from ${this.state.world.currentTime.toFixed(1)} Ma.`);
+        setText('link-workflow-result', `The follower follows the leader exactly from ${this.state.world.currentTime.toFixed(1)} Ma.`);
 
         const fuseSource = plateName(this.fusionFirstPlateId);
         const fuseTarget = plateName(this.fusionSecondPlateId);
@@ -3203,115 +3199,6 @@ class TectoLiteApp {
         this.activeLinkTargetId = childId;
         this.syncToolOptionControls();
 
-        // --- NEW: Rift Connection Logic ---
-        // Check if either the "Parent" (Source) or "Child" (Target) is a Rift
-        // Case A: Source is Rift, Target is Plate -> Connect Plate to Rift
-        // Case B: Source is Plate, Target is Rift -> Connect Plate to Rift
-
-        const isParentRift = parentPlate.type === 'rift';
-        const isChildRift = plate.type === 'rift';
-
-        if (isParentRift || isChildRift) {
-            // Validate: One must be rift, one must be plate (not rift-rift or plate-plate)
-            if (isParentRift && isChildRift) {
-                this.showToast("Cannot link two Rifts directly.");
-                this.activeLinkSourceId = null;
-                this.activeLinkTargetId = null;
-                this.updateHint("Choose the leader on the map or in Explorer");
-                this.syncToolOptionControls();
-                return;
-            }
-
-            // Identify which is the Rift and which is the Plate
-            const rift = isParentRift ? parentPlate : plate;
-            const tectonicPlate = isParentRift ? plate : parentPlate; // The non-rift one
-
-            // Check if already connected
-            const currentConnections = tectonicPlate.connectedRiftIds || [];
-            const isConnected = currentConnections.includes(rift.id);
-
-            if (isConnected) {
-                // Disconnect
-                this.showModal({
-                    title: `Disconnect Rift`,
-                    content: `Disconnect <strong>${escapeHtml(tectonicPlate.name)}</strong> from Rift <strong>${escapeHtml(rift.name)}</strong>?<br><br>
-                    <small>Oceanic crust generation will stop for this plate at this rift.</small>`,
-                    buttons: [
-                        {
-                            text: "Disconnect",
-                            onClick: () => {
-                                this.pushState();
-                                const newConnections = currentConnections.filter(id => id !== rift.id);
-                                this.state.world.plates = this.state.world.plates.map(p =>
-                                    p.id === tectonicPlate.id
-                                        ? { ...p, connectedRiftIds: newConnections }
-                                        : p
-                                );
-                                this.updateHint(`Disconnected ${tectonicPlate.name} from ${rift.name}`);
-                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-                                this.activeLinkSourceId = null;
-                                this.activeLinkTargetId = null;
-                                this.state.world.selectedPlateId = tectonicPlate.id; // Select the plate
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
-                        },
-                        {
-                            text: 'Cancel',
-                            isSecondary: true,
-                            onClick: () => {
-                                this.activeLinkSourceId = null;
-                                this.activeLinkTargetId = null;
-                                this.updateHint("Select first plate/rift");
-                                this.syncToolOptionControls();
-                            }
-                        }
-                    ]
-                });
-            } else {
-                // Connect
-                this.showModal({
-                    title: `Connect to Rift`,
-                    content: `Connect <strong>${escapeHtml(tectonicPlate.name)}</strong> to Rift <strong>${escapeHtml(rift.name)}</strong>?<br><br>
-                    <small>This enables <strong>Oceanic Crust Generation</strong> between them. Motion is NOT inherited.</small>`,
-                    buttons: [
-                        {
-                            text: "Connect",
-                            onClick: () => {
-                                this.pushState();
-                                const newConnections = [...currentConnections, rift.id];
-                                this.state.world.plates = this.state.world.plates.map(p =>
-                                    p.id === tectonicPlate.id
-                                        ? { ...p, connectedRiftIds: newConnections }
-                                        : p
-                                );
-                                this.updateHint(`Connected ${tectonicPlate.name} to ${rift.name}`);
-                                setTimeout(() => { if (this.state.activeTool !== 'link') this.updateHint(null); }, 2000);
-                                this.activeLinkSourceId = null;
-                                this.activeLinkTargetId = null;
-                                this.state.world.selectedPlateId = tectonicPlate.id;
-                                this.updateUI();
-                                this.canvasManager?.render();
-                            }
-                        },
-                        {
-                            text: 'Cancel',
-                            isSecondary: true,
-                            onClick: () => {
-                                this.activeLinkSourceId = null;
-                                this.activeLinkTargetId = null;
-                                this.updateHint("Select first plate/rift");
-                                this.syncToolOptionControls();
-                            }
-                        }
-                    ]
-                });
-            }
-            return;
-        }
-
-        // --- END NEW LOGIC (Standard Plate Linking continues below) ---
-
         const linkTime = this.state.world.currentTime;
         if ([plate, parentPlate].some(candidate => linkTime < candidate.birthTime || (candidate.deathTime !== null && linkTime >= candidate.deathTime))) {
             this.showToast('Both leader and follower must be alive at the linking time. Change the time or choose another plate.');
@@ -3332,8 +3219,21 @@ class TectoLiteApp {
             return;
         }
 
+        // Ocean generation is a separate optional action. Every line type uses
+        // the same leader/follower motion workflow as polygons.
+        const rift = parentPlate.type === 'rift' ? parentPlate : plate.type === 'rift' ? plate : null;
+        const crustPlate = rift === parentPlate ? plate : parentPlate;
+        const riftConnectionActions: ModalOptions['buttons'] = rift && crustPlate.type !== 'rift'
+            && (this.state.world.globalOptions.oceanCrustStrategy === 'banded' || crustPlate.connectedRiftIds.includes(rift.id))
+            ? [{
+                text: 'Ocean crust connection…',
+                subtext: 'Configure experimental crust generation between this line and polygon.',
+                isSecondary: true,
+                onClick: () => { window.setTimeout(() => this.confirmRiftConnection(rift.id, crustPlate.id), 0); }
+            }] : [];
+
         if (isLinked) {
-            this.confirmUnlinkPlate(childId);
+            this.confirmUnlinkPlate(childId, riftConnectionActions);
         } else {
             // A saved relationship may begin later on the timeline. It is not
             // active yet, so using Link here reschedules its start instead of
@@ -3359,6 +3259,7 @@ class TectoLiteApp {
                             this.activeLinkSourceId = null;
                             this.activeLinkTargetId = null;
                             this.state.world.selectedPlateId = childId;
+                            this.simulation?.setTime(this.state.world.currentTime);
                             this.updateUI();
                             this.canvasManager?.render();
                         }
@@ -3374,6 +3275,7 @@ class TectoLiteApp {
                             window.setTimeout(() => this.handleLinkTool(parentId), 0);
                         }
                     },
+                    ...riftConnectionActions,
                     {
                         text: 'Cancel',
                         isSecondary: true,
@@ -3392,7 +3294,48 @@ class TectoLiteApp {
 
 
 
-    private confirmUnlinkPlate(childId: string): void {
+    private confirmRiftConnection(riftId: string, plateId: string): void {
+        const rift = this.state.world.plates.find(candidate => candidate.id === riftId);
+        const plate = this.state.world.plates.find(candidate => candidate.id === plateId);
+        if (!rift || !plate || rift.type !== 'rift' || plate.type === 'rift') return;
+        const isConnected = plate.connectedRiftIds.includes(riftId);
+        this.showModal({
+            title: isConnected ? 'Disconnect ocean crust generation' : 'Connect ocean crust generation',
+            content: `${isConnected ? 'Disconnect' : 'Connect'} <strong>${escapeHtml(plate.name)}</strong> ${isConnected ? 'from' : 'to'} <strong>${escapeHtml(rift.name)}</strong>?<br><br>
+                <small>This ${isConnected ? 'stops' : 'enables'} experimental time-banded ocean crust generation. Motion following is configured separately.</small>`,
+            buttons: [
+                {
+                    text: isConnected ? 'Disconnect' : 'Connect',
+                    onClick: () => {
+                        this.pushState();
+                        this.state.world.plates = this.state.world.plates.map(candidate => {
+                            if (candidate.id !== plateId) return candidate;
+                            const connectedRiftIds = candidate.connectedRiftIds.filter(id => id !== riftId);
+                            if (!isConnected) connectedRiftIds.push(riftId);
+                            return { ...candidate, connectedRiftIds };
+                        });
+                        this.activeLinkSourceId = null;
+                        this.activeLinkTargetId = null;
+                        this.state.world.selectedPlateId = plateId;
+                        this.updateUI();
+                        this.canvasManager?.render();
+                        this.updateHint(`${isConnected ? 'Disconnected' : 'Connected'} ocean crust generation for ${plate.name} and ${rift.name}`);
+                    }
+                },
+                {
+                    text: 'Cancel', isSecondary: true,
+                    onClick: () => {
+                        this.activeLinkSourceId = null;
+                        this.activeLinkTargetId = null;
+                        this.updateHint('Choose the leader on the map or in Explorer');
+                        this.syncToolOptionControls();
+                    }
+                }
+            ]
+        });
+    }
+
+    private confirmUnlinkPlate(childId: string, alternateActions: ModalOptions['buttons'] = []): void {
         const child = this.state.world.plates.find(plate => plate.id === childId);
         const parent = this.state.world.plates.find(plate => plate.id === child?.linkedToPlateId);
         const time = this.state.world.currentTime;
@@ -3422,6 +3365,7 @@ class TectoLiteApp {
                         this.updateHint(`${child.name} stopped following ${parent.name} at ${time.toFixed(1)} Ma.`);
                     }
                 },
+                ...alternateActions,
                 { text: 'Cancel', isSecondary: true, onClick: () => undefined }
             ]
         });

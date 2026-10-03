@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createWorldFromCurrentTime } from './export';
 import { fusePlates } from './FusionTool';
 import { CURRENT_SAVE_VERSION } from './migration';
+import { SimulationEngine } from './SimulationEngine';
 import { linkPlateAtTime } from './motion/LinkModel';
 import { derivePlateGeometry, pointPositionAt } from './motion/RotationModel';
 import { parseProjectText } from './ProjectIO';
@@ -82,6 +83,39 @@ function expectCoordinateClose(actual: Coordinate, expected: Coordinate): void {
 }
 
 describe('project lifecycle integration', () => {
+    it.each(['divergent', 'convergent', 'transform', 'generic'] as const)('keeps a %s line and polygon together in either follow direction', lineType => {
+        for (const lineIsLeader of [false, true]) {
+            const line = plate('line', polygon('line-shape', 0, false), [], { type: 'rift', lineType });
+            const land = plate('land', polygon('land-shape', 0));
+            const leader = lineIsLeader ? line : land;
+            const follower = lineIsLeader ? land : line;
+            follower.motionSegments = [{ time: 0, eulerPole: { position: [0, 90], rate: 2 } }];
+            const linked = linkPlateAtTime(follower, leader.id, 5);
+            let state = appState([leader, linked], 5);
+            const simulation = new SimulationEngine(() => state, updater => { state = updater(state); });
+            const position = (id: string): Coordinate => state.world.plates.find(candidate => candidate.id === id)!.polygons[0].points[0];
+
+            // Linking preserves the follower's earlier independent history and position.
+            simulation.setTime(3);
+            expectCoordinateClose(position(follower.id), [6, 0]);
+            simulation.setTime(5);
+            expectCoordinateClose(position(follower.id), [10, 0]);
+            simulation.setTime(15);
+            expectCoordinateClose(position(leader.id), [15, 0]);
+            expectCoordinateClose(position(follower.id), [20, 0]);
+
+            // A later leader edit carries both shapes, including after save/load.
+            state.world.plates.find(candidate => candidate.id === leader.id)!.motionSegments.push({
+                time: 20, eulerPole: { position: [0, 90], rate: 3 },
+            });
+            state.world = restore(state.world);
+            simulation.setTime(25);
+            expectCoordinateClose(position(leader.id), [35, 0]);
+            expectCoordinateClose(position(follower.id), [40, 0]);
+            expect(state.world.plates.find(candidate => candidate.id === 'line')!.polygons[0].closed).toBe(false);
+        }
+    });
+
     it('preserves a linked orogeny, custom line styling, features, and fused motion through save migration', () => {
         const mountain = feature('mountain-a', 'mountain', [2, 2]);
         const island = feature('island-b', 'island', [5, 2]);

@@ -46,7 +46,7 @@ export function renderMotionLinks(plate: TectonicPlate, plates: readonly Tectoni
         ? `<div class="motion-links-label">Followed by <span class="motion-links-count">${followers.length}</span></div>
             <div class="motion-link-followers">${followers.map(child => linkRow(child, child, time)).join('')}</div>`
         : '';
-    const followAction = plate.type === 'rift' ? '' : `<button type="button" class="btn btn-secondary follow-another-plate" data-follow-plate="${escapeHtml(plate.id)}">Follow another plate…</button>`;
+    const followAction = `<button type="button" class="btn btn-secondary follow-another-plate" data-follow-plate="${escapeHtml(plate.id)}">Follow another plate…</button>`;
     return follows || followedBy || followAction
         ? `<section class="motion-links" aria-label="Motion links">${follows}${followedBy}${followAction}</section>` : '';
 }

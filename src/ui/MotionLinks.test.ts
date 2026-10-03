@@ -11,6 +11,13 @@ function plate(id: string, overrides: Partial<TectonicPlate> = {}): TectonicPlat
 }
 
 describe('selected plate motion links', () => {
+    it.each(['divergent', 'convergent', 'transform', 'generic'] as const)('offers motion following for a %s line', lineType => {
+        const line = plate('line', { type: 'rift', lineType });
+        const html = renderMotionLinks(line, [line], 0);
+        expect(html).toContain('data-follow-plate="line"');
+        expect(html).toContain('Follow another plate…');
+    });
+
     it('selects the parent but unlinks the child in a Follows row', () => {
         const parent = plate('parent');
         const child = plate('child', { linkedToPlateId: parent.id, linkTime: 599 });
