@@ -12,6 +12,7 @@ import { isMotionLinkActiveAtTime } from '../motion/LinkModel';
 import { resizeCanvasToViewport } from './viewportResize';
 import { constrainViewTranslation, rotateViewport, translateViewport, type NavigationOptions } from './NavigationOptions';
 import { dispatchSelection, type SelectEntity } from './SelectionDispatch';
+import { resolveEdgeSegment, resolveSelectedEdge } from './EdgeRefs';
 
 import { InputTool } from './tools/InputTool';
 import { PathInputTool } from './tools/PathInputTool';
@@ -991,9 +992,24 @@ export class CanvasManager {
 
             this.drawLabels(state);
             if (this.callbacks.isImageOverlayEditing?.()) this.drawImageOverlayEditor(state);
+        } catch (error) {
+            // render() runs inside the animation loop. An error escaping here
+            // would stop that loop for good and freeze the whole map, so report
+            // it and let the next frame try again.
+            this.reportRenderError(error);
         } finally {
             perfMonitor.endPhase(perfSample);
         }
+    }
+
+    private lastRenderErrorMessage: string | null = null;
+
+    private reportRenderError(error: unknown): void {
+        const message = error instanceof Error ? error.message : String(error);
+        // A broken frame repeats on every redraw; log each distinct failure once.
+        if (message === this.lastRenderErrorMessage) return;
+        this.lastRenderErrorMessage = message;
+        console.error('Map frame failed to draw; continuing with the next frame.', error);
     }
 
     private drawGraticule(path: any, style: CSSStyleDeclaration) {
@@ -1316,6 +1332,10 @@ export class CanvasManager {
     }
 
     private drawDerivedRiftLines(state: AppState, path: any) {
+        // Continuous reconstruction already renders joined, velocity-classified
+        // ridge/transform entities. The legacy midpoint overlay would duplicate
+        // them and mislabel converging or stationary boundaries as ridges.
+        if (state.world.globalOptions.oceanCrustStrategy === 'continuous') return;
         const RIFT_COLOR = '#ff4444';
         this.ctx.strokeStyle = RIFT_COLOR;
         this.ctx.lineWidth = 2;
@@ -1797,35 +1817,21 @@ export class CanvasManager {
     }
 
     private drawSelectedEdge(): void {
-        const state = this.getState();
-        const selectedEdge = state.world.selectedEdge;
-        if (!selectedEdge) return;
+        // The selection can outlive the edge (shape edited, or a timeline stage
+        // with fewer points), so only draw an edge that still exists.
+        const selected = resolveSelectedEdge(this.getState().world);
+        if (!selected) return;
 
-        const plate = state.world.plates.find(p => p.id === selectedEdge.plateId);
-        if (!plate) return;
+        const edgeGeo = { type: 'LineString' as const, coordinates: selected.segment };
+        const path = this.projectionManager.getPathGenerator();
 
-        const poly = plate.polygons[selectedEdge.polyIndex];
-        if (!poly) return;
-
-        const p1 = poly.points[selectedEdge.vertexIndex];
-        const isClosed = poly.closed !== false;
-        const nextIdx = isClosed
-            ? (selectedEdge.vertexIndex + 1) % poly.points.length
-            : selectedEdge.vertexIndex + 1;
-
-        if (nextIdx < poly.points.length) {
-            const p2 = poly.points[nextIdx];
-            const edgeGeo = { type: 'LineString' as const, coordinates: [p1, p2] };
-            const path = this.projectionManager.getPathGenerator();
-
-            this.ctx.save();
-            this.ctx.beginPath();
-            path(edgeGeo as any);
-            this.ctx.strokeStyle = '#00ffff'; // Cyan color for selected edge
-            this.ctx.lineWidth = 5;
-            this.ctx.stroke();
-            this.ctx.restore();
-        }
+        this.ctx.save();
+        this.ctx.beginPath();
+        path(edgeGeo as any);
+        this.ctx.strokeStyle = '#00ffff'; // Cyan color for selected edge
+        this.ctx.lineWidth = 5;
+        this.ctx.stroke();
+        this.ctx.restore();
     }
 
     private drawEditHighlights() {
@@ -1877,15 +1883,10 @@ export class CanvasManager {
         if (hoveredEdge && hoveredEdge.plateId === plateId) {
             const poly = polygons[hoveredEdge.polyIndex];
             if (poly) {
-                const p1 = poly.points[hoveredEdge.vertexIndex];
-                const isClosed = poly.closed !== false;
-                const nextIdx = isClosed
-                    ? (hoveredEdge.vertexIndex + 1) % poly.points.length
-                    : hoveredEdge.vertexIndex + 1;
-                if (nextIdx < poly.points.length) {
-                    const p2 = poly.points[nextIdx];
+                const segment = resolveEdgeSegment(polygons, hoveredEdge.polyIndex, hoveredEdge.vertexIndex);
+                if (segment) {
                     // Draw highlighted edge as geodesic arc
-                    const edgeGeo = { type: 'LineString' as const, coordinates: [p1, p2] };
+                    const edgeGeo = { type: 'LineString' as const, coordinates: segment };
                     this.ctx.save();
                     this.ctx.beginPath();
                     path(edgeGeo as any);
@@ -1910,8 +1911,8 @@ export class CanvasManager {
         // --- HOVERED VERTEX HIGHLIGHT ---
         if (hoveredVertex && hoveredVertex.plateId === plateId) {
             const poly = polygons[hoveredVertex.polyIndex];
-            if (poly) {
-                const pt = poly.points[hoveredVertex.vertexIndex];
+            const pt = poly?.points[hoveredVertex.vertexIndex];
+            if (pt) {
                 const proj = this.projectionManager.project(pt);
                 if (proj) {
                     this.ctx.beginPath();

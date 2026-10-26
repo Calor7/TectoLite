@@ -1021,13 +1021,64 @@ body {
   bottom: var(--space-lg);
   left: 50%;
   transform: translateX(-50%);
-  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
   background: rgba(0, 0, 0, 0.8);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
+  /* Only the button takes clicks; the text lets clicks through to the map. */
   pointer-events: none;
+}
+
+.canvas-hint[hidden] {
   display: none;
+}
+
+.canvas-hint-text {
+  flex: 1 1 auto;
+}
+
+.canvas-hint-toggle {
+  pointer-events: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 24px;
+  min-height: 24px;
+  justify-content: center;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.canvas-hint-toggle:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.canvas-hint-toggle:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.canvas-hint.minimized {
+  padding: 2px;
+}
+
+.canvas-hint.minimized .canvas-hint-text {
+  display: none;
+}
+
+.canvas-hint.minimized .canvas-hint-toggle {
+  padding: 2px var(--space-sm);
 }
 
 /* Properties Panel */

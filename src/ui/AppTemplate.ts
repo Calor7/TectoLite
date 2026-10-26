@@ -148,10 +148,10 @@ export function getAppHTML(opts: AppTemplateOptions): string {
                             <label for="ocean-crust-strategy" style="display:block; font-size: 12px; color:var(--text-secondary); margin-bottom:3px;">Strategy</label>
                             <select id="ocean-crust-strategy" class="tool-select" style="width:100%; font-size: 12px;">
                                 <option value="off" ${g.oceanCrustStrategy === 'off' || !g.oceanCrustStrategy ? 'selected' : ''}>Off</option>
-                                <option value="continuous" ${g.oceanCrustStrategy === 'continuous' ? 'selected' : ''}>Continuous Split-Rift Fill</option>
+                                <option value="continuous" ${g.oceanCrustStrategy === 'continuous' ? 'selected' : ''}>Mid-Ocean Ridges + Seafloor</option>
                                 <option value="banded" ${g.oceanCrustStrategy === 'banded' ? 'selected' : ''}>Time-Banded Rift Crust</option>
                             </select>
-                            <div style="font-size: 12px; color:var(--text-secondary); margin-top:3px; line-height:1.3;">Continuous uses split-created rift axes. Banded supports sibling and older rift projects and may add many polygons.</div>
+                            <div style="font-size: 12px; color:var(--text-secondary); margin-top:3px; line-height:1.3;">Ridges follow split-created boundaries, with new seafloor on spreading segments. Heightmap exports include cooling and ridge relief. Banded supports older rift projects.</div>
                         </div>
                         
                         <div style="padding: 2px 8px 4px 8px; display: flex; align-items: center; justify-content: space-between;">
@@ -722,7 +722,7 @@ export function getAppHTML(opts: AppTemplateOptions): string {
 
           <main class="canvas-container" style="flex:1; display:flex; position: relative;">
             <canvas id="main-canvas" style="flex:1;"></canvas>
-            <div class="canvas-hint" id="canvas-hint"></div>
+            <div class="canvas-hint" id="canvas-hint" hidden></div>
             <div id="cursor-coords" style="position: absolute; bottom: 6px; right: 10px; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-secondary); background: rgba(0,0,0,0.35); padding: 2px 6px; border-radius: 3px; pointer-events: none;"></div>
           </main>
           

@@ -27,7 +27,7 @@ describe('application settings template', () => {
         const continuousHtml = renderSettings('continuous');
 
         expect(defaultHtml).toContain('<option value="off" selected>Off</option>');
-        expect(continuousHtml).toContain('<option value="continuous" selected>Continuous Split-Rift Fill</option>');
+        expect(continuousHtml).toContain('<option value="continuous" selected>Mid-Ocean Ridges + Seafloor</option>');
         expect(continuousHtml).not.toContain('<option value="banded" selected>');
     });
 

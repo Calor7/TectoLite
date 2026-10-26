@@ -45,7 +45,8 @@ src/
 │
 ├── systems/                         # Simulation and export support systems
 │   ├── TimelineSystem.ts            #   Plate-history UI + keyframe management
-│   └── HeightmapGenerator.ts        #   Heightmap rasterization for export
+│   ├── MidOceanRidgeSystem.ts       #   Derived continuous ridge and ocean-crust geometry
+│   └── HeightmapGenerator.ts        #   Relative heightmap rasterization and ridge relief
 │
 ├── motion/                          # Plate motion model
 │   ├── RotationModel.ts             #   Euler pole / rotation segment derivation
@@ -147,7 +148,8 @@ The simulation layer contains a mix of active systems and legacy compatibility p
 
 ### Oceanic crust behavior
 
-- `SimulationEngine.ts` contains two mutually exclusive strategies: continuous split-rift fill and time-banded rift crust.
+- `SimulationEngine.ts` exposes two mutually exclusive strategies: continuous mid-ocean ridge generation and time-banded rift crust. The continuous strategy delegates geometry and terrain estimates to `systems/MidOceanRidgeSystem.ts`.
+- Continuous crust carries its oldest and youngest formation times in `midOceanRidge` metadata; derived axis and transform lines carry their local full spreading rate. The age/depth and rate/relief curves are illustrative Earth-like calibrations, informed by [Worldbuilding Pasta](https://worldbuildingpasta.blogspot.com/2022/02/an-apple-pie-from-scratch-part-viib.html); [source notes](docs/research/mid-ocean-ridges.md) distinguish the blog guidance from implementation choices.
 - The strategy defaults to `off` and is intentionally labeled Experimental in the Settings menu.
 - Save migration v7 maps the retired independent toggles to the new strategy.
 
@@ -160,7 +162,8 @@ The simulation layer contains a mix of active systems and legacy compatibility p
 
 ### Elevation status
 
-- `HeightmapGenerator.ts` is active for export generation.
+- `HeightmapGenerator.ts` is active for export generation. It fills closed ocean surfaces with age-dependent depth shades, uses geographic buffers for slow-ridge valleys and fast-ridge crests, and lets d3 clip buffers at the antimeridian and globe horizon. Open boundary and transform lines are never filled as land.
+- Export shades are relative: deep water is 10, sea level is 100, and the continental base is 120. Ocean depth maps over a 0–6000 m range; continental features retain the existing illustrative bumps. The PNG is not a quantitative elevation DEM.
 - `ElevationSystem.ts` is absent — a mesh-editing runtime path is not wired into the app.
 
 ### Adding a new feature type

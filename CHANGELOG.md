@@ -4,6 +4,15 @@ All notable changes to TectoLite are documented here.
 
 ## Unreleased
 
+### Added
+
+- The hint at the bottom of the map minimizes to a small Hint button with one click, so it no longer covers the shapes being edited. Hovering the button shows the current hint, and the choice is remembered.
+- Experimental continuous ocean crust now derives mid-ocean ridges and seafloor from opening split boundaries. Young crust forms at spreading axes, deepens as it ages, and is offset by transforms. Heightmap exports shade ocean crust by age and include slow-ridge valleys and fast-ridge crests.
+
+### Fixed
+
+- A selected plate edge no longer freezes the map when that plate later has fewer points, after a vertex edit or on a timeline stage with a simpler shape. A drawing error now skips one frame instead of stopping all map updates.
+
 ## 1.1.5 - 2026-10-03
 
 ### Fixed

@@ -290,6 +290,13 @@ export interface TectonicPlate {
   slabId?: string;       // Unique ID for the slab (e.g. parentId_timeStep)
   riftAxisId?: string;   // Which RiftAxis generated this strip (axis-based path)
   junctionId?: string;   // Which TripleJunction generated this wedge fill (ephemeral, axis-based path)
+  /** Derived ridge/transform or seafloor strip. Times are crust formation times. */
+  midOceanRidge?: {
+    kind: 'axis' | 'crust' | 'transform';
+    fullSpreadingRateCmYr: number;
+    oldestBirthTime: number;
+    youngestBirthTime: number;
+  };
   elevation?: number; // Base elevation
 
   // Keyframe-less motion model (authoritative). All plates in state have these

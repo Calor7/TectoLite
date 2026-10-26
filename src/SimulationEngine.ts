@@ -1,16 +1,16 @@
-import { AppState, TectonicPlate, Coordinate, Feature, generateId, createDefaultMotionSegments, createDefaultGeometryStage, RiftAxis, Isochron, TripleJunction } from './types';
+import { AppState, TectonicPlate, Coordinate, Feature, generateId, createDefaultMotionSegments, createDefaultGeometryStage, RiftAxis } from './types';
 
 import {
     latLonToVector,
     vectorToLatLon,
     normalize,
     calculateSphericalCentroid,
-    nlerpCoord,
 } from './utils/sphericalMath';
 import { pointPositionAt, derivePlateGeometry } from './motion/RotationModel';
 import { BoundarySystem } from './BoundarySystem';
 import { derivationStateSignature } from './motion/DerivationSignature';
 import { perfMonitor } from './utils/PerfMonitor';
+import { deriveMidOceanRidges } from './systems/MidOceanRidgeSystem';
 
 type DerivedPlatePayload = Pick<TectonicPlate, 'polygons' | 'features' | 'center'>;
 
@@ -74,23 +74,17 @@ export class SimulationEngine {
                 return this.calculatePlateAtTimeCached(plate, time, state.world.plates, derivationSignature);
             });
 
-            // Re-derive axis-based ocean rings and junction wedges (same pipeline as update loop,
-            // but without recording: isochron/junction history is already stored in state)
-            const updatedRiftAxes = [...(state.world.riftAxes || [])];
-            let updatedJunctions: TripleJunction[] = [...(state.world.tripleJunctions || [])];
+            // Reconstruct from prescribed motion at the requested time, including
+            // direct scrubs. Playback snapshots never define the ocean geometry.
+            newPlates = newPlates.filter(p => !p.riftAxisId && !p.junctionId);
             if (globalOptions.oceanCrustStrategy === 'continuous') {
-                const res = this.deriveAxisGeometry(newPlates, updatedRiftAxes, updatedJunctions, time);
-                updatedJunctions = res.junctions;
-                newPlates = [...res.basePlates, ...res.derived];
-            } else {
-                // Automation off: still strip stale ephemeral plates from earlier frames
-                newPlates = newPlates.filter(p => !p.riftAxisId && !p.junctionId);
+                newPlates.push(...deriveMidOceanRidges(newPlates, state.world.riftAxes ?? [], time, globalOptions));
             }
             perfMonitor.endPhase(deriveSample);
 
             // Boundaries are derived only when their visualization is enabled.
             const boundaries = globalOptions.enableBoundaryVisualization
-                ? BoundarySystem.detectBoundaries(newPlates, time)
+                ? BoundarySystem.detectBoundaries(newPlates.filter(p => p.midOceanRidge?.kind !== 'axis' && p.midOceanRidge?.kind !== 'transform'), time)
                 : [];
 
             return {
@@ -98,8 +92,6 @@ export class SimulationEngine {
                 world: {
                     ...state.world,
                     plates: newPlates,
-                    riftAxes: updatedRiftAxes,
-                    tripleJunctions: updatedJunctions,
                     boundaries: boundaries,
                     currentTime: time
                 }
@@ -172,23 +164,14 @@ export class SimulationEngine {
 
             // --- AUTOMATED OCEANIC CRUST "EXPANDING RIFT" GENERATION ---
             const updatedRiftAxes: RiftAxis[] = [...(state.world.riftAxes || [])];
-            let updatedJunctions: TripleJunction[] = [...(state.world.tripleJunctions || [])];
             {
                 const interval = globalOptions.oceanicGenerationInterval || 25;
                 const newSlabs: TectonicPlate[] = [];
 
-                // ISOCHRON PATH (RiftAxis-based) â€” opt-in automation.
-                // The ephemeral-plate filter runs even when disabled so geometry
-                // derived before the option was switched off doesn't linger.
+                newPlates = newPlates.filter(p => !p.riftAxisId && !p.junctionId);
                 if (globalOptions.oceanCrustStrategy === 'continuous') {
-                    const res = this.deriveAxisGeometry(newPlates, updatedRiftAxes, updatedJunctions, newTime, interval);
-                    updatedJunctions = res.junctions;
-                    newPlates = res.basePlates;
-                    newSlabs.push(...res.derived);
-                } else {
-                    newPlates = newPlates.filter(p => !p.riftAxisId && !p.junctionId);
+                    newSlabs.push(...deriveMidOceanRidges(newPlates, updatedRiftAxes, newTime, globalOptions));
                 }
-
                 // Sibling + legacy time-banded generation is an alternative
                 // to continuous axis fill, never an additional simultaneous pass.
                 if (globalOptions.oceanCrustStrategy === 'banded') {
@@ -209,7 +192,7 @@ export class SimulationEngine {
 
             // Boundaries are derived only when their visualization is enabled.
             const boundaries = globalOptions.enableBoundaryVisualization
-                ? BoundarySystem.detectBoundaries(newPlates, newTime)
+                ? BoundarySystem.detectBoundaries(newPlates.filter(p => p.midOceanRidge?.kind !== 'axis' && p.midOceanRidge?.kind !== 'transform'), newTime)
                 : [];
 
             return {
@@ -217,8 +200,6 @@ export class SimulationEngine {
                 world: {
                     ...state.world,
                     plates: newPlates,
-                    riftAxes: updatedRiftAxes,
-                    tripleJunctions: updatedJunctions,
                     boundaries: boundaries,
                     currentTime: newTime
                 }
@@ -326,26 +307,6 @@ export class SimulationEngine {
         const outerR = this.resamplePolyline(outer, n);
         const innerR = this.resamplePolyline(inner, n);
         return [...outerR, ...[...innerR].reverse(), outerR[0]];
-    }
-
-    // Quick spherical area estimate (excess-angle method, returns steradians).
-    // Used to reject degenerate sliver polygons that cause visual artifacts.
-    private sphericalArea(pts: Coordinate[]): number {
-        if (pts.length < 3) return 0;
-        const vecs = pts.map(p => latLonToVector(p));
-        let sum = 0;
-        const n = vecs.length;
-        for (let i = 0; i < n; i++) {
-            const a = vecs[(i + n - 1) % n];
-            const b = vecs[i];
-            const c = vecs[(i + 1) % n];
-            // Cross products for normals of great-circle planes
-            const ab = normalize({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
-            const bc = normalize({ x: b.y * c.z - b.z * c.y, y: b.z * c.x - b.x * c.z, z: b.x * c.y - b.y * c.x });
-            const dot = Math.min(1, Math.max(-1, ab.x * bc.x + ab.y * bc.y + ab.z * bc.z));
-            sum += Math.PI - Math.acos(dot);
-        }
-        return Math.abs(sum - (n - 2) * Math.PI);
     }
 
     // --- AUTOMATED RIFT CRUST GENERATION ---
@@ -1088,633 +1049,6 @@ export class SimulationEngine {
         return newStrips;
     }
 
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // ISOCHRON-BASED OCEAN GENERATION â€” GPlates-inspired derived geometry
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-    private readonly RIFT_GRID_RESOLUTION = 2.0;
-
-    /** Extract rift-edge points from a plate polygon by groupId. */
-    private getAxisEdgePoints(polygon: import('./types').Polygon, edges: import('./types').EdgeMeta[]): Coordinate[] {
-        const pts: Coordinate[] = [];
-        for (const edge of edges) pts.push(polygon.points[edge.edgeIndex]);
-        if (edges.length > 0) {
-            const lastEdge = edges[edges.length - 1].edgeIndex;
-            pts.push(polygon.points[(lastEdge + 1) % polygon.points.length]);
-        }
-        return this.interpolatePoints(pts, this.RIFT_GRID_RESOLUTION);
-    }
-
-    /** Compute midline between two edge-point arrays (second array is reversed for correspondence). */
-    private computeAxisMidline(pts1: Coordinate[], pts2: Coordinate[]): Coordinate[] {
-        const n = Math.min(pts1.length, pts2.length);
-        return Array.from({ length: n }, (_, i) => {
-            const v1 = latLonToVector(pts1[i]);
-            const v2 = latLonToVector(pts2[n - 1 - i]);
-            return vectorToLatLon(normalize({ x: (v1.x + v2.x) / 2, y: (v1.y + v2.y) / 2, z: (v1.z + v2.z) / 2 }));
-        });
-    }
-
-    /** Find rift edges on a plate by groupId (no edge index references). */
-    private findAxisRiftEdges(plate: TectonicPlate, groupId: string): { poly: import('./types').Polygon; edges: import('./types').EdgeMeta[] } | null {
-        for (const poly of plate.polygons) {
-            if (!poly.edgeMeta) continue;
-            const edges = poly.edgeMeta.filter(e => e.sourceId === groupId && e.type === 'rift');
-            if (edges.length > 0) {
-                edges.sort((a, b) => a.edgeIndex - b.edgeIndex);
-                return { poly, edges };
-            }
-        }
-        return null;
-    }
-
-    /** Find a plate alive at a given time. */
-    private findAliveAt(plates: TectonicPlate[], plateId: string, time: number): TectonicPlate | undefined {
-        return plates.find(p =>
-            p.id === plateId && p.birthTime <= time &&
-            (p.deathTime === null || p.deathTime > time)
-        );
-    }
-
-    /**
-     * Record new isochrons on active rift axes.
-     * Each isochron is a midline snapshot stored in absolute coordinates at creation time.
-     */
-    private recordIsochrons(
-        axes: RiftAxis[],
-        currentPlates: TectonicPlate[],
-        currentTime: number,
-        interval: number
-    ): void {
-        for (const axis of axes) {
-            if (axis.state !== 'active') continue;
-
-            const plateA = this.findAliveAt(currentPlates, axis.plateIdA, currentTime);
-            const plateB = this.findAliveAt(currentPlates, axis.plateIdB, currentTime);
-            if (!plateA || !plateB) {
-                axis.state = 'dead';
-                axis.deathTime = currentTime;
-                continue;
-            }
-
-            const lastTime = axis.isochrons.length > 0
-                ? axis.isochrons[axis.isochrons.length - 1].time
-                : axis.birthTime;
-
-            let nextTime = lastTime + interval;
-            while (nextTime <= currentTime) {
-                // When isochron time predates a child plate's birth (after re-split),
-                // use the parent plate that was alive at that time instead.
-                const resolveForTime = (plate: TectonicPlate, t: number): TectonicPlate | undefined => {
-                    if (t >= plate.birthTime) return plate;
-                    if (plate.parentPlateId) {
-                        const parent = currentPlates.find(p => p.id === plate.parentPlateId);
-                        if (parent) return resolveForTime(parent, t);
-                    }
-                    return undefined;
-                };
-                const effectiveA = resolveForTime(plateA, nextTime);
-                const effectiveB = resolveForTime(plateB, nextTime);
-                if (!effectiveA || !effectiveB) { nextTime += interval; continue; }
-
-                // Compute plate positions at the isochron time
-                const plateAatT = this.calculatePlateAtTime(effectiveA, nextTime, currentPlates);
-                const plateBatT = this.calculatePlateAtTime(effectiveB, nextTime, currentPlates);
-
-                const infoA = this.findAxisRiftEdges(plateAatT, axis.groupId);
-                const infoB = this.findAxisRiftEdges(plateBatT, axis.groupId);
-                if (!infoA || !infoB) { nextTime += interval; continue; }
-
-                const ptsA = this.getAxisEdgePoints(infoA.poly, infoA.edges);
-                const ptsB = this.getAxisEdgePoints(infoB.poly, infoB.edges);
-                if (ptsA.length < 2 || ptsB.length < 2) { nextTime += interval; continue; }
-
-                const midline = this.computeAxisMidline(ptsA, ptsB);
-                axis.isochrons.push({ time: nextTime, polyline: midline });
-                nextTime += interval;
-            }
-        }
-    }
-
-    /**
-     * Record the official junction position at each isochron interval by averaging the
-     * junction-end midline points of all axes meeting at the junction.
-     * Must be called AFTER recordIsochrons so the freshly-recorded isochrons are available.
-     */
-    private recordJunctionHistory(
-        junctions: TripleJunction[],
-        axes: RiftAxis[],
-        currentTime: number,
-        interval: number
-    ): void {
-        for (const junction of junctions) {
-            if (junction.state === 'dead') continue;
-            if (!junction.junctionHistory) junction.junctionHistory = [];
-
-            const history = junction.junctionHistory;
-            const lastTime = history.length > 0 ? history[history.length - 1].time : junction.birthTime;
-            let nextTime = lastTime + interval;
-
-            while (nextTime <= currentTime) {
-                // Average the junction-end midline points of all axes at nextTime
-                const pts: Coordinate[] = [];
-                for (let ai = 0; ai < junction.axisIds.length; ai++) {
-                    const axis = axes.find(a => a.id === junction.axisIds[ai]);
-                    if (!axis || axis.state === 'dead') continue;
-                    const atStart = junction.axisJunctionAtStart[ai];
-                    // Use the most recent isochron at or before nextTime
-                    const iso = [...axis.isochrons].reverse().find(i => i.time <= nextTime);
-                    if (iso) {
-                        pts.push(atStart ? iso.polyline[0] : iso.polyline[iso.polyline.length - 1]);
-                    } else {
-                        // Fall back to birth polyline endpoint
-                        const birth = this.interpolatePoints(axis.birthPolyline, this.RIFT_GRID_RESOLUTION);
-                        pts.push(atStart ? birth[0] : birth[birth.length - 1]);
-                    }
-                }
-                if (pts.length >= 1) {
-                    history.push({ time: nextTime, point: calculateSphericalCentroid(pts) });
-                }
-                nextTime += interval;
-            }
-        }
-    }
-
-    /**
-     * Derive ephemeral ocean ring TectonicPlate objects from isochron history.
-     * These are destroyed and recreated each frame â€” no persistent state.
-     *
-     * When junctions are provided, the junction-end of each ring boundary polyline is
-     * clipped to the official junction position stored in `junctionHistory`. This ensures
-     * the ring's junction corner matches the wedge fill's corner exactly (Rec 6).
-     */
-    private deriveOceanRings(
-        axes: RiftAxis[],
-        currentPlates: TectonicPlate[],
-        currentTime: number,
-        junctions: TripleJunction[] = []
-    ): TectonicPlate[] {
-        const rings: TectonicPlate[] = [];
-        const crustColor = this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6';
-        const MIN_AREA = 1e-4;
-
-        // Build per-axis clip lookup from junctionHistory
-        // Maps axisId -> { atStart: whether junction is at polyline[0], history: sorted time->point }
-        type ClipEntry = { atStart: boolean; history: { time: number; pt: Coordinate }[] };
-        const axisClip = new Map<string, ClipEntry>();
-        for (const junction of junctions) {
-            const jh = junction.junctionHistory;
-            if (!jh || jh.length === 0) continue;
-            for (let ai = 0; ai < junction.axisIds.length; ai++) {
-                const axisId = junction.axisIds[ai];
-                if (axisClip.has(axisId)) continue; // first junction found wins
-                axisClip.set(axisId, {
-                    atStart: junction.axisJunctionAtStart[ai],
-                    history: jh.map(jv => ({ time: jv.time, pt: jv.point })),
-                });
-            }
-        }
-
-        // Replace the junction-end point of a polyline with the official average position
-        const clipJunctionEnd = (polyline: Coordinate[], axisId: string, time: number): Coordinate[] => {
-            const clip = axisClip.get(axisId);
-            if (!clip) return polyline;
-            const jPt = this.interpolateTimedPoint(clip.history, time);
-            if (!jPt) return polyline;
-            const clipped = [...polyline];
-            if (clip.atStart) clipped[0] = jPt;
-            else clipped[clipped.length - 1] = jPt;
-            return clipped;
-        };
-
-        for (const axis of axes) {
-            // Skip dead axes with no isochrons (nothing to render)
-            if (axis.isochrons.length === 0 && axis.state === 'dead') continue;
-
-            const plateA = this.findAliveAt(currentPlates, axis.plateIdA, currentTime);
-            const plateB = this.findAliveAt(currentPlates, axis.plateIdB, currentTime);
-            // Need at least one plate to derive rings (the other side may have been subducted)
-            if (!plateA && !plateB) continue;
-
-            // Build the boundary chain: birthPolyline, isochrons, [current midline]
-            // Each polyline has its junction end clipped to the official junction position.
-            const boundaries: Isochron[] = [
-                {
-                    time: axis.birthTime,
-                    polyline: clipJunctionEnd(
-                        this.interpolatePoints(axis.birthPolyline, this.RIFT_GRID_RESOLUTION),
-                        axis.id,
-                        axis.birthTime
-                    ),
-                }
-            ];
-            for (const iso of axis.isochrons) {
-                if (iso.time <= currentTime) {
-                    boundaries.push({
-                        time: iso.time,
-                        polyline: clipJunctionEnd(iso.polyline, axis.id, iso.time),
-                    });
-                }
-            }
-
-            // If active, add current live midline as the final boundary
-            let isGrowingRing = false;
-            if (axis.state === 'active' && plateA && plateB) {
-                const currentMidline = this.computeCurrentAxisMidline(axis, currentPlates, currentTime);
-                if (currentMidline) {
-                    boundaries.push({
-                        time: currentTime,
-                        polyline: clipJunctionEnd(currentMidline, axis.id, currentTime),
-                    });
-                    isGrowingRing = true;
-                }
-            }
-
-            // Build rings between consecutive boundaries
-            for (let i = 1; i < boundaries.length; i++) {
-                const outer = boundaries[i - 1]; // older, further from axis
-                const inner = boundaries[i];      // younger, closer to axis
-                const isGrowing = isGrowingRing && i === boundaries.length - 1;
-                const ringColor = isGrowing ? '#60a5fa' : crustColor;
-
-                // Side A
-                if (plateA) {
-                    const outerA = outer.polyline.map(p => this.applyPlateMotion(p, plateA, outer.time, currentTime, currentPlates));
-                    const innerA = inner.polyline.map(p => this.applyPlateMotion(p, plateA, inner.time, currentTime, currentPlates));
-                    const ringPoly = this.buildRing(outerA, innerA);
-                    if (ringPoly && this.sphericalArea(ringPoly) >= MIN_AREA) {
-                        rings.push(this.createEphemeralOceanPlate(ringPoly, plateA, axis, inner.time, currentTime, ringColor, 'A', isGrowing));
-                    }
-                }
-
-                // Side B
-                if (plateB) {
-                    const outerB = [...outer.polyline].reverse().map(p => this.applyPlateMotion(p, plateB, outer.time, currentTime, currentPlates));
-                    const innerB = [...inner.polyline].reverse().map(p => this.applyPlateMotion(p, plateB, inner.time, currentTime, currentPlates));
-                    const ringPoly = this.buildRing(outerB, innerB);
-                    if (ringPoly && this.sphericalArea(ringPoly) >= MIN_AREA) {
-                        rings.push(this.createEphemeralOceanPlate(ringPoly, plateB, axis, inner.time, currentTime, ringColor, 'B', isGrowing));
-                    }
-                }
-            }
-        }
-
-        return rings;
-    }
-
-    /** Create an ephemeral TectonicPlate for an ocean ring (destroyed each frame). */
-    private createEphemeralOceanPlate(
-        ringPoly: Coordinate[],
-        parentPlate: TectonicPlate,
-        axis: RiftAxis,
-        ringTime: number,
-        currentTime: number,
-        color: string,
-        side: 'A' | 'B',
-        isGrowing: boolean
-    ): TectonicPlate {
-        const suffix = isGrowing ? `_${side}_growing` : `_${side}_${ringTime}`;
-        return {
-            id: generateId(),
-            slabId: `${axis.id}_${axis.groupId}_iso${suffix}`,
-            riftAxisId: axis.id,
-            name: isGrowing ? `${parentPlate.name} Active Rift` : `${parentPlate.name} Crust ${ringTime}Ma`,
-            type: 'oceanic',
-            polygonType: 'oceanic_plate',
-            color,
-            zIndex: (parentPlate.zIndex || 0) - 1,
-            birthTime: ringTime,
-            deathTime: null,
-            visible: true,
-            locked: false,
-            center: calculateSphericalCentroid(ringPoly),
-            polygons: [{ id: generateId(), points: ringPoly, closed: true, edgeMeta: [] }],
-            features: [],
-            initialPolygons: [{ id: generateId(), points: ringPoly, closed: true }],
-            initialFeatures: [],
-            motionSegments: createDefaultMotionSegments(ringTime),
-            geometryStages: createDefaultGeometryStage(ringTime, [{ id: generateId(), points: ringPoly, closed: true }]),
-            events: [],
-            linkedToPlateId: parentPlate.id,
-            linkTime: currentTime,
-            connectedRiftIds: [],
-            siblingSystem: true,
-        };
-    }
-
-    // (generateAxisCrust removed â€” replaced by isochron-based recordIsochrons + deriveOceanRings)
-
-    /**
-     * Shared isochron-path pipeline used by both update() and setTime().
-     * Strips last frame's ephemeral axis/junction-derived plates, optionally records
-     * new isochron + junction history (pass recordInterval only when advancing the
-     * simulation â€” never when scrubbing), then derives fresh ocean rings and wedges.
-     */
-    private deriveAxisGeometry(
-        plates: TectonicPlate[],
-        axes: RiftAxis[],
-        junctions: TripleJunction[],
-        time: number,
-        recordInterval?: number
-    ): { basePlates: TectonicPlate[]; junctions: TripleJunction[]; derived: TectonicPlate[] } {
-        const basePlates = plates.filter(p => !p.riftAxisId && !p.junctionId);
-        if (recordInterval !== undefined) {
-            this.recordIsochrons(axes, basePlates, time, recordInterval);
-        }
-        const updatedJunctions = this.detectAndUpdateTripleJunctions(axes, basePlates, time, junctions);
-        if (recordInterval !== undefined) {
-            this.recordJunctionHistory(updatedJunctions, axes, time, recordInterval);
-        }
-        const rings = this.deriveOceanRings(axes, basePlates, time, updatedJunctions);
-        const wedges = this.deriveJunctionWedges(updatedJunctions, axes, basePlates, time);
-        return { basePlates, junctions: updatedJunctions, derived: [...rings, ...wedges] };
-    }
-
-    // â”€â”€ Triple Junction system â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    /**
-     * Interpolate a position from a time-sorted point history using normalized
-     * linear interpolation on the sphere. Times outside the recorded range clamp
-     * to the first/last entry. Returns null for an empty history.
-     */
-    private interpolateTimedPoint(history: { time: number; pt: Coordinate }[], t: number): Coordinate | null {
-        if (history.length === 0) return null;
-        if (t <= history[0].time) return history[0].pt;
-        if (t >= history[history.length - 1].time) return history[history.length - 1].pt;
-        const nextIdx = history.findIndex(p => p.time > t);
-        if (nextIdx <= 0) return null;
-        const prev = history[nextIdx - 1];
-        const next = history[nextIdx];
-        return nlerpCoord(prev.pt, next.pt, (t - prev.time) / (next.time - prev.time));
-    }
-
-    /**
-     * Compute the current live midline of a rift axis from its two flanking plates.
-     * Returns null when either plate is gone or the rift edges can't be resolved.
-     */
-    private computeCurrentAxisMidline(
-        axis: RiftAxis,
-        currentPlates: TectonicPlate[],
-        currentTime: number
-    ): Coordinate[] | null {
-        const plateA = this.findAliveAt(currentPlates, axis.plateIdA, currentTime);
-        const plateB = this.findAliveAt(currentPlates, axis.plateIdB, currentTime);
-        if (!plateA || !plateB) return null;
-        const infoA = this.findAxisRiftEdges(plateA, axis.groupId);
-        const infoB = this.findAxisRiftEdges(plateB, axis.groupId);
-        if (!infoA || !infoB) return null;
-        const ptsA = this.getAxisEdgePoints(infoA.poly, infoA.edges);
-        const ptsB = this.getAxisEdgePoints(infoB.poly, infoB.edges);
-        if (ptsA.length < 2 || ptsB.length < 2) return null;
-        const mid = this.computeAxisMidline(ptsA, ptsB);
-        return mid.length >= 2 ? mid : null;
-    }
-
-    /**
-     * Detect and update TripleJunction objects by comparing current midline endpoints
-     * of all active RiftAxes. Junctions are identified when two or more axes share an
-     * endpoint within ~0.5Â° tolerance. Returns an updated (possibly enlarged) junctions array.
-     */
-    private detectAndUpdateTripleJunctions(
-        axes: RiftAxis[],
-        currentPlates: TectonicPlate[],
-        currentTime: number,
-        junctions: TripleJunction[]
-    ): TripleJunction[] {
-        const JUNCTION_TOL = 1 - Math.cos(0.5 * Math.PI / 180);
-        const dotCoord = (a: Coordinate, b: Coordinate) => {
-            const va = latLonToVector(a); const vb = latLonToVector(b);
-            return va.x * vb.x + va.y * vb.y + va.z * vb.z;
-        };
-
-        // Compute current midline endpoint pair for each active axis
-        type AxisEndpoint = { axisId: string; atStart: boolean; point: Coordinate };
-        const endpoints: AxisEndpoint[] = [];
-        for (const axis of axes) {
-            if (axis.state === 'dead') continue;
-            const mid = this.computeCurrentAxisMidline(axis, currentPlates, currentTime);
-            if (!mid) continue;
-            endpoints.push({ axisId: axis.id, atStart: true,  point: mid[0] });
-            endpoints.push({ axisId: axis.id, atStart: false, point: mid[mid.length - 1] });
-        }
-
-        // Cluster nearby endpoints (each cluster = one junction candidate)
-        type Cluster = { axisIds: string[]; atStart: boolean[]; center: Coordinate };
-        const clusters: Cluster[] = [];
-        for (const ep of endpoints) {
-            let merged = false;
-            for (const cl of clusters) {
-                if (cl.axisIds.includes(ep.axisId)) continue; // one endpoint per axis per cluster
-                if (dotCoord(ep.point, cl.center) > 1 - JUNCTION_TOL) {
-                    cl.axisIds.push(ep.axisId);
-                    cl.atStart.push(ep.atStart);
-                    // Update center: spherical average of all axis endpoints in cluster
-                    const pts = cl.axisIds.map((id, i) => {
-                        const e = endpoints.find(e2 => e2.axisId === id && e2.atStart === cl.atStart[i]);
-                        return e ? e.point : cl.center;
-                    });
-                    cl.center = calculateSphericalCentroid(pts);
-                    merged = true;
-                    break;
-                }
-            }
-            if (!merged) clusters.push({ axisIds: [ep.axisId], atStart: [ep.atStart], center: ep.point });
-        }
-
-        // Only keep clusters with 2+ distinct axes (real junctions)
-        const junctionClusters = clusters.filter(cl => cl.axisIds.length >= 2);
-
-        const result: TripleJunction[] = [...junctions];
-        for (const cl of junctionClusters) {
-            const sortedIds = [...cl.axisIds].sort();
-            const existing = result.find(j => {
-                const jSorted = [...j.axisIds].sort();
-                return jSorted.length === sortedIds.length && jSorted.every((id, i) => id === sortedIds[i]);
-            });
-            if (existing) {
-                // Update atStart flags in case a re-split changed the axis ID ordering
-                existing.axisIds = cl.axisIds;
-                existing.axisJunctionAtStart = cl.atStart;
-                if (existing.state === 'dead') existing.state = 'active';
-            } else {
-                // Find the axis that was born latest â€” that determines the junction birth time
-                const birthTime = Math.max(
-                    ...cl.axisIds.map(id => axes.find(a => a.id === id)?.birthTime ?? 0)
-                );
-                result.push({
-                    id: generateId(),
-                    axisIds: cl.axisIds,
-                    axisJunctionAtStart: cl.atStart,
-                    birthTime,
-                    state: 'active',
-                });
-            }
-        }
-
-        // Mark junctions dead only when ALL their axes are dead.
-        // Do NOT kill a junction because its midline endpoints drifted apart â€” diverging
-        // plates spread continuously so endpoints always separate after birth. The junction
-        // was geometrically real when first detected; it stays alive until its rifts close.
-        for (const j of result) {
-            if (j.state === 'dead') continue;
-            const allDead = j.axisIds.every(id => axes.find(a => a.id === id)?.state === 'dead');
-            if (allDead) {
-                j.state = 'dead';
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * For each active junction, derive ephemeral wedge-fill TectonicPlate objects.
-     *
-     * OPTIMAL APPROACH: Instead of only generating fills at times present in BOTH axes
-     * (which leaves coverage gaps when axes have different isochron schedules), this
-     * implementation collects the UNION of all isochron times from both axes and uses
-     * spherical linear interpolation to compute the junction-end position for any axis
-     * at a time it doesn't have an exact isochron for.
-     *
-     * This guarantees continuous coverage from junction birth to current time with no gaps.
-     */
-    private deriveJunctionWedges(
-        junctions: TripleJunction[],
-        axes: RiftAxis[],
-        currentPlates: TectonicPlate[],
-        currentTime: number
-    ): TectonicPlate[] {
-        const wedges: TectonicPlate[] = [];
-        const crustColor = this.getState().world.globalOptions.oceanicCrustColor || '#3b82f6';
-        const MIN_AREA = 1e-5;
-
-        // Build the full junction-end history for an axis (absolute coords at each recorded time)
-        const getAxisEndHistory = (axis: RiftAxis, atStart: boolean): { time: number; pt: Coordinate }[] => {
-            const result: { time: number; pt: Coordinate }[] = [];
-            const birth = this.interpolatePoints(axis.birthPolyline, this.RIFT_GRID_RESOLUTION);
-            result.push({ time: axis.birthTime, pt: atStart ? birth[0] : birth[birth.length - 1] });
-            for (const iso of axis.isochrons) {
-                if (iso.time <= currentTime) {
-                    result.push({ time: iso.time, pt: atStart ? iso.polyline[0] : iso.polyline[iso.polyline.length - 1] });
-                }
-            }
-            return result; // sorted ascending by time (birthTime first, then isochrons in order)
-        };
-
-        // Interpolate the junction-end point at an arbitrary time (history is never empty:
-        // getAxisEndHistory always includes the birth entry, so the fallback never fires).
-        const interpolateEndAt = (pts: { time: number; pt: Coordinate }[], t: number): Coordinate =>
-            this.interpolateTimedPoint(pts, t) ?? pts[0].pt;
-
-        for (const junction of junctions) {
-            if (junction.state === 'dead') continue;
-            if (junction.axisIds.length < 2) continue;
-
-            for (let ai = 0; ai < junction.axisIds.length; ai++) {
-                for (let bi = ai + 1; bi < junction.axisIds.length; bi++) {
-                    const axisAB = axes.find(a => a.id === junction.axisIds[ai]);
-                    const axisBC = axes.find(a => a.id === junction.axisIds[bi]);
-                    if (!axisAB || !axisBC) continue;
-
-                    const atStartAB = junction.axisJunctionAtStart[ai];
-                    const atStartBC = junction.axisJunctionAtStart[bi];
-
-                    // Find the plate shared between the two axes (the "wedge plate")
-                    const sharedPlateId = [axisAB.plateIdA, axisAB.plateIdB].find(
-                        id => id === axisBC.plateIdA || id === axisBC.plateIdB
-                    );
-                    if (!sharedPlateId) continue;
-                    const sharedPlate = this.findAliveAt(currentPlates, sharedPlateId, currentTime);
-                    if (!sharedPlate) continue;
-
-                    const startTime = Math.max(axisAB.birthTime, axisBC.birthTime);
-
-                    // Full endpoint history for each axis
-                    const abHistory = getAxisEndHistory(axisAB, atStartAB);
-                    const bcHistory = getAxisEndHistory(axisBC, atStartBC);
-
-                    // UNION of all recorded times from both axes, clamped to [startTime, currentTime]
-                    const allTimes = [
-                        ...new Set([...abHistory.map(p => p.time), ...bcHistory.map(p => p.time)])
-                    ].filter(t => t >= startTime && t <= currentTime).sort((a, b) => a - b);
-
-                    if (allTimes.length === 0) continue;
-                    if (allTimes[0] > startTime) allTimes.unshift(startTime);
-
-                    // Current live midline endpoints (growing boundary â€” always recomputed)
-                    let currentEndAB: Coordinate | null = null;
-                    let currentEndBC: Coordinate | null = null;
-
-                    if (axisAB.state === 'active') {
-                        const mid = this.computeCurrentAxisMidline(axisAB, currentPlates, currentTime);
-                        if (mid) currentEndAB = atStartAB ? mid[0] : mid[mid.length - 1];
-                    }
-                    if (axisBC.state === 'active') {
-                        const mid = this.computeCurrentAxisMidline(axisBC, currentPlates, currentTime);
-                        if (mid) currentEndBC = atStartBC ? mid[0] : mid[mid.length - 1];
-                    }
-
-                    // Build boundary list: interpolated position at each union time step
-                    type WedgeBoundary = { time: number; pAB: Coordinate; pBC: Coordinate; isGrowing: boolean };
-                    const boundaries: WedgeBoundary[] = allTimes.map(t => ({
-                        time: t,
-                        pAB: this.applyPlateMotion(interpolateEndAt(abHistory, t), sharedPlate, t, currentTime, currentPlates),
-                        pBC: this.applyPlateMotion(interpolateEndAt(bcHistory, t), sharedPlate, t, currentTime, currentPlates),
-                        isGrowing: false,
-                    }));
-
-                    // Append growing boundary when both axes have a live midline
-                    const hasGrowing = currentEndAB !== null && currentEndBC !== null;
-                    if (hasGrowing) {
-                        boundaries.push({ time: currentTime, pAB: currentEndAB!, pBC: currentEndBC!, isGrowing: true });
-                    }
-
-                    if (boundaries.length < 2) continue;
-
-                    // Build wedge quad for each consecutive boundary pair
-                    for (let k = 1; k < boundaries.length; k++) {
-                        const outer = boundaries[k - 1];
-                        const inner = boundaries[k];
-                        // Wedge quad: outer.pAB â†’ outer.pBC â†’ inner.pBC â†’ inner.pAB
-                        // (pAB-side edge is shared with axis AB ring; pBC-side edge with axis BC ring)
-                        const ring = [outer.pAB, outer.pBC, inner.pBC, inner.pAB, outer.pAB];
-                        if (this.sphericalArea(ring) < MIN_AREA) continue;
-
-                        const color = inner.isGrowing ? '#60a5fa' : crustColor;
-                        wedges.push({
-                            id: generateId(),
-                            slabId: `${junction.id}_wedge_${axisAB.id}_${axisBC.id}_${inner.time}${inner.isGrowing ? '_growing' : ''}`,
-                            junctionId: junction.id,
-                            name: inner.isGrowing ? 'Junction Wedge Active' : `Junction Wedge ${inner.time}Ma`,
-                            type: 'oceanic',
-                            polygonType: 'oceanic_plate',
-                            color,
-                            zIndex: (sharedPlate.zIndex || 0) - 1,
-                            birthTime: inner.time,
-                            deathTime: null,
-                            visible: true,
-                            locked: false,
-                            center: calculateSphericalCentroid(ring),
-                            polygons: [{ id: generateId(), points: ring, closed: true, edgeMeta: [] }],
-                            features: [],
-                            initialPolygons: [{ id: generateId(), points: ring, closed: true }],
-                            initialFeatures: [],
-                            motionSegments: createDefaultMotionSegments(inner.time),
-                            geometryStages: createDefaultGeometryStage(inner.time, [{ id: generateId(), points: ring, closed: true }]),
-                            events: [],
-                            linkedToPlateId: sharedPlate.id,
-                            linkTime: currentTime,
-                            connectedRiftIds: [],
-                        });
-                    }
-                }
-            }
-        }
-        return wedges;
-    }
-
-    // Helper to move a point forward (or backward) in time according to a plate's
-    // motion. Delegates to the rotation model: own piecewise segments, pre-birth
-    // history through the parent plate, and linked motion within the link window.
     private applyPlateMotion(point: Coordinate, plate: TectonicPlate, fromTime: number, toTime: number, allPlates: TectonicPlate[]): Coordinate {
         return pointPositionAt(plate, allPlates, point, fromTime, toTime);
     }

@@ -1,3 +1,4 @@
+import { ridgePolylineAtTime } from './systems/MidOceanRidgeSystem';
 import { mountDialogSurface } from './ui/DialogSurface';
 import { setFieldError } from './ui/Fields';
 import { saveProjectFile, type ProjectSaveResult } from './persistence/ProjectSave';
@@ -319,10 +320,20 @@ export function createWorldFromCurrentTime(world: WorldState): WorldState {
     if (world.scenario) return trimScenarioTimeline(world);
     const currentTime = world.currentTime;
     const activePlates = world.plates.filter(plate =>
-        plate.birthTime <= currentTime
+        plate.midOceanRidge?.kind !== 'axis' && plate.midOceanRidge?.kind !== 'transform'
+        && plate.birthTime <= currentTime
         && (plate.deathTime === null || plate.deathTime > currentTime)
     );
     const activePlateIds = new Set(activePlates.map(plate => plate.id));
+    const capturedPlateIds = new Map<string, string>();
+    const reservedIds = new Set(activePlateIds);
+    for (const plate of activePlates) {
+        if (!plate.riftAxisId && !plate.junctionId) continue;
+        let id = `snapshot-${plate.id}`;
+        while (reservedIds.has(id)) id = `snapshot-${id}`;
+        reservedIds.add(id);
+        capturedPlateIds.set(plate.id, id);
+    }
 
     // A motion link intentionally keeps pointing at its historical parent
     // after fusion so the full-timeline model can compose pre- and post-fusion
@@ -334,6 +345,11 @@ export function createWorldFromCurrentTime(world: WorldState): WorldState {
 
         while (target && !activePlateIds.has(target.id)) {
             if (visited.has(target.id)) return undefined;
+            if (currentTime < target.birthTime && target.parentPlateId) {
+                visited.add(target.id);
+                target = world.plates.find(plate => plate.id === target!.parentPlateId);
+                continue;
+            }
             visited.add(target.id);
             if (target.deathTime === null) return undefined;
 
@@ -380,9 +396,20 @@ export function createWorldFromCurrentTime(world: WorldState): WorldState {
 
         return {
             ...plate,
+            id: capturedPlateIds.get(plate.id) ?? plate.id,
+            // Preserve older seafloor as a moving snapshot while a rebased
+            // ridge creates new strips from the current position.
+            riftAxisId: undefined,
+            junctionId: undefined,
+            locked: plate.riftAxisId || plate.junctionId ? false : plate.locked,
+            midOceanRidge: plate.midOceanRidge ? {
+                ...plate.midOceanRidge,
+                oldestBirthTime: plate.midOceanRidge.oldestBirthTime - currentTime,
+                youngestBirthTime: plate.midOceanRidge.youngestBirthTime - currentTime,
+            } : undefined,
             birthTime: 0,
             deathTime: plate.deathTime !== null ? plate.deathTime - currentTime : null,
-            linkedToPlateId: linkStillExists ? activeLinkTarget : undefined,
+            linkedToPlateId: linkStillExists ? (capturedPlateIds.get(activeLinkTarget!) ?? activeLinkTarget) : undefined,
             linkTime: linkStillExists
                 ? Math.max(0, (plate.linkTime ?? currentTime) - currentTime)
                 : undefined,
@@ -412,22 +439,21 @@ export function createWorldFromCurrentTime(world: WorldState): WorldState {
         .filter(axis => axis.birthTime <= currentTime
             && axis.state !== 'dead'
             && (axis.deathTime === undefined || axis.deathTime > currentTime)
-            && activePlateIds.has(axis.plateIdA)
-            && activePlateIds.has(axis.plateIdB))
+            && !!resolveActiveLinkTarget(axis.plateIdA)
+            && !!resolveActiveLinkTarget(axis.plateIdB))
         .map(axis => {
             const latestRecorded = [...axis.isochrons]
                 .filter(isochron => isochron.time <= currentTime)
                 .sort((left, right) => right.time - left.time)[0];
             return {
                 ...axis,
-                birthPolyline: latestRecorded?.polyline ?? axis.birthPolyline,
+                plateIdA: resolveActiveLinkTarget(axis.plateIdA)!,
+                plateIdB: resolveActiveLinkTarget(axis.plateIdB)!,
+                birthPolyline: ridgePolylineAtTime(world.plates, axis, currentTime, world.riftAxes, world.globalOptions.oceanicGenerationInterval) ?? latestRecorded?.polyline ?? axis.birthPolyline,
                 birthTime: 0,
                 frozenTime: axis.frozenTime !== undefined ? Math.max(0, axis.frozenTime - currentTime) : undefined,
                 deathTime: axis.deathTime !== undefined ? axis.deathTime - currentTime : undefined,
-                isochrons: axis.isochrons
-                    .filter(isochron => isochron.time > currentTime)
-                    .map(isochron => ({ ...isochron, time: isochron.time - currentTime }))
-                    .sort((left, right) => left.time - right.time),
+                isochrons: [],
             };
         });
     const activeAxisIds = new Set(riftAxes.map(axis => axis.id));
@@ -445,8 +471,11 @@ export function createWorldFromCurrentTime(world: WorldState): WorldState {
                 ...label,
                 anchor: pointPositionAt(plate, world.plates, label.anchor, label.anchorTime, currentTime),
                 anchorTime: 0,
+                attachedPlateId: capturedPlateIds.get(label.attachedPlateId) ?? label.attachedPlateId,
             };
         }),
+        selectedPlateId: world.selectedPlateId ? capturedPlateIds.get(world.selectedPlateId) ?? world.selectedPlateId : null,
+        selectedPlateIds: (world.selectedPlateIds ?? []).map(id => capturedPlateIds.get(id) ?? id),
         riftAxes,
         tripleJunctions: (world.tripleJunctions || [])
             .filter(junction => junction.birthTime <= currentTime

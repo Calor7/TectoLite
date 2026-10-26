@@ -31,6 +31,8 @@ import {
     ImageOverlay
 } from './types';
 import { CanvasManager } from './canvas/CanvasManager';
+import { resolveSelectedEdge } from './canvas/EdgeRefs';
+import { CanvasHint } from './ui/CanvasHint';
 import { SimulationEngine } from './SimulationEngine';
 import { exportToPNG, exportToJSON, parseImportFile, showImportDialog, showUnifiedExportDialog } from './export';
 import { splitPlate } from './SplitTool';
@@ -129,6 +131,7 @@ class TectoLiteApp {
     private cameraBookmarks: CameraView[] = [];
     private imageOverlayEditMode = false;
     private dockController: DockController | null = null;
+    private canvasHint: CanvasHint | null = null;
     private toolPreferences: ToolPreferences = loadToolPreferences();
     private readonly autosaveStore: AutosaveStore;
     private autosaveWritePending = false;
@@ -176,6 +179,8 @@ class TectoLiteApp {
             document.body.setAttribute('data-theme', savedTheme);
         }
         document.querySelector<HTMLDivElement>('#app')!.innerHTML = this.getHTML();
+        const hintElement = document.getElementById('canvas-hint');
+        if (hintElement) this.canvasHint = new CanvasHint(hintElement, localStorage);
         const themeIcon = document.querySelector<HTMLElement>('#btn-theme-toggle [data-theme-icon]');
         if (themeIcon) themeIcon.innerHTML = uiIcon(savedTheme === 'light' ? 'sun' : 'moon');
         let motionLabelOptions: MotionLabelOptions = { ...DEFAULT_MOTION_LABEL_OPTIONS };
@@ -615,17 +620,7 @@ class TectoLiteApp {
     private updateHint(text: string | null): void {
         if (text !== null) this.activeToolText = text;
 
-        const showHints = this.state.world.globalOptions.showHints !== false;
-
-        // Update Canvas Hint
-        const hint = document.getElementById('canvas-hint');
-        if (!hint) return;
-        if (showHints && text) {
-            hint.textContent = text;
-            hint.style.display = 'block';
-        } else {
-            hint.style.display = 'none';
-        }
+        this.canvasHint?.show(text, this.state.world.globalOptions.showHints !== false);
     }
 
     private async saveProject(): Promise<void> {
@@ -4844,17 +4839,13 @@ class TectoLiteApp {
             return;
         }
 
-        const plate = this.state.world.plates.find(p => p.id === selectedEdge.plateId);
-        if (!plate) {
+        // Hide the panel when the selected edge no longer exists at this time.
+        const resolved = resolveSelectedEdge(this.state.world);
+        if (!resolved) {
             panel.style.display = 'none';
             return;
         }
-
-        const poly = plate.polygons[selectedEdge.polyIndex];
-        if (!poly) {
-            panel.style.display = 'none';
-            return;
-        }
+        const { plate, polygon: poly } = resolved;
 
         panel.style.display = 'flex';
         panel.style.flexDirection = 'column';
@@ -5246,7 +5237,7 @@ class TectoLiteApp {
 
             // Check if this plate should be deleted
             const isOceanic = processedPlate.type === 'oceanic';
-            const isAxisDerived = !!processedPlate.riftAxisId || !!processedPlate.junctionId;
+            const isAxisDerived = !!processedPlate.riftAxisId || !!processedPlate.junctionId || processedPlate.midOceanRidge?.kind === 'crust';
             // Use >= to include the plate currently being born/active at this exact timestep
             const isFuture = processedPlate.birthTime >= currentTime;
 

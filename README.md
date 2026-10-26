@@ -6,7 +6,9 @@ TectoLite is a visual tectonic-plate simulation editor for designing plates, ass
 
 TectoLite 1.1 provides the core editing, simulation, undo/redo, project save/load, project templates, image overlays, and export workflows. Saved projects are migrated forward when the file format changes.
 
-Oceanic crust generation is experimental. It is disabled by default and appears under **Settings → Experimental**. The feature can create large or unexpected geometry, so save the project before enabling it.
+Oceanic crust generation is experimental, disabled by default, and available under **Settings → Experimental**. The continuous strategy derives mid-ocean ridges and crust from opening split boundaries: young seafloor forms at spreading axes, cools as it ages, and is interrupted by transform offsets. Slow ridges have an axial valley; fast ridges have a gentler central crest. Ordinary ridges remain underwater. Save the project before enabling experimental geometry generation.
+
+The ridge behavior follows [Worldbuilding Pasta's mid-ocean ridge description](https://worldbuildingpasta.blogspot.com/2022/02/an-apple-pie-from-scratch-part-viib.html). Depths and relief are illustrative Earth-like estimates; see [the source and model notes](docs/research/mid-ocean-ridges.md). Heightmap exports shade ocean crust by age and include the axial relief, but the PNG is a relative grayscale terrain image rather than a calibrated elevation DEM.
 
 The retired guided-event automation prototype, mesh runtime, and unused elevation-editing runtime are not part of the active application. `HeightmapGenerator` remains active for raster export.
 
